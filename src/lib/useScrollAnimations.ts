@@ -7,12 +7,16 @@ export function useScrollAnimations(ready: boolean) {
     if (!ready) return
 
     // Dynamic imports keep GSAP/Lenis out of the SSR bundle
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let ST: any = null
+
     Promise.all([
       import('gsap'),
       import('gsap/ScrollTrigger'),
       import('lenis'),
       import('split-type'),
     ]).then(([{ gsap }, { ScrollTrigger }, { default: Lenis }, { default: SplitType }]) => {
+      ST = ScrollTrigger
       gsap.registerPlugin(ScrollTrigger)
 
       /* ── Lenis smooth scroll ── */
@@ -105,6 +109,7 @@ export function useScrollAnimations(ready: boolean) {
 
     return () => {
       window._lenis?.destroy()
+      ST?.getAll().forEach((t: { kill: () => void }) => t.kill())
     }
   }, [ready])
 }
