@@ -3,6 +3,8 @@
 import { useEffect, useState } from 'react'
 
 export default function TweaksPanel() {
+  if (process.env.NODE_ENV === 'production') return null
+
   const [open, setOpen] = useState(false)
 
   useEffect(() => {

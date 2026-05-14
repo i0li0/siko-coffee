@@ -1,4 +1,8 @@
 export default function Instagram() {
+  return null
+}
+
+function _Instagram() {
   return (
     <section id="sns"
       className="relative min-h-screen flex flex-col items-center justify-center z-[2]

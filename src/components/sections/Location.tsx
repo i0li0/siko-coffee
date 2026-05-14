@@ -12,12 +12,12 @@ export default function Location() {
           </h2>
           <p className="font-sans font-extralight text-[13px]
             text-[rgba(240,235,224,0.45)] leading-[2.1] tracking-[0.06em]">
-            〒 — — — — —<br />
-            ○○市△△町 ○-○-○<br />
-            — 駅より徒歩5分
+            〒781-8008<br />
+            高知県高知市潮新町１丁目１２−１７<br />
+            コパン荘10号室
           </p>
           <a
-            href="https://maps.google.com"
+            href="https://maps.google.com/?q=高知県高知市潮新町１丁目１２−１７"
             target="_blank"
             rel="noopener noreferrer"
             className="inline-block mt-[22px] font-serif text-[11.5px] tracking-[0.12em]
@@ -34,9 +34,9 @@ export default function Location() {
             Hours
           </h3>
           {[
-            { label: '月曜日 — 金曜日', hours: '08:00 — 18:00' },
-            { label: '土曜日 · 日曜日', hours: '09:00 — 17:00' },
-            { label: '祝日',            hours: '不定休'         },
+            { label: '月曜日 — 金曜日', hours: '定休日'          },
+            { label: '土曜日',          hours: '17:00 — 22:00' },
+            { label: '日曜日',          hours: '定休日'          },
           ].map((row) => (
             <div
               key={row.label}

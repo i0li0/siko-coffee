@@ -1,8 +1,9 @@
 const items = [
-  { name: 'Espresso',    nameJp: 'エスプレッソ',    desc: '深く、短く、潔く。',     price: '¥ 480' },
-  { name: 'Drip Coffee', nameJp: 'ドリップコーヒー', desc: '時間が落ちてくる。',     price: '¥ 550' },
-  { name: 'Café Latte',  nameJp: 'カフェラテ',       desc: '柔らかな夜のように。',   price: '¥ 600' },
-  { name: 'Seasonal',    nameJp: '季節の一杯',        desc: '今しかない、この感覚。', price: '¥ 680' },
+  { name: 'Hot Coffee',      nameJp: 'ホットコーヒー',    desc: 'ディカフェで、深夜でも。',   price: '¥ 500' },
+  { name: 'Iced Coffee',     nameJp: 'アイスコーヒー',    desc: '冷たく、静かに。',           price: '¥ 500' },
+  { name: 'Oat Latte',       nameJp: 'オーツオレ',        desc: 'やさしさが溶けている。',     price: '¥ 500' },
+  { name: 'Iced Oat Latte',  nameJp: 'アイスオーツオレ',  desc: '夜の終わりに、もう一杯。',   price: '¥ 500' },
+  { name: 'Decaf Beans',     nameJp: 'ディカフェ豆（100g）', desc: '自宅で、あの静けさを。', price: '¥ 1,000' },
 ]
 
 export default function Menu() {
