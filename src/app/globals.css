@@ -13,8 +13,6 @@
   --cream: #f0ebe0;
   --dim:   rgba(240,235,224,0.45);
   --faint: rgba(240,235,224,0.16);
-  --serif: 'Cormorant Garamond', Georgia, serif;
-  --sans:  'Noto Sans JP', sans-serif;
 }
 
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -22,7 +20,7 @@
 body {
   background: var(--bg);
   color: var(--cream);
-  font-family: var(--sans);
+  font-family: var(--font-sans);
   font-weight: 200;
   overflow-x: hidden;
   -webkit-font-smoothing: antialiased;
