@@ -1,26 +1,113 @@
 @import "tailwindcss";
 
+@theme {
+  --font-serif: 'Cormorant Garamond', Georgia, serif;
+  --font-sans:  'Noto Sans JP', sans-serif;
+  --breakpoint-nav: 800px;
+}
+
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --bg:    #07070f;
+  --gold:  #c8a96e;
+  --gold2: #a07840;
+  --cream: #f0ebe0;
+  --dim:   rgba(240,235,224,0.45);
+  --faint: rgba(240,235,224,0.16);
+  --serif: 'Cormorant Garamond', Georgia, serif;
+  --sans:  'Noto Sans JP', sans-serif;
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
-}
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--bg);
+  color: var(--cream);
+  font-family: var(--sans);
+  font-weight: 200;
+  overflow-x: hidden;
+  -webkit-font-smoothing: antialiased;
 }
+
+/* ── Opening canvas ── */
+#opening-canvas {
+  position: fixed; inset: 0;
+  width: 100vw; height: 100vh;
+  z-index: 1000;
+  background: var(--bg);
+  transition: opacity 1.1s ease;
+}
+
+/* ── Stars canvas ── */
+#stars-canvas {
+  position: fixed; inset: 0;
+  width: 100vw; height: 100vh;
+  z-index: 0; pointer-events: none;
+}
+
+/* ── Smoke canvas ── */
+#smoke-canvas {
+  position: fixed; inset: 0;
+  width: 100vw; height: 100vh;
+  z-index: 1; pointer-events: none;
+  filter: blur(16px);
+  opacity: 0.9;
+}
+
+/* ── CSS wisps ── */
+.smoke-field {
+  position: fixed; inset: 0;
+  pointer-events: none; z-index: 0;
+  overflow: hidden; transition: transform 1s ease;
+}
+
+.wisp {
+  position: absolute; border-radius: 50%;
+  background: radial-gradient(ellipse at 42% 48%, rgba(210,195,160,0.09), transparent 65%);
+  filter: url(#sd) blur(24px);
+  animation: drift var(--dur, 22s) ease-in-out infinite var(--delay, 0s);
+  opacity: 0;
+}
+
+@keyframes drift {
+  0%   { transform: translate(0,0) scale(1) rotate(0deg); opacity: 0; }
+  10%  { opacity: 1; }
+  88%  { opacity: .65; }
+  100% { transform: translate(var(--tx,40px), var(--ty,-90px)) scale(1.2) rotate(var(--rot,9deg)); opacity: 0; }
+}
+
+/* ── Wave overlay ── */
+#wave-overlay {
+  position: fixed; inset: 0;
+  z-index: 0; pointer-events: none;
+  transition: background 3s ease;
+}
+
+/* ── Main background gradient ── */
+main {
+  position: relative;
+  background: linear-gradient(to bottom,
+    #07070f 0%,  #08091d 12%, #060d14 24%, #07070f 36%,
+    #08060f 48%, #060a0d 60%, #090a1c 72%, #07070f 83%,
+    #0a0814 92%, #06060c 100%);
+  z-index: 1;
+}
+
+footer { background: linear-gradient(to bottom, #06060c, #040409); }
+
+/* ── Scroll reveals ── */
+[data-reveal] { opacity: 0; }
+
+/* ── Hero scroll arrow bob ── */
+@keyframes bob {
+  0%,100% { transform: translateY(0);   opacity: .36; }
+  50%      { transform: translateY(9px); opacity: .72; }
+}
+.hero-scroll { animation: bob 3s ease-in-out infinite; }
+
+/* ── Menu item desc hover expand ── */
+.item-desc {
+  max-height: 0; overflow: hidden; opacity: 0;
+  transition: max-height 0.45s ease, opacity 0.45s ease;
+}
+.menu-item:hover .item-desc { max-height: 22px; opacity: 1; }
+@media (hover: none) { .item-desc { max-height: 22px; opacity: 0.55; } }
