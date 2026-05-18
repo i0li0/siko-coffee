@@ -102,6 +102,15 @@ footer { background: linear-gradient(to bottom, #06060c, #040409); }
 }
 .hero-scroll { animation: bob 3s ease-in-out infinite; }
 
+/* ── Reduced motion ── */
+@media (prefers-reduced-motion: reduce) {
+  .wisp { animation: none; opacity: 0.4; }
+  .hero-scroll { animation: none; opacity: 0.5; }
+  #smoke-canvas { display: none; }
+  #wave-overlay { transition: none; }
+  * { transition-duration: 0.01ms !important; animation-duration: 0.01ms !important; }
+}
+
 /* ── Menu item desc hover expand ── */
 .item-desc {
   max-height: 0; overflow: hidden; opacity: 0;

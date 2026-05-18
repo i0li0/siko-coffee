@@ -71,15 +71,20 @@ export default function SmokeCanvas() {
     }
 
     resize()
-    const particles = Array.from({ length: 14 }, () => {
+    const particles = Array.from({ length: 10 }, () => {
       const p = new Particle()
       p.life = Math.random() * p.maxLife
       return p
     })
 
+    let frame = 0
     function tick() {
-      ctx.clearRect(0, 0, W, H)
-      particles.forEach((p) => { p.update(); p.draw() })
+      frame++
+      // Run at ~30fps — smoke moves too slowly to need 60fps
+      if (frame % 2 === 0) {
+        ctx.clearRect(0, 0, W, H)
+        particles.forEach((p) => { p.update(); p.draw() })
+      }
       rafId = requestAnimationFrame(tick)
     }
 
