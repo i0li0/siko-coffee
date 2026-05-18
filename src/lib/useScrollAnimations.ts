@@ -54,8 +54,8 @@ export function useScrollAnimations(ready: boolean) {
         const wTl = gsap.timeline()
           .set(word, { opacity: 1 })
           .fromTo(split.chars!,
-            { opacity: 0, y: 36, rotateX: -22, transformPerspective: 800, transformOrigin: '50% 0%' },
-            { opacity: 1, y: 0, rotateX: 0, stagger: 0.09, duration: 1.1, ease: 'power3.out' })
+            { opacity: 0, y: 28 },
+            { opacity: 1, y: 0, stagger: 0.07, duration: 0.9, ease: 'power3.out' })
           .fromTo(spans[1],
             { opacity: 0, y: 8 }, { opacity: 1, y: 0, duration: 0.7, ease: 'power2.out' }, '-=0.52')
           .fromTo(spans[2],
