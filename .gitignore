@@ -42,4 +42,9 @@ next-env.d.ts
 
 
 .gitignore
+.claude
 CLAUDE.md
+CLAUDE.business.md
+CLAUDE.design.md
+CLAUDE.dev.md
+AGENTS.md
