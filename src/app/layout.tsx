@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 import { Cormorant_Garamond, Noto_Sans_JP } from 'next/font/google';
+import { SpeedInsights } from '@vercel/speed-insights/next';
 import './globals.css';
 
 const cormorant = Cormorant_Garamond({
@@ -39,7 +40,10 @@ export default function RootLayout({
 }) {
   return (
     <html lang="ja" className={`${cormorant.variable} ${noto.variable}`}>
-      <body>{children}</body>
+      <body>
+        {children}
+        <SpeedInsights />
+      </body>
     </html>
   );
 }
