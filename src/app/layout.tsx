@@ -31,6 +31,12 @@ export const metadata: Metadata = {
     type: 'website',
     url: 'https://sikocoffee.com',
   },
+  twitter: {
+    card: 'summary_large_image',
+    title: 'Sikō Coffee',
+    description: '暗闇の向こうに、光がある。',
+    images: ['/images/og.jpg'],
+  },
 };
 
 export default function RootLayout({
