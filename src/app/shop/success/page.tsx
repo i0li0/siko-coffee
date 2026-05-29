@@ -1,11 +1,32 @@
+import { redirect } from 'next/navigation';
 import Nav from '@/components/layout/Nav';
 import Footer from '@/components/layout/Footer';
+import { stripe } from '@/lib/stripe';
 
 export const metadata = {
   title: 'ご注文ありがとうございます — Sikō Coffee',
 };
 
-export default function SuccessPage() {
+export default async function SuccessPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ session_id?: string }>;
+}) {
+  const { session_id } = await searchParams;
+
+  if (!session_id) {
+    redirect('/shop');
+  }
+
+  try {
+    const session = await stripe.checkout.sessions.retrieve(session_id);
+    if (session.payment_status !== 'paid') {
+      redirect('/shop');
+    }
+  } catch {
+    redirect('/shop');
+  }
+
   return (
     <>
       <Nav visible logoHref="/" />
