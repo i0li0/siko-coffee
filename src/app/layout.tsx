@@ -1,5 +1,5 @@
 import type { Metadata } from 'next';
-import { Cormorant_Garamond, Noto_Sans_JP } from 'next/font/google';
+import { Cormorant_Garamond, Noto_Sans_JP, Noto_Serif_JP } from 'next/font/google';
 import { SpeedInsights } from '@vercel/speed-insights/next';
 import './globals.css';
 
@@ -7,14 +7,21 @@ const cormorant = Cormorant_Garamond({
   subsets: ['latin'],
   weight: ['300', '400'],
   style: ['normal', 'italic'],
-  variable: '--font-serif',
+  variable: '--font-cormorant',
   display: 'swap',
 });
 
-const noto = Noto_Sans_JP({
+const notoSans = Noto_Sans_JP({
   subsets: ['latin'],
   weight: ['200', '300'],
   variable: '--font-sans',
+  display: 'swap',
+});
+
+const notoSerif = Noto_Serif_JP({
+  subsets: ['latin'],
+  weight: ['300', '400'],
+  variable: '--font-noto-serif-jp',
   display: 'swap',
 });
 
@@ -45,7 +52,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="ja" className={`${cormorant.variable} ${noto.variable}`}>
+    <html lang="ja" className={`${cormorant.variable} ${notoSans.variable} ${notoSerif.variable}`}>
       <body>
         {children}
         <SpeedInsights />
