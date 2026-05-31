@@ -23,15 +23,15 @@ export default function Story() {
             data-d={i}
           >
             <span
-              className="font-sans font-extralight text-[#c8a96e] leading-none"
+              className="font-sans font-extralight text-[#B8BEC8] leading-none"
               style={{ fontSize: w.size, opacity: w.opacity }}
             >
               {w.kanji}
             </span>
-            <span className="font-sans text-[10px] font-extralight text-[#a07840] tracking-[0.14em]">
+            <span className="font-sans text-[10px] font-extralight text-[#787E8A] tracking-[0.14em]">
               {w.kana}
             </span>
-            <span className="font-serif italic text-[11.5px] text-[rgba(240,235,224,0.16)] tracking-[0.14em]">
+            <span className="font-serif italic text-[11.5px] text-[rgba(232,234,238,0.16)] tracking-[0.14em]">
               {w.en}
             </span>
           </div>
@@ -40,11 +40,11 @@ export default function Story() {
 
       <div className="story-body max-w-[460px] text-center" data-reveal data-d="2">
         <p className="font-sans font-extralight text-[14px] leading-[2.4]
-          text-[rgba(240,235,224,0.45)] mb-[14px]">
+          text-[rgba(232,234,238,0.45)] mb-[14px]">
           たくさん考えること。とりあえず試すこと。<br />
           とにかく上を目指すこと。<br />
           何より楽しむことを大切に。<br />
-          <em className="font-serif italic text-[rgba(200,169,110,0.48)] text-[12.5px]">
+          <em className="font-serif italic text-[rgba(184,190,200,0.48)] text-[12.5px]">
             Think, try, pursue, savor —<br />four shades of the same word.
           </em>
         </p>

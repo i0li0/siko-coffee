@@ -47,8 +47,8 @@ export default function DotNav({ visible }: Props) {
           className={`w-[5px] h-[5px] rounded-full border-none p-0 cursor-pointer
             transition-all duration-[400ms]
             ${active === s
-              ? 'bg-[#c8a96e] scale-150'
-              : 'bg-[rgba(200,169,110,0.2)] hover:bg-[rgba(200,169,110,0.5)]'
+              ? 'bg-[#B8BEC8] scale-150'
+              : 'bg-[rgba(184,190,200,0.2)] hover:bg-[rgba(184,190,200,0.5)]'
             }`}
         />
       ))}

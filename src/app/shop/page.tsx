@@ -37,9 +37,9 @@ export default async function ShopPage() {
           <a
             href="/"
             className="inline-block font-serif italic text-[11.5px] tracking-[0.14em]
-              text-[rgba(200,169,110,0.38)] no-underline
-              border-b border-[rgba(200,169,110,0.15)] pb-[1px]
-              transition-colors duration-300 hover:text-[#c8a96e]"
+              text-[rgba(184,190,200,0.38)] no-underline
+              border-b border-[rgba(184,190,200,0.15)] pb-[1px]
+              transition-colors duration-300 hover:text-[#B8BEC8]"
           >
             ← Sikō Coffee
           </a>
@@ -64,18 +64,18 @@ export default async function ShopPage() {
             {/* Header */}
             <div className="mb-[56px] max-[700px]:mb-[40px]">
               <h1 className="font-serif font-light text-[clamp(22px,3.5vw,36px)]
-                text-[#f0ebe0] tracking-[0.08em] mb-[10px]">
+                text-[#E8EAEE] tracking-[0.08em] mb-[10px]">
                 Shop
               </h1>
               <p className="font-serif italic text-[13px]
-                text-[rgba(200,169,110,0.38)] tracking-[0.1em]">
+                text-[rgba(184,190,200,0.38)] tracking-[0.1em]">
                 静けさを、持ち帰る。
               </p>
             </div>
 
             {/* Product list */}
             {products.length === 0 ? (
-              <p className="font-serif italic text-[13px] text-[rgba(240,235,224,0.3)]
+              <p className="font-serif italic text-[13px] text-[rgba(232,234,238,0.3)]
                 tracking-[0.08em] text-center py-[60px]">
                 現在、商品はございません。
               </p>
@@ -83,17 +83,17 @@ export default async function ShopPage() {
               products.map((product) => (
                 <div
                   key={product.id}
-                  className="py-[26px] border-b border-[rgba(240,235,224,0.08)]
-                    first:border-t first:border-[rgba(240,235,224,0.08)]"
+                  className="py-[26px] border-b border-[rgba(232,234,238,0.08)]
+                    first:border-t first:border-[rgba(232,234,238,0.08)]"
                 >
                   <div className="grid gap-6 items-start" style={{ gridTemplateColumns: '1fr auto' }}>
                     <div>
                       <span className="block font-serif text-[clamp(17px,2.6vw,26px)] font-normal
-                        text-[#f0ebe0] tracking-[0.05em] mb-[3px]">
+                        text-[#E8EAEE] tracking-[0.05em] mb-[3px]">
                         {product.name}
                       </span>
                       <span className="block font-sans text-[10.5px] font-extralight
-                        text-[rgba(200,169,110,0.45)] tracking-[0.14em] mb-[5px]">
+                        text-[rgba(184,190,200,0.45)] tracking-[0.14em] mb-[5px]">
                         {product.nameJp}
                       </span>
                       <span className="block font-serif italic text-[12.5px]
@@ -102,14 +102,14 @@ export default async function ShopPage() {
                       </span>
                       {product.canCustomize && (
                         <span className="inline-block mt-[10px] font-sans text-[9px]
-                          tracking-[0.18em] text-[rgba(200,169,110,0.48)]
-                          border border-[rgba(200,169,110,0.2)] px-[9px] py-[3px]">
+                          tracking-[0.18em] text-[rgba(184,190,200,0.48)]
+                          border border-[rgba(184,190,200,0.2)] px-[9px] py-[3px]">
                           CUSTOMIZE
                         </span>
                       )}
                     </div>
                     <span className="font-serif text-[13px] font-light
-                      text-[rgba(200,169,110,0.58)] tracking-[0.06em] pt-1 text-right whitespace-nowrap">
+                      text-[rgba(184,190,200,0.58)] tracking-[0.06em] pt-1 text-right whitespace-nowrap">
                       ¥ {product.price.toLocaleString()}
                     </span>
                   </div>
@@ -120,10 +120,10 @@ export default async function ShopPage() {
                       <button
                         type="submit"
                         className="font-sans font-extralight text-[9.5px] tracking-[0.22em]
-                          text-[rgba(200,169,110,0.55)] border border-[rgba(200,169,110,0.22)]
+                          text-[rgba(184,190,200,0.55)] border border-[rgba(184,190,200,0.22)]
                           px-[22px] py-[10px] cursor-pointer bg-transparent
                           transition-all duration-300
-                          hover:text-[#c8a96e] hover:border-[rgba(200,169,110,0.5)]"
+                          hover:text-[#B8BEC8] hover:border-[rgba(184,190,200,0.5)]"
                       >
                         購入する
                       </button>
@@ -135,13 +135,13 @@ export default async function ShopPage() {
 
             {/* Contact note */}
             <p className="mt-[52px] font-serif italic text-[11.5px]
-              text-[rgba(240,235,224,0.2)] tracking-[0.08em] text-center leading-[2.2]">
+              text-[rgba(232,234,238,0.2)] tracking-[0.08em] text-center leading-[2.2]">
               カスタムオーダー・お問い合わせは{' '}
               <a
                 href="mailto:siko.is.coffee@gmail.com"
-                className="text-[rgba(200,169,110,0.45)] no-underline
-                  border-b border-[rgba(200,169,110,0.2)] pb-[1px]
-                  transition-colors duration-300 hover:text-[#c8a96e]"
+                className="text-[rgba(184,190,200,0.45)] no-underline
+                  border-b border-[rgba(184,190,200,0.2)] pb-[1px]
+                  transition-colors duration-300 hover:text-[#B8BEC8]"
               >
                 siko.is.coffee@gmail.com
               </a>

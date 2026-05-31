@@ -31,7 +31,7 @@ export default function Instagram() {
       <div className="sns-header text-center">
         <h2
           className="font-serif font-light text-[clamp(16px,2.6vw,26px)]
-            text-[rgba(240,235,224,0.45)] tracking-[0.22em] mb-2"
+            text-[rgba(232,234,238,0.45)] tracking-[0.22em] mb-2"
         >
           Instagram
         </h2>
@@ -39,7 +39,7 @@ export default function Instagram() {
           href="https://instagram.com/siko_coffee"
           target="_blank"
           rel="noopener noreferrer"
-          className="font-serif italic text-[13.5px] text-[#c8a96e]
+          className="font-serif italic text-[13.5px] text-[#B8BEC8]
             tracking-[0.1em] no-underline"
         >
           @siko_coffee
@@ -74,7 +74,7 @@ export default function Instagram() {
               {post.media_type === 'VIDEO' && (
                 <span
                   className="absolute inset-0 flex items-center justify-center
-                    text-[rgba(240,235,224,0.5)] text-[22px] pointer-events-none"
+                    text-[rgba(232,234,238,0.5)] text-[22px] pointer-events-none"
                 >
                   ▶
                 </span>
