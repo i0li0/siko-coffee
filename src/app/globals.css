@@ -1,7 +1,7 @@
 @import "tailwindcss";
 
 @theme {
-  --font-serif: 'Cormorant Garamond', Georgia, serif;
+  --font-serif: var(--font-cormorant), var(--font-noto-serif-jp), Georgia, serif;
   --font-sans:  'Noto Sans JP', sans-serif;
   --breakpoint-nav: 800px;
 }
