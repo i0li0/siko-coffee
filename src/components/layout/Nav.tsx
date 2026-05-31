@@ -42,7 +42,7 @@ export default function Nav({ visible, logoHref }: Props) {
         />
         <span
           className="hidden nav:block font-serif font-light text-xs tracking-[0.2em]
-          text-[rgba(200,169,110,0.55)]"
+          text-[rgba(184,190,200,0.55)]"
         >
           Coffee
         </span>

@@ -7,12 +7,14 @@
 }
 
 :root {
-  --bg:    #07070f;
-  --gold:  #c8a96e;
-  --gold2: #a07840;
-  --cream: #f0ebe0;
-  --dim:   rgba(240,235,224,0.45);
-  --faint: rgba(240,235,224,0.16);
+  --bg:      #090909;
+  --bg2:     #141414;
+  --surface: #242428;
+  --gold:    #B8BEC8;
+  --gold2:   #787E8A;
+  --cream:   #E8EAEE;
+  --dim:     rgba(232,234,238,0.45);
+  --faint:   rgba(232,234,238,0.16);
 }
 
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -60,7 +62,7 @@ body {
 
 .wisp {
   position: absolute; border-radius: 50%;
-  background: radial-gradient(ellipse at 42% 48%, rgba(210,195,160,0.09), transparent 65%);
+  background: radial-gradient(ellipse at 42% 48%, rgba(184,190,200,0.09), transparent 65%);
   filter: url(#sd) blur(24px);
   animation: drift var(--dur, 22s) ease-in-out infinite var(--delay, 0s);
   opacity: 0;
@@ -84,13 +86,13 @@ body {
 main {
   position: relative;
   background: linear-gradient(to bottom,
-    #07070f 0%,  #08091d 12%, #060d14 24%, #07070f 36%,
-    #08060f 48%, #060a0d 60%, #090a1c 72%, #07070f 83%,
-    #0a0814 92%, #06060c 100%);
+    #090909 0%,  #0e0e12 12%, #0a0a0e 24%, #090909 36%,
+    #0c0c0c 48%, #0a0a0a 60%, #0d0d11 72%, #090909 83%,
+    #0b0b0f 92%, #090909 100%);
   z-index: 1;
 }
 
-footer { background: linear-gradient(to bottom, #06060c, #040409); }
+footer { background: linear-gradient(to bottom, #090909, #060606); }
 
 /* ── Scroll reveals ── */
 [data-reveal] { opacity: 0; }

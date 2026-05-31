@@ -41,20 +41,20 @@ export default function Menu() {
         {items.map((item, i) => (
           <div
             key={item.id}
-            className="menu-item py-[26px] border-b border-[rgba(240,235,224,0.08)]
+            className="menu-item py-[26px] border-b border-[rgba(232,234,238,0.08)]
               grid gap-6 items-start cursor-default
-              first:border-t first:border-[rgba(240,235,224,0.08)]"
+              first:border-t first:border-[rgba(232,234,238,0.08)]"
             style={{ gridTemplateColumns: '1fr auto' }}
             data-reveal
             data-d={i}
           >
             <div>
               <span className="block font-serif text-[clamp(17px,2.6vw,26px)] font-normal
-                text-[#f0ebe0] tracking-[0.05em] mb-[3px]">
+                text-[#E8EAEE] tracking-[0.05em] mb-[3px]">
                 {item.name}
               </span>
               <span className="block font-sans text-[10.5px] font-extralight
-                text-[rgba(200,169,110,0.45)] tracking-[0.14em] mb-[5px]">
+                text-[rgba(184,190,200,0.45)] tracking-[0.14em] mb-[5px]">
                 {item.nameJp}
               </span>
               <span className="item-desc block font-serif italic text-[12.5px]
@@ -63,7 +63,7 @@ export default function Menu() {
               </span>
             </div>
             <span className="font-serif text-[13px] font-light
-              text-[rgba(200,169,110,0.58)] tracking-[0.06em] pt-1 text-right whitespace-nowrap">
+              text-[rgba(184,190,200,0.58)] tracking-[0.06em] pt-1 text-right whitespace-nowrap">
               ¥ {item.price.toLocaleString()}
             </span>
           </div>

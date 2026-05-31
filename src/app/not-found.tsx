@@ -15,18 +15,18 @@ export default function NotFound() {
 
           <div
             className="font-serif font-light text-[clamp(80px,18vw,160px)]
-              text-[rgba(200,169,110,0.08)] tracking-[0.05em] select-none leading-none mb-[32px]"
+              text-[rgba(184,190,200,0.08)] tracking-[0.05em] select-none leading-none mb-[32px]"
             aria-hidden="true"
           >
             404
           </div>
 
           <h1 className="font-serif font-light text-[clamp(18px,3vw,28px)]
-            text-[#f0ebe0] tracking-[0.08em] mb-[14px]">
+            text-[#E8EAEE] tracking-[0.08em] mb-[14px]">
             ページが見つかりません
           </h1>
 
-          <p className="font-serif italic text-[12.5px] text-[rgba(200,169,110,0.5)]
+          <p className="font-serif italic text-[12.5px] text-[rgba(184,190,200,0.5)]
             tracking-[0.1em] leading-[2.2] mb-[52px]">
             お探しのページは存在しないか、<br />
             移動した可能性があります。
@@ -35,10 +35,10 @@ export default function NotFound() {
           <a
             href="/"
             className="inline-block font-sans font-extralight text-[10px]
-              tracking-[0.22em] text-[rgba(200,169,110,0.5)]
-              border border-[rgba(200,169,110,0.2)] px-[28px] py-[13px]
+              tracking-[0.22em] text-[rgba(184,190,200,0.5)]
+              border border-[rgba(184,190,200,0.2)] px-[28px] py-[13px]
               transition-all duration-300
-              hover:text-[#c8a96e] hover:border-[rgba(200,169,110,0.45)]"
+              hover:text-[#B8BEC8] hover:border-[rgba(184,190,200,0.45)]"
           >
             TOP へ戻る
           </a>

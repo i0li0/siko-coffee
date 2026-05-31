@@ -36,18 +36,18 @@ export default async function SuccessPage({
 
           <div
             className="font-serif font-light text-[clamp(40px,10vw,80px)]
-              text-[rgba(200,169,110,0.18)] tracking-[0.1em] select-none mb-[40px]"
+              text-[rgba(184,190,200,0.18)] tracking-[0.1em] select-none mb-[40px]"
             aria-hidden="true"
           >
             ∞
           </div>
 
           <h1 className="font-serif font-light text-[clamp(22px,3.5vw,32px)]
-            text-[#f0ebe0] tracking-[0.08em] mb-[14px]">
+            text-[#E8EAEE] tracking-[0.08em] mb-[14px]">
             ご注文ありがとうございます
           </h1>
 
-          <p className="font-serif italic text-[12.5px] text-[rgba(200,169,110,0.5)]
+          <p className="font-serif italic text-[12.5px] text-[rgba(184,190,200,0.5)]
             tracking-[0.1em] leading-[2.2] mb-[52px]">
             ご注文を受け付けました。<br />
             発送の準備が整い次第、ご連絡いたします。
@@ -56,10 +56,10 @@ export default async function SuccessPage({
           <a
             href="/shop"
             className="inline-block font-sans font-extralight text-[10px]
-              tracking-[0.22em] text-[rgba(200,169,110,0.5)]
-              border border-[rgba(200,169,110,0.2)] px-[28px] py-[13px]
+              tracking-[0.22em] text-[rgba(184,190,200,0.5)]
+              border border-[rgba(184,190,200,0.2)] px-[28px] py-[13px]
               transition-all duration-400
-              hover:text-[#c8a96e] hover:border-[rgba(200,169,110,0.45)]"
+              hover:text-[#B8BEC8] hover:border-[rgba(184,190,200,0.45)]"
           >
             SHOP へ戻る
           </a>

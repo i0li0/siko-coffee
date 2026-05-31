@@ -7,11 +7,11 @@ export default function Location() {
         grid-cols-[1fr_1fr] max-[700px]:grid-cols-1 max-[700px]:gap-[44px]">
         <div className="loc-address" data-reveal>
           <h2 className="font-serif font-light text-[clamp(22px,3.5vw,38px)]
-            text-[#f0ebe0] leading-[1.7] mb-7 tracking-[0.05em]">
+            text-[#E8EAEE] leading-[1.7] mb-7 tracking-[0.05em]">
             夜の静けさの中で、<br />あなたを待っています。
           </h2>
           <p className="font-sans font-extralight text-[13px]
-            text-[rgba(240,235,224,0.45)] leading-[2.1] tracking-[0.06em]">
+            text-[rgba(232,234,238,0.45)] leading-[2.1] tracking-[0.06em]">
             〒781-8008<br />
             高知県高知市潮新町１丁目１２−１７<br />
             コパン荘10号室
@@ -21,8 +21,8 @@ export default function Location() {
             target="_blank"
             rel="noopener noreferrer"
             className="inline-block mt-[22px] font-serif text-[11.5px] tracking-[0.12em]
-              text-[rgba(200,169,110,0.42)] border-b border-[rgba(200,169,110,0.22)]
-              no-underline transition-colors duration-300 hover:text-[#c8a96e]"
+              text-[rgba(184,190,200,0.42)] border-b border-[rgba(184,190,200,0.22)]
+              no-underline transition-colors duration-300 hover:text-[#B8BEC8]"
           >
             → Google Maps で開く
           </a>
@@ -30,7 +30,7 @@ export default function Location() {
 
         <div className="loc-hours" data-reveal data-d="1">
           <h3 className="font-serif font-light text-[12px] tracking-[0.22em]
-            text-[#c8a96e] uppercase mb-7">
+            text-[#B8BEC8] uppercase mb-7">
             Hours
           </h3>
           {[
@@ -41,8 +41,8 @@ export default function Location() {
             <div
               key={row.label}
               className="flex justify-between items-center py-[13px]
-                border-b border-[rgba(240,235,224,0.06)]
-                text-[12.5px] text-[rgba(240,235,224,0.45)]
+                border-b border-[rgba(232,234,238,0.06)]
+                text-[12.5px] text-[rgba(232,234,238,0.45)]
                 font-extralight tracking-[0.05em]"
             >
               <span>{row.label}</span>

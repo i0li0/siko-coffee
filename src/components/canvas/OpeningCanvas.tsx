@@ -96,8 +96,8 @@ export default function OpeningCanvas({ onFinish }: Props) {
       ctx.save()
       ctx.globalAlpha = alpha
       const g = ctx.createRadialGradient(x, y, 0, x, y, size * 7)
-      g.addColorStop(0, 'rgba(200,169,110,.55)')
-      g.addColorStop(1, 'rgba(200,169,110,0)')
+      g.addColorStop(0, 'rgba(184,190,200,.55)')
+      g.addColorStop(1, 'rgba(184,190,200,0)')
       ctx.fillStyle = g
       ctx.beginPath(); ctx.arc(x, y, size * 7, 0, Math.PI * 2); ctx.fill()
       if (core) {
@@ -112,7 +112,7 @@ export default function OpeningCanvas({ onFinish }: Props) {
       const t = ts - startTime
       const Tv = T()
 
-      ctx.fillStyle = '#07070f'
+      ctx.fillStyle = '#090909'
       ctx.fillRect(0, 0, W, H)
 
       stars.forEach((s) => {
@@ -149,16 +149,16 @@ export default function OpeningCanvas({ onFinish }: Props) {
           ? ((t - Tv.ARRIVE) / (Tv.FLASH - Tv.ARRIVE)) * 0.88
           : Math.max(0, 1 - (t - Tv.FLASH) / (Tv.LOGO - Tv.FLASH)) * 0.55
         const g = ctx.createRadialGradient(CX, CY, 0, CX, CY, Math.min(W, H) * 0.46)
-        g.addColorStop(0, `rgba(200,169,110,${fA})`)
-        g.addColorStop(0.6, `rgba(200,169,110,${fA * 0.2})`)
-        g.addColorStop(1, 'rgba(200,169,110,0)')
+        g.addColorStop(0, `rgba(184,190,200,${fA})`)
+        g.addColorStop(0.6, `rgba(184,190,200,${fA * 0.2})`)
+        g.addColorStop(1, 'rgba(184,190,200,0)')
         ctx.fillStyle = g; ctx.fillRect(0, 0, W, H)
       } else if (t >= Tv.LOGO && t < Tv.FADE) {
         const logoT = (t - Tv.LOGO) / (Tv.HOLD - Tv.LOGO)
         const logoA = Math.min(1, logoT * 1.9)
         const gg = ctx.createRadialGradient(CX, CY, 0, CX, CY, 230)
-        gg.addColorStop(0, 'rgba(200,169,110,.08)')
-        gg.addColorStop(1, 'rgba(200,169,110,0)')
+        gg.addColorStop(0, 'rgba(184,190,200,.08)')
+        gg.addColorStop(1, 'rgba(184,190,200,0)')
         ctx.fillStyle = gg; ctx.fillRect(0, 0, W, H)
         const lsize = Math.min(W, H) * 0.16
         ctx.save()
@@ -168,7 +168,7 @@ export default function OpeningCanvas({ onFinish }: Props) {
         ctx.globalAlpha = logoA * 0.58
         ctx.textAlign = 'center'; ctx.textBaseline = 'middle'
         ctx.font = `200 ${fs}px "Noto Sans JP",sans-serif`
-        ctx.fillStyle = '#c8a96e'
+        ctx.fillStyle = '#B8BEC8'
         ctx.fillText('思考・試行・至高・嗜好', CX, CY + lsize * 0.52)
         ctx.restore()
       } else if (t >= Tv.FADE && t < Tv.DONE) {
@@ -225,7 +225,7 @@ export default function OpeningCanvas({ onFinish }: Props) {
         className="fixed bottom-[30px] right-9 z-[1001] border-none bg-transparent
           font-serif text-[11.5px] tracking-[0.16em] cursor-pointer
           opacity-0 pointer-events-none transition-[opacity,color] duration-[600ms]
-          text-[rgba(200,169,110,0.32)] hover:text-[#c8a96e]"
+          text-[rgba(184,190,200,0.32)] hover:text-[#B8BEC8]"
       >
         skip intro
       </button>
