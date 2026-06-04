@@ -93,24 +93,17 @@ export default async function ShopPage({
           </p>
         </div>
 
-        {/* Content: sidebar + products */}
+        {/* Content: sidebar + products
+            flex-col on mobile (sidebar=tabs above, products below)
+            flex-row on desktop (sidebar left, products right)        */}
         <section className="relative z-[2] px-20 pb-[80px]
           max-[760px]:px-[22px] max-[760px]:pb-[60px]">
+          <div className="flex flex-col min-[760px]:flex-row gap-[48px] items-start">
 
-          {/* Mobile tabs */}
-          <Suspense fallback={null}>
-            <ShopSidebar />
-          </Suspense>
-
-          {/* Desktop: flex layout */}
-          <div className="flex gap-[56px] items-start">
-
-            {/* Desktop sidebar — hidden on mobile (sidebar itself handles visibility) */}
-            <div className="hidden min-[760px]:block">
-              <Suspense fallback={null}>
-                <ShopSidebar />
-              </Suspense>
-            </div>
+            {/* Sidebar — renders mobile tabs on small, desktop aside on large */}
+            <Suspense fallback={null}>
+              <ShopSidebar />
+            </Suspense>
 
             {/* Product list */}
             <div className="flex-1 min-w-0 max-w-[660px]">
