@@ -3,11 +3,10 @@
 import { useEffect, useState } from 'react'
 
 export default function TweaksPanel() {
-  if (process.env.NODE_ENV === 'production') return null
-
   const [open, setOpen] = useState(false)
 
   useEffect(() => {
+    if (process.env.NODE_ENV === 'production') return
     const handler = (e: MessageEvent) => {
       if (e.data?.type === '__activate_edit_mode')   setOpen(true)
       if (e.data?.type === '__deactivate_edit_mode') setOpen(false)
@@ -16,6 +15,8 @@ export default function TweaksPanel() {
     window.parent.postMessage({ type: '__edit_mode_available' }, '*')
     return () => window.removeEventListener('message', handler)
   }, [])
+
+  if (process.env.NODE_ENV === 'production') return null
 
   function close() {
     setOpen(false)

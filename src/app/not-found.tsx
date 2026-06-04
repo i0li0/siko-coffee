@@ -1,3 +1,4 @@
+import Link from 'next/link';
 import Nav from '@/components/layout/Nav';
 import Footer from '@/components/layout/Footer';
 
@@ -32,7 +33,7 @@ export default function NotFound() {
             移動した可能性があります。
           </p>
 
-          <a
+          <Link
             href="/"
             className="inline-block font-sans font-extralight text-[10px]
               tracking-[0.22em] text-[rgba(184,190,200,0.5)]
@@ -41,7 +42,7 @@ export default function NotFound() {
               hover:text-[#B8BEC8] hover:border-[rgba(184,190,200,0.45)]"
           >
             TOP へ戻る
-          </a>
+          </Link>
         </div>
       </main>
 

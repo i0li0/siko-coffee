@@ -1,11 +1,21 @@
+import { Suspense } from 'react';
+import Link from 'next/link';
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { DynamoDBDocumentClient, ScanCommand } from '@aws-sdk/lib-dynamodb';
 import Nav from '@/components/layout/Nav';
 import Footer from '@/components/layout/Footer';
+import ShopSidebar from '@/components/shop/ShopSidebar';
+import ShopProductList from '@/components/shop/ShopProductList';
 import type { Product } from '@/types/product';
+import { SHOP_CATEGORIES, type CategoryKey } from '@/lib/shopCategories';
 
 export const preferredRegion = ['hnd1'];
 export const dynamic = 'force-dynamic';
+
+export const metadata = {
+  title: 'Shop — Sikō Coffee',
+  description: '静けさを、持ち帰る。 Sikō Coffee のオンラインショップ。',
+};
 
 async function getProducts(): Promise<Product[]> {
   const client = new DynamoDBClient({ region: 'ap-northeast-1' });
@@ -19,13 +29,26 @@ async function getProducts(): Promise<Product[]> {
     .sort((a, b) => a.id.localeCompare(b.id));
 }
 
-export const metadata = {
-  title: 'Shop — Sikō Coffee',
-  description: '静けさを、持ち帰る。 Sikō Coffee のオンラインショップ。',
-};
+function filterProducts(products: Product[], category: CategoryKey): Product[] {
+  if (category === 'all') return products;
+  return products.filter((p) => p.type === category);
+}
 
-export default async function ShopPage() {
-  const products = await getProducts();
+export default async function ShopPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ category?: string }>;
+}) {
+  const { category: rawCategory } = await searchParams;
+
+  // 不正な値はデフォルト 'all' にフォールバック
+  const validKeys = SHOP_CATEGORIES.map((c) => c.key);
+  const category: CategoryKey = validKeys.includes(rawCategory as CategoryKey)
+    ? (rawCategory as CategoryKey)
+    : 'all';
+
+  const allProducts = await getProducts();
+  const filtered = filterProducts(allProducts, category);
 
   return (
     <>
@@ -33,8 +56,8 @@ export default async function ShopPage() {
 
       <main className="relative min-h-screen z-[1]">
         {/* Back link */}
-        <div className="relative z-[2] pt-[110px] px-20 max-[700px]:pt-[88px] max-[700px]:px-[22px]">
-          <a
+        <div className="relative z-[2] pt-[110px] px-20 max-[760px]:pt-[88px] max-[760px]:px-[22px]">
+          <Link
             href="/"
             className="inline-block font-serif italic text-[11.5px] tracking-[0.14em]
               text-[rgba(184,190,200,0.38)] no-underline
@@ -42,111 +65,72 @@ export default async function ShopPage() {
               transition-colors duration-300 hover:text-[#B8BEC8]"
           >
             ← Sikō Coffee
-          </a>
+          </Link>
         </div>
 
-        {/* Section */}
-        <section className="relative z-[2] flex items-start justify-center
-          py-[60px] px-20 max-[700px]:py-[44px] max-[700px]:px-[22px]">
-          <div className="w-full max-w-[660px] relative max-[700px]:max-w-full">
+        {/* Header */}
+        <div className="relative z-[2] pt-[44px] pb-[48px] px-20
+          max-[760px]:pt-[32px] max-[760px]:pb-[36px] max-[760px]:px-[22px]">
 
-            {/* Decorative background text */}
-            <span
-              className="font-serif font-light absolute top-1/2 left-1/2
-                -translate-x-[60%] -translate-y-1/2 whitespace-nowrap
-                pointer-events-none select-none tracking-[0.05em]
-                text-[clamp(60px,16vw,160px)] text-[rgba(255,255,255,0.03)]"
-              aria-hidden="true"
-            >
-              shop
-            </span>
+          {/* Decorative background text */}
+          <span
+            className="font-serif font-light absolute top-1/2 left-1/2
+              -translate-x-[55%] -translate-y-1/2 whitespace-nowrap
+              pointer-events-none select-none tracking-[0.05em]
+              text-[clamp(60px,16vw,160px)] text-[rgba(255,255,255,0.025)]"
+            aria-hidden="true"
+          >
+            shop
+          </span>
 
-            {/* Header */}
-            <div className="mb-[56px] max-[700px]:mb-[40px]">
-              <h1 className="font-serif font-light text-[clamp(22px,3.5vw,36px)]
-                text-[#E8EAEE] tracking-[0.08em] mb-[10px]">
-                Shop
-              </h1>
-              <p className="font-serif italic text-[13px]
-                text-[rgba(184,190,200,0.38)] tracking-[0.1em]">
-                静けさを、持ち帰る。
-              </p>
+          <h1 className="relative font-serif font-light text-[clamp(22px,3.5vw,36px)]
+            text-[#E8EAEE] tracking-[0.08em] mb-[10px]">
+            Shop
+          </h1>
+          <p className="relative font-serif italic text-[13px]
+            text-[rgba(184,190,200,0.38)] tracking-[0.1em]">
+            静けさを、持ち帰る。
+          </p>
+        </div>
+
+        {/* Content: sidebar + products */}
+        <section className="relative z-[2] px-20 pb-[80px]
+          max-[760px]:px-[22px] max-[760px]:pb-[60px]">
+
+          {/* Mobile tabs */}
+          <Suspense fallback={null}>
+            <ShopSidebar />
+          </Suspense>
+
+          {/* Desktop: flex layout */}
+          <div className="flex gap-[56px] items-start">
+
+            {/* Desktop sidebar — hidden on mobile (sidebar itself handles visibility) */}
+            <div className="hidden min-[760px]:block">
+              <Suspense fallback={null}>
+                <ShopSidebar />
+              </Suspense>
             </div>
 
             {/* Product list */}
-            {products.length === 0 ? (
-              <p className="font-serif italic text-[13px] text-[rgba(232,234,238,0.3)]
-                tracking-[0.08em] text-center py-[60px]">
-                現在、商品はございません。
-              </p>
-            ) : (
-              products.map((product) => (
-                <div
-                  key={product.id}
-                  className="py-[26px] border-b border-[rgba(232,234,238,0.08)]
-                    first:border-t first:border-[rgba(232,234,238,0.08)]"
+            <div className="flex-1 min-w-0 max-w-[660px]">
+              <ShopProductList products={filtered} category={category} />
+
+              {/* Contact note */}
+              <p className="mt-[52px] font-serif italic text-[11.5px]
+                text-[rgba(232,234,238,0.2)] tracking-[0.08em] text-center leading-[2.2]">
+                カスタムオーダー・お問い合わせは{' '}
+                <a
+                  href="mailto:siko.is.coffee@gmail.com"
+                  className="text-[rgba(184,190,200,0.45)] no-underline
+                    border-b border-[rgba(184,190,200,0.2)] pb-[1px]
+                    transition-colors duration-300 hover:text-[#B8BEC8]"
                 >
-                  <div className="grid gap-6 items-start" style={{ gridTemplateColumns: '1fr auto' }}>
-                    <div>
-                      <span className="block font-serif text-[clamp(17px,2.6vw,26px)] font-normal
-                        text-[#E8EAEE] tracking-[0.05em] mb-[3px]">
-                        {product.name}
-                      </span>
-                      <span className="block font-sans text-[10.5px] font-extralight
-                        text-[rgba(184,190,200,0.45)] tracking-[0.14em] mb-[5px]">
-                        {product.nameJp}
-                      </span>
-                      <span className="block font-serif italic text-[12.5px]
-                        text-[rgba(200,185,150,0.42)] tracking-[0.07em]">
-                        {product.description}
-                      </span>
-                      {product.canCustomize && (
-                        <span className="inline-block mt-[10px] font-sans text-[9px]
-                          tracking-[0.18em] text-[rgba(184,190,200,0.48)]
-                          border border-[rgba(184,190,200,0.2)] px-[9px] py-[3px]">
-                          CUSTOMIZE
-                        </span>
-                      )}
-                    </div>
-                    <span className="font-serif text-[13px] font-light
-                      text-[rgba(184,190,200,0.58)] tracking-[0.06em] pt-1 text-right whitespace-nowrap">
-                      ¥ {product.price.toLocaleString()}
-                    </span>
-                  </div>
-
-                  {!product.canCustomize && (
-                    <form action="/api/checkout" method="POST" className="mt-[18px]">
-                      <input type="hidden" name="productId" value={product.id} />
-                      <button
-                        type="submit"
-                        className="font-sans font-extralight text-[9.5px] tracking-[0.22em]
-                          text-[rgba(184,190,200,0.55)] border border-[rgba(184,190,200,0.22)]
-                          px-[22px] py-[10px] cursor-pointer bg-transparent
-                          transition-all duration-300
-                          hover:text-[#B8BEC8] hover:border-[rgba(184,190,200,0.5)]"
-                      >
-                        購入する
-                      </button>
-                    </form>
-                  )}
-                </div>
-              ))
-            )}
-
-            {/* Contact note */}
-            <p className="mt-[52px] font-serif italic text-[11.5px]
-              text-[rgba(232,234,238,0.2)] tracking-[0.08em] text-center leading-[2.2]">
-              カスタムオーダー・お問い合わせは{' '}
-              <a
-                href="mailto:siko.is.coffee@gmail.com"
-                className="text-[rgba(184,190,200,0.45)] no-underline
-                  border-b border-[rgba(184,190,200,0.2)] pb-[1px]
-                  transition-colors duration-300 hover:text-[#B8BEC8]"
-              >
-                siko.is.coffee@gmail.com
-              </a>
-              {' '}まで。
-            </p>
+                  siko.is.coffee@gmail.com
+                </a>
+                {' '}まで。
+              </p>
+            </div>
           </div>
         </section>
       </main>

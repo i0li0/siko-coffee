@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect } from 'react';
+import Link from 'next/link';
 import Footer from '@/components/layout/Footer';
 import Nav from '@/components/layout/Nav';
 
@@ -52,7 +53,7 @@ export default function Error({
             >
               再試行
             </button>
-            <a
+            <Link
               href="/"
               className="inline-block font-sans font-extralight text-[10px]
                 tracking-[0.22em] text-[rgba(184,190,200,0.5)]
@@ -61,7 +62,7 @@ export default function Error({
                 hover:text-[#B8BEC8] hover:border-[rgba(184,190,200,0.45)]"
             >
               TOP へ戻る
-            </a>
+            </Link>
           </div>
         </div>
       </main>
