@@ -12,37 +12,25 @@ import Location from '@/components/sections/Location';
 import Instagram from '@/components/sections/Instagram';
 import Contact from '@/components/sections/Contact';
 import { useScrollAnimations } from '@/lib/useScrollAnimations';
+import TerminalLoader from '@/components/canvas/TerminalLoader';
 
-const StarsCanvas = dynamic(() => import('@/components/canvas/StarsCanvas'), {
-  ssr: false,
-});
-const SmokeField = dynamic(() => import('@/components/SmokeField'), {
-  ssr: false,
-});
-const SmokeCanvas = dynamic(() => import('@/components/canvas/SmokeCanvas'), {
-  ssr: false,
-});
-const OpeningCanvas = dynamic(
-  () => import('@/components/canvas/OpeningCanvas'),
-  { ssr: false },
-);
-
-const DEV = process.env.NODE_ENV === 'development';
+const StarsCanvas = dynamic(() => import('@/components/canvas/StarsCanvas'), { ssr: false });
+const SmokeField  = dynamic(() => import('@/components/SmokeField'),          { ssr: false });
+const SmokeCanvas = dynamic(() => import('@/components/canvas/SmokeCanvas'),  { ssr: false });
 
 export default function Home() {
-  const [opened, setOpened] = useState(DEV);
+  const [opened, setOpened] = useState(false);
 
   useScrollAnimations(opened);
 
   return (
     <>
-      {!DEV && (
-        <>
-          <StarsCanvas />
-          <SmokeField />
-          <SmokeCanvas />
-          <OpeningCanvas onFinish={() => setOpened(true)} />
-        </>
+      <StarsCanvas />
+      <SmokeField />
+      <SmokeCanvas />
+
+      {!opened && (
+        <TerminalLoader onFinish={() => setOpened(true)} />
       )}
 
       <Nav visible={opened} />

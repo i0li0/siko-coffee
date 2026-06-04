@@ -1,20 +1,22 @@
 @import "tailwindcss";
 
 @theme {
-  --font-serif: var(--font-cormorant), var(--font-noto-serif-jp), Georgia, serif;
-  --font-sans:  'Noto Sans JP', sans-serif;
+  --font-serif: var(--font-cormorant), var(--font-ibm-serif), Georgia, serif;
+  --font-sans:  var(--font-sans), 'IBM Plex Sans JP', sans-serif;
+  --font-mono:  var(--font-mono), 'IBM Plex Mono', monospace;
   --breakpoint-nav: 800px;
 }
 
 :root {
-  --bg:      #090909;
-  --bg2:     #141414;
-  --surface: #242428;
-  --gold:    #B8BEC8;
-  --gold2:   #787E8A;
-  --cream:   #E8EAEE;
-  --dim:     rgba(232,234,238,0.45);
-  --faint:   rgba(232,234,238,0.16);
+  --bg:      #080600;
+  --bg2:     #0f0d00;
+  --surface: #1c1900;
+  --amber:   #D4A017;
+  --amber2:  #8B6914;
+  --amber3:  #4A3808;
+  --cream:   #E8E0D0;
+  --dim:     rgba(232,224,208,0.45);
+  --faint:   rgba(232,224,208,0.14);
 }
 
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -50,7 +52,7 @@ body {
   width: 100vw; height: 100vh;
   z-index: 1; pointer-events: none;
   filter: blur(16px);
-  opacity: 0.9;
+  opacity: 0.7;
 }
 
 /* ── CSS wisps ── */
@@ -62,7 +64,7 @@ body {
 
 .wisp {
   position: absolute; border-radius: 50%;
-  background: radial-gradient(ellipse at 42% 48%, rgba(184,190,200,0.09), transparent 65%);
+  background: radial-gradient(ellipse at 42% 48%, rgba(212,160,23,0.07), transparent 65%);
   filter: url(#sd) blur(24px);
   animation: drift var(--dur, 22s) ease-in-out infinite var(--delay, 0s);
   opacity: 0;
@@ -71,7 +73,7 @@ body {
 @keyframes drift {
   0%   { transform: translate(0,0) scale(1) rotate(0deg); opacity: 0; }
   10%  { opacity: 1; }
-  88%  { opacity: .65; }
+  88%  { opacity: .55; }
   100% { transform: translate(var(--tx,40px), var(--ty,-90px)) scale(1.2) rotate(var(--rot,9deg)); opacity: 0; }
 }
 
@@ -86,28 +88,56 @@ body {
 main {
   position: relative;
   background: linear-gradient(to bottom,
-    #090909 0%,  #0e0e12 12%, #0a0a0e 24%, #090909 36%,
-    #0c0c0c 48%, #0a0a0a 60%, #0d0d11 72%, #090909 83%,
-    #0b0b0f 92%, #090909 100%);
+    #080600 0%,  #0c0a00 12%, #080600 24%, #0a0800 36%,
+    #080600 48%, #0b0900 60%, #080600 72%, #080600 83%,
+    #0a0800 92%, #080600 100%);
   z-index: 1;
 }
 
-footer { background: linear-gradient(to bottom, #090909, #060606); }
+footer { background: linear-gradient(to bottom, #080600, #050400); }
 
 /* ── Scroll reveals ── */
 [data-reveal] { opacity: 0; }
 
 /* ── Hero scroll arrow bob ── */
 @keyframes bob {
-  0%,100% { transform: translateY(0);   opacity: .36; }
-  50%      { transform: translateY(9px); opacity: .72; }
+  0%,100% { transform: translateY(0);   opacity: .28; }
+  50%      { transform: translateY(9px); opacity: .6; }
 }
 .hero-scroll { animation: bob 3s ease-in-out infinite; }
 
+/* ── Terminal cursor blink ── */
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0; }
+}
+.terminal-cursor {
+  display: inline-block;
+  width: 0.55em; height: 1.1em;
+  background: var(--amber);
+  vertical-align: text-bottom;
+  animation: blink 1.1s step-end infinite;
+  margin-left: 2px;
+}
+
+/* ── Terminal scan line overlay ── */
+.scanlines {
+  pointer-events: none;
+  position: absolute; inset: 0;
+  background: repeating-linear-gradient(
+    to bottom,
+    transparent,
+    transparent 3px,
+    rgba(0,0,0,0.08) 3px,
+    rgba(0,0,0,0.08) 4px
+  );
+}
+
 /* ── Reduced motion ── */
 @media (prefers-reduced-motion: reduce) {
-  .wisp { animation: none; opacity: 0.4; }
-  .hero-scroll { animation: none; opacity: 0.5; }
+  .wisp { animation: none; opacity: 0.3; }
+  .hero-scroll { animation: none; opacity: 0.4; }
+  .terminal-cursor { animation: none; }
   #smoke-canvas { display: none; }
   #wave-overlay { transition: none; }
   * { transition-duration: 0.01ms !important; animation-duration: 0.01ms !important; }
