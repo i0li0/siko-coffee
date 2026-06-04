@@ -38,11 +38,11 @@ export default function Nav({ visible, logoHref }: Props) {
           height={64}
           priority
           className="h-8 w-auto brightness-[0.88] transition-[filter] duration-300
-            hover:brightness-100 hover:sepia hover:hue-rotate-[10deg] hover:saturate-[1.4]"
+            hover:brightness-110 hover:sepia hover:hue-rotate-[-10deg] hover:saturate-[1.6]"
         />
         <span
           className="hidden nav:block font-serif font-light text-xs tracking-[0.2em]
-          text-[rgba(184,190,200,0.55)]"
+          text-[rgba(212,160,23,0.5)]"
         >
           Coffee
         </span>

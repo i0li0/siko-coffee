@@ -1,0 +1,379 @@
+'use client';
+
+import { useEffect, useRef, useState } from 'react';
+import type { Product } from '@/types/product';
+
+// ── types ──────────────────────────────────────────────────────────
+type Line =
+  | { t: 'cmd';   text: string }
+  | { t: 'out';   text: string; dim?: boolean }
+  | { t: 'ok';    text: string }
+  | { t: 'err';   text: string }
+  | { t: 'amber'; text: string }
+  | { t: 'div' };
+
+interface Props { onFinish: () => void }
+
+// ── helpers ────────────────────────────────────────────────────────
+function pad(n: number, w = 2) { return String(n).padStart(w, '0'); }
+function nowStr() {
+  const d = new Date();
+  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} `
+       + `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+}
+
+function collectEnv(): Record<string, string> {
+  const nav  = navigator;
+  const conn = (nav as { connection?: { effectiveType?: string; downlink?: number } }).connection;
+  const tz   = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const dpr  = window.devicePixelRatio;
+  const dark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+  return {
+    'resolution ': `${window.screen.width}×${window.screen.height}  @${dpr}x`,
+    'viewport   ': `${window.innerWidth}×${window.innerHeight}px`,
+    'timezone   ': tz,
+    'locale     ': nav.language,
+    'color-scheme': dark ? 'dark' : 'light',
+    'connection ': conn
+      ? `${conn.effectiveType ?? '—'}${conn.downlink != null ? '  ' + conn.downlink + ' Mbps' : ''}`
+      : 'unknown',
+    'user-agent ': nav.userAgent.slice(0, 58) + (nav.userAgent.length > 58 ? '…' : ''),
+  };
+}
+
+function brewParams(items: Product[]) {
+  const d = new Date();
+  const h = d.getHours(), min = d.getMinutes();
+  const dec = h + min / 60;
+  const temp  = Math.round(88 + 7 * Math.cos((dec - 8) * Math.PI / 12));
+  const grind = ['very fine (espresso)', 'fine (pour-over)', 'medium (v60)', 'coarse (cold brew)'][Math.min(3, Math.floor(dec / 6))];
+  const ratio = dec < 10 ? '1:14' : dec > 20 ? '1:16' : '1:15';
+  const bloom = temp > 92 ? '45s' : '30s';
+  const period = h < 6 ? 'late-night' : h < 11 ? 'morning' : h < 17 ? 'daytime' : h < 22 ? 'evening' : 'late-night';
+
+  let rec: Product | undefined;
+  if (h >= 22 || h < 6) rec = items.find(i => i.name.toLowerCase().includes('decaf'));
+  else if (h < 11)       rec = items.find(i => i.name === 'Hot Coffee');
+  else if (h < 17)       rec = items.find(i => i.name === 'Iced Coffee');
+  else                   rec = items.find(i => i.name.includes('Latte'));
+
+  return {
+    brewLines: [
+      `period      : ${period}`,
+      `water-temp  : ${temp}°C`,
+      `grind       : ${grind}`,
+      `brew-ratio  : ${ratio}  (coffee:water)`,
+      `bloom       : ${bloom}`,
+    ],
+    rec: rec ? `${rec.name}  —  ${rec.description}` : 'Hot Coffee — 一杯から。',
+  };
+}
+
+// ── progress bar ───────────────────────────────────────────────────
+const COLS = 36;
+function ProgressBar({ value }: { value: number }) {
+  const filled = Math.round((value / 100) * COLS);
+  const pct    = String(value).padStart(3);
+  return (
+    <div className="flex flex-col items-center gap-3 select-none w-full">
+      {/* bar */}
+      <div className="relative flex items-center gap-4">
+        <span
+          className="font-mono text-[clamp(12px,1.3vw,15px)] tracking-[0.05em] leading-none"
+          style={{ color: 'var(--amber)' }}
+        >
+          {'█'.repeat(filled)}
+          <span style={{ color: 'var(--amber3)' }}>{'░'.repeat(COLS - filled)}</span>
+        </span>
+        <span
+          className="font-mono text-[clamp(11px,1.1vw,13px)] tabular-nums w-[2.8em] text-right"
+          style={{ color: value === 100 ? 'var(--amber)' : 'var(--amber2)' }}
+        >
+          {pct}%
+        </span>
+        {/* ambient glow under bar */}
+        {value > 0 && (
+          <span
+            aria-hidden
+            className="absolute left-0 bottom-[-6px] h-[6px] rounded-full pointer-events-none blur-[6px]"
+            style={{
+              width: `${(filled / COLS) * 100}%`,
+              background: 'var(--amber)',
+              opacity: 0.35,
+              transition: 'width 0.4s ease',
+            }}
+          />
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── line renderer ──────────────────────────────────────────────────
+function TermLine({ line, cursor }: { line: Line; cursor?: boolean }) {
+  const base = 'font-mono whitespace-pre-wrap break-all text-[clamp(9px,1vw,11.5px)] leading-[1.85]';
+  const cur  = cursor ? (
+    <span
+      className="inline-block w-[0.5em] h-[1.1em] ml-[2px] align-text-bottom"
+      style={{ background: 'var(--amber)', animation: 'blink 1.1s step-end infinite' }}
+    />
+  ) : null;
+
+  if (line.t === 'div') return (
+    <div className="my-[4px]" style={{ borderBottom: '1px solid rgba(212,160,23,0.18)' }} />
+  );
+  if (line.t === 'cmd') return (
+    <div className={base}>
+      <span style={{ color: 'var(--amber)' }}>$ </span>
+      <span style={{ color: 'var(--cream)' }}>{line.text}</span>
+      {cur}
+    </div>
+  );
+  if (line.t === 'ok') return (
+    <div className={base}>
+      <span style={{ color: '#4f9a4f' }}>✓ </span>
+      <span style={{ color: 'rgba(232,224,208,0.62)' }}>{line.text}</span>
+      {cur}
+    </div>
+  );
+  if (line.t === 'err') return (
+    <div className={base}>
+      <span style={{ color: '#9a4f4f' }}>✗ </span>
+      <span style={{ color: 'rgba(232,224,208,0.52)' }}>{line.text}</span>
+      {cur}
+    </div>
+  );
+  if (line.t === 'amber') return (
+    <div className={`${base} font-medium`} style={{ color: 'var(--amber)' }}>
+      {line.text}{cur}
+    </div>
+  );
+  return (
+    <div className={base}
+      style={{ color: line.dim ? 'rgba(212,160,23,0.3)' : 'rgba(232,224,208,0.44)' }}>
+      {'  '}{line.text}{cur}
+    </div>
+  );
+}
+
+// ── main ───────────────────────────────────────────────────────────
+export default function TerminalLoader({ onFinish }: Props) {
+  const [progress, setP] = useState(0);
+  const [lines,    setL] = useState<Line[]>([]);
+  const [exiting,  setE] = useState(false);
+  const [visible,  setV] = useState(true);
+  const logRef           = useRef<HTMLDivElement>(null);
+  const genRef           = useRef(0);
+
+  const push = (...next: Line[]) => setL(prev => [...prev, ...next]);
+  const ms   = (n: number) => new Promise<void>(r => setTimeout(r, n));
+
+  useEffect(() => {
+    const el = logRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [lines]);
+
+  useEffect(() => {
+    const myGen = ++genRef.current;
+    const alive = () => genRef.current === myGen;
+
+    async function run() {
+      // ── 1. boot ─────────────────────────────────────────────
+      push({ t: 'div' });
+      push({ t: 'amber', text: 'SIKŌ COFFEE  //  SYSTEM BOOT' });
+      push({ t: 'out',   text: `timestamp  : ${nowStr()}`, dim: true });
+      push({ t: 'out',   text: 'os         : sikocoffee-os v1.0.0', dim: true });
+      push({ t: 'div' });
+      setP(6);
+      await ms(400);
+
+      // ── 2. env scan ──────────────────────────────────────────
+      push({ t: 'cmd', text: 'scan --env client' });
+      await ms(180);
+      const env = collectEnv();
+      for (const [k, v] of Object.entries(env)) {
+        push({ t: 'out', text: `${k}: ${v}`, dim: true });
+        await ms(52);
+      }
+      push({ t: 'ok', text: 'environment loaded.' });
+      setP(20);
+      await ms(220);
+
+      // ── 3. connect ───────────────────────────────────────────
+      push({ t: 'cmd', text: 'connect --host api.sikocoffee.com' });
+      const t1 = performance.now();
+      try { await fetch('/api/menu', { method: 'HEAD' }); } catch { /* ignore */ }
+      const pingMs = Math.round(performance.now() - t1);
+      push({ t: 'out', text: `latency  : ${pingMs}ms`, dim: true });
+      push({ t: 'ok',  text: 'connected.' });
+      setP(30);
+      await ms(180);
+
+      // ── 4. fetch menu ─────────────────────────────────────────
+      push({ t: 'cmd', text: 'GET /api/menu  --verbose' });
+      const t0 = performance.now();
+      let items: Product[] = [];
+
+      try {
+        const res     = await fetch('/api/menu');
+        const elapsed = Math.round(performance.now() - t0);
+        const data    = await res.json() as Product[];
+
+        push({ t: 'out', text: `status   : ${res.status} ${res.ok ? 'OK' : 'ERROR'}`, dim: true });
+        push({ t: 'out', text: `latency  : ${elapsed}ms`, dim: true });
+        push({ t: 'out', text: 'encoding : application/json; charset=utf-8', dim: true });
+
+        if (!res.ok) throw new Error(`${res.status}`);
+        items = Array.isArray(data) && data.length > 0 ? data : [];
+
+        setP(42);
+        await ms(140);
+
+        push({ t: 'div' });
+        push({ t: 'out', text: `${'id'.padEnd(10)}${'name'.padEnd(20)}${'¥'.padStart(7)}  type      avail`, dim: true });
+        push({ t: 'div' });
+
+        const step = 22 / Math.max(items.length, 1);
+        for (let i = 0; i < items.length; i++) {
+          const it = items[i];
+          push({
+            t:    'out',
+            text: `${it.id.padEnd(10)}${it.name.padEnd(20)}${('¥'+it.price.toLocaleString()).padStart(7)}  ${it.type.padEnd(8)}  ${it.isPublic ? '● public' : '○ hidden'}`,
+          });
+          setP(42 + Math.round(step * (i + 1)));
+          await ms(72);
+        }
+
+        push({ t: 'div' });
+        push({ t: 'ok', text: `${items.length} records loaded.` });
+
+      } catch {
+        push({ t: 'err', text: 'fetch failed — fallback mode.' });
+        setP(64);
+      }
+
+      await ms(200);
+
+      // ── 5. brew analysis ─────────────────────────────────────
+      push({ t: 'cmd', text: 'brew --analyze --context now' });
+      setP(74);
+      await ms(200);
+      const { brewLines, rec } = brewParams(items);
+      push({ t: 'div' });
+      for (const bl of brewLines) {
+        push({ t: 'out', text: bl, dim: true });
+        await ms(65);
+      }
+      push({ t: 'div' });
+      await ms(160);
+      push({ t: 'amber', text: `→  ${rec}` });
+      setP(92);
+      await ms(300);
+
+      // ── 6. ready ─────────────────────────────────────────────
+      if (!alive()) return;
+      push({ t: 'div' });
+      push({ t: 'amber', text: 'READY.' });
+      push({ t: 'div' });
+      setP(100);
+      await ms(1100);
+
+      if (!alive()) return;
+      setE(true);
+      await ms(950);
+      if (!alive()) return;
+      setV(false);
+      onFinish();
+    }
+
+    run();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  if (!visible) return null;
+
+  const lastLine = lines[lines.length - 1];
+
+  return (
+    <div
+      className="fixed inset-0 z-[1000] flex flex-col"
+      style={{
+        background: 'var(--bg)',
+        opacity:    exiting ? 0 : 1,
+        transition: exiting ? 'opacity 0.95s ease' : 'none',
+      }}
+    >
+      {/* ── Centered wrapper ── */}
+      <div className="flex-1 flex flex-col items-center justify-center px-6">
+
+        {/* ── Brand ── */}
+        <div className="text-center mb-10 w-full max-w-[580px]">
+          <p
+            className="font-mono font-medium tracking-[0.32em] mb-1
+              text-[clamp(10px,1.05vw,12px)] select-none"
+            style={{ color: 'var(--amber3)' }}
+          >
+            SIKŌ COFFEE
+          </p>
+          <p
+            className="font-serif font-light tracking-[0.14em]
+              text-[clamp(9px,0.9vw,11px)] select-none"
+            style={{ color: 'rgba(212,160,23,0.35)' }}
+          >
+            ◂ SYSTEM TERMINAL ▸
+          </p>
+        </div>
+
+        {/* ── Progress bar ── */}
+        <div className="w-full max-w-[580px] mb-10">
+          <ProgressBar value={progress} />
+        </div>
+
+        {/* ── Log area ── */}
+        <div
+          className="w-full max-w-[580px]"
+          style={{
+            height: '38vh',
+            maskImage:       'linear-gradient(to bottom, transparent 0%, black 14%, black 100%)',
+            WebkitMaskImage: 'linear-gradient(to bottom, transparent 0%, black 14%, black 100%)',
+            overflow: 'hidden',
+          }}
+        >
+          <div
+            ref={logRef}
+            className="h-full overflow-y-auto"
+            style={{ scrollbarWidth: 'none' }}
+          >
+            {lines.map((line, i) => (
+              <TermLine
+                key={i}
+                line={line}
+                cursor={i === lines.length - 1 && line === lastLine && progress < 100}
+              />
+            ))}
+            <div className="h-6" />
+          </div>
+        </div>
+
+      </div>
+
+      {/* ── Skip ── */}
+      <div className="flex justify-end px-10 pb-7">
+        <button
+          onClick={() => {
+            setE(true);
+            setTimeout(() => { setV(false); onFinish(); }, 950);
+          }}
+          className="font-mono text-[11px] tracking-[0.2em]
+            bg-transparent border-none cursor-pointer select-none
+            transition-colors duration-400"
+          style={{ color: 'rgba(212,160,23,0.22)' }}
+          onMouseEnter={e => (e.currentTarget.style.color = 'rgba(212,160,23,0.72)')}
+          onMouseLeave={e => (e.currentTarget.style.color = 'rgba(212,160,23,0.22)')}
+        >
+          skip →
+        </button>
+      </div>
+    </div>
+  );
+}

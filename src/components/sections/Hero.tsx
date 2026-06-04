@@ -1,18 +1,22 @@
 export default function Hero() {
   return (
-    <section id="hero" className="relative min-h-screen flex items-center justify-center z-[2]">
-      <div className="text-center">
+    <section
+      id="hero"
+      className="relative min-h-screen flex items-center justify-center z-[2]"
+    >
+      <div className="text-center px-8">
         <p
           className="hero-tagline font-serif font-light tracking-[0.1em] leading-[1.85]
-            text-[clamp(20px,3.8vw,44px)] text-[#E8EAEE] mb-[14px]"
+            text-[clamp(22px,4vw,46px)]"
+          style={{ color: 'var(--cream)' }}
           data-reveal
         >
           暗闇の向こうに、光がある。
         </p>
         <span
-          className="hero-tagline-en block font-serif italic font-light
-            text-[clamp(11px,1.6vw,17px)] tracking-[0.18em]
-            text-[rgba(232,234,238,0.45)] mb-[52px]"
+          className="hero-tagline-en block font-mono font-light mt-3
+            text-[clamp(10px,1.2vw,13px)] tracking-[0.22em]"
+          style={{ color: 'var(--amber2)' }}
           data-reveal
           data-d="1"
         >
@@ -21,8 +25,9 @@ export default function Hero() {
         <a
           href="#story"
           id="hero-scroll-link"
-          className="hero-scroll inline-block text-[rgba(184,190,200,0.36)]
-            font-serif text-xl cursor-pointer no-underline"
+          className="hero-scroll inline-block mt-14 font-serif text-xl
+            cursor-pointer no-underline"
+          style={{ color: 'rgba(212,160,23,0.35)' }}
           data-reveal
           data-d="2"
         >
@@ -30,5 +35,5 @@ export default function Hero() {
         </a>
       </div>
     </section>
-  )
+  );
 }
