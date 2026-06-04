@@ -7,9 +7,9 @@
 }
 
 :root {
-  --bg:      #090909;
-  --bg2:     #141414;
-  --surface: #242428;
+  --bg:      #111114;
+  --bg2:     #18181e;
+  --surface: #26262c;
   --gold:    #B8BEC8;
   --gold2:   #787E8A;
   --cream:   #E8EAEE;
@@ -62,7 +62,7 @@ body {
 
 .wisp {
   position: absolute; border-radius: 50%;
-  background: radial-gradient(ellipse at 42% 48%, rgba(184,190,200,0.09), transparent 65%);
+  background: radial-gradient(ellipse at 42% 48%, rgba(200,208,220,0.18), transparent 65%);
   filter: url(#sd) blur(24px);
   animation: drift var(--dur, 22s) ease-in-out infinite var(--delay, 0s);
   opacity: 0;
@@ -71,7 +71,7 @@ body {
 @keyframes drift {
   0%   { transform: translate(0,0) scale(1) rotate(0deg); opacity: 0; }
   10%  { opacity: 1; }
-  88%  { opacity: .65; }
+  88%  { opacity: .75; }
   100% { transform: translate(var(--tx,40px), var(--ty,-90px)) scale(1.2) rotate(var(--rot,9deg)); opacity: 0; }
 }
 
@@ -86,13 +86,13 @@ body {
 main {
   position: relative;
   background: linear-gradient(to bottom,
-    #090909 0%,  #0e0e12 12%, #0a0a0e 24%, #090909 36%,
-    #0c0c0c 48%, #0a0a0a 60%, #0d0d11 72%, #090909 83%,
-    #0b0b0f 92%, #090909 100%);
+    #111114 0%,  #141418 12%, #111116 24%, #111114 36%,
+    #131313 48%, #111111 60%, #141418 72%, #111114 83%,
+    #121216 92%, #111114 100%);
   z-index: 1;
 }
 
-footer { background: linear-gradient(to bottom, #090909, #060606); }
+footer { background: linear-gradient(to bottom, #111114, #0d0d10); }
 
 /* ── Scroll reveals ── */
 [data-reveal] { opacity: 0; }
