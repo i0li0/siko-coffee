@@ -9,7 +9,7 @@ export default function SmokeCanvas() {
     const canvas = canvasRef.current!
     const ctx    = canvas.getContext('2d')!
     let W: number, H: number
-    let smokeAlpha = 0.09
+    let smokeAlpha = 0.18
     let rafId: number
 
     function resize() {
@@ -27,8 +27,8 @@ export default function SmokeCanvas() {
       reset() {
         this.x       = W * (0.05 + Math.random() * 0.9)
         this.y       = H * (0.35 + Math.random() * 0.65)
-        this.vx      = (Math.random() - 0.5) * 0.35
-        this.vy      = -(0.25 + Math.random() * 0.38)
+        this.vx      = (Math.random() - 0.5) * 0.22
+        this.vy      = -(0.14 + Math.random() * 0.22)
         this.size    = 28 + Math.random() * 55
         this.life    = 0
         this.maxLife = 360 + Math.random() * 280
