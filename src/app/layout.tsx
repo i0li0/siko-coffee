@@ -6,6 +6,7 @@ import {
   IBM_Plex_Serif,
 } from 'next/font/google';
 import { SpeedInsights } from '@vercel/speed-insights/next';
+import { GoogleAnalytics } from '@next/third-parties/google';
 import './globals.css';
 
 const cormorant = Cormorant_Garamond({
@@ -44,6 +45,9 @@ export const metadata: Metadata = {
   title: 'Sikō Coffee',
   description: '思考・試行・至高・嗜好 — Think, try, pursue, savor.',
   robots: { index: true, follow: true },
+  ...(process.env.NEXT_PUBLIC_GOOGLE_SITE_VERIFICATION && {
+    verification: { google: process.env.NEXT_PUBLIC_GOOGLE_SITE_VERIFICATION },
+  }),
   openGraph: {
     title: 'Sikō Coffee',
     description: '暗闇の向こうに、光がある。',
@@ -74,6 +78,9 @@ export default function RootLayout({
         {children}
         <SpeedInsights />
       </body>
+      {process.env.NEXT_PUBLIC_GA_MEASUREMENT_ID && (
+        <GoogleAnalytics gaId={process.env.NEXT_PUBLIC_GA_MEASUREMENT_ID} />
+      )}
     </html>
   );
 }
