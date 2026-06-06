@@ -1,24 +1,11 @@
-'use client';
+import Image from 'next/image';
+import type { InstagramPost } from '@/lib/instagram';
 
-import { useState, useEffect } from 'react';
-
-interface Post {
-  id: string;
-  media_type: 'IMAGE' | 'VIDEO' | 'CAROUSEL_ALBUM';
-  media_url: string;
-  thumbnail_url?: string;
-  permalink: string;
+interface Props {
+  posts: InstagramPost[];
 }
 
-export default function Instagram() {
-  const [posts, setPosts] = useState<Post[]>([]);
-
-  useEffect(() => {
-    fetch('/api/instagram')
-      .then((r) => r.json())
-      .then((data) => { if (Array.isArray(data) && data.length > 0) setPosts(data); })
-      .catch(() => {});
-  }, []);
+export default function Instagram({ posts }: Props) {
 
   if (posts.length === 0) return null;
 
@@ -63,13 +50,12 @@ export default function Instagram() {
               rel="noopener noreferrer"
               className="group aspect-square relative overflow-hidden block"
             >
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
+              <Image
                 src={src}
                 alt=""
-                loading="lazy"
-                className="w-full h-full object-cover
-                  transition-[opacity,transform] duration-500
+                fill
+                sizes="(max-width: 700px) 150px, 155px"
+                className="object-cover transition-[opacity,transform] duration-500
                   group-hover:opacity-70 group-hover:scale-105"
               />
               {post.media_type === 'VIDEO' && (
