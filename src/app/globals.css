@@ -87,10 +87,7 @@ body {
 /* ── Main background gradient ── */
 main {
   position: relative;
-  background: linear-gradient(to bottom,
-    #080600 0%,  #0c0a00 12%, #080600 24%, #0a0800 36%,
-    #080600 48%, #0b0900 60%, #080600 72%, #080600 83%,
-    #0a0800 92%, #080600 100%);
+  background: transparent;
   z-index: 1;
 }
 
