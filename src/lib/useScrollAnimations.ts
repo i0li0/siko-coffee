@@ -21,7 +21,7 @@ export function useScrollAnimations(ready: boolean) {
 
       /* ── Lenis smooth scroll ── */
       const lenis = new Lenis({
-        duration: 1.6,
+        duration: 0.9,
         easing: (t: number) => Math.min(1, 1.001 - Math.pow(2, -10 * t)),
       })
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
