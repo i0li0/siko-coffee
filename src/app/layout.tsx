@@ -42,6 +42,13 @@ const ibmSerif = IBM_Plex_Serif({
 
 export const metadata: Metadata = {
   metadataBase: new URL('https://sikocoffee.com'),
+  icons: {
+    icon: [
+      { url: '/images/logo/logo_siko8.png', sizes: '512x512', type: 'image/png' },
+      { url: '/images/logo/logo_siko8.png', sizes: '192x192', type: 'image/png' },
+    ],
+    apple: '/images/logo/logo_siko8.png',
+  },
   title: 'Sikō Coffee',
   description: '思考・試行・至高・嗜好 — Think, try, pursue, savor.',
   robots: { index: true, follow: true },
