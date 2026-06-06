@@ -2,16 +2,17 @@ export default function Location() {
   return (
     <section id="location"
       className="relative min-h-screen flex items-start justify-center z-[2]
-        py-[120px] px-20 max-[700px]:py-[90px] max-[700px]:px-[22px]">
-      <div className="location-inner max-w-[720px] w-full grid gap-[80px] items-start
-        grid-cols-[1fr_1fr] max-[700px]:grid-cols-1 max-[700px]:gap-[44px]">
+        py-[90px] min-[700px]:py-[120px]"
+      style={{ paddingInline: 'clamp(24px, 6.25vw, 80px)' }}>
+      <div className="location-inner max-w-[720px] w-full grid gap-[44px] items-start
+        grid-cols-1 min-[700px]:grid-cols-[1fr_1fr] min-[700px]:gap-[80px]">
         <div className="loc-address" data-reveal>
           <h2 className="font-serif font-light text-[clamp(22px,3.5vw,38px)]
             text-[#E8EAEE] leading-[1.7] mb-7 tracking-[0.05em]">
             夜の静けさの中で、<br />あなたを待っています。
           </h2>
           <p className="font-sans font-extralight text-[13px]
-            text-[rgba(232,234,238,0.45)] leading-[2.1] tracking-[0.06em]">
+            text-[rgba(232,234,238,0.45)] leading-[2.1] tracking-[0.06em] break-all max-[700px]:break-normal max-[700px]:text-[12px]">
             〒781-8008<br />
             高知県高知市潮新町１丁目１２−１７<br />
             コパン荘10号室
@@ -43,7 +44,7 @@ export default function Location() {
               className="flex justify-between items-center py-[13px]
                 border-b border-[rgba(232,234,238,0.06)]
                 text-[12.5px] text-[rgba(232,234,238,0.45)]
-                font-extralight tracking-[0.05em]"
+                font-extralight tracking-[0.05em] max-[700px]:text-[11.5px] max-[700px]:tracking-[0.02em]"
             >
               <span>{row.label}</span>
               <span>{row.hours}</span>

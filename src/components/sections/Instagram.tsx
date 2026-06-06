@@ -26,7 +26,8 @@ export default function Instagram() {
     <section
       id="sns"
       className="relative min-h-screen flex flex-col items-center justify-center z-[2]
-        gap-[44px] py-[110px] px-10 max-[700px]:py-[90px] max-[700px]:px-[22px]"
+        gap-[44px] py-[90px] min-[700px]:py-[110px]"
+      style={{ paddingInline: 'clamp(24px, 6.25vw, 80px)' }}
     >
       <div className="sns-header text-center">
         <h2
