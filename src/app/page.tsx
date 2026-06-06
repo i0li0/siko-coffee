@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import dynamic from 'next/dynamic';
 import Nav from '@/components/layout/Nav';
 import DotNav from '@/components/layout/DotNav';
@@ -19,9 +19,13 @@ const SmokeField  = dynamic(() => import('@/components/SmokeField'),          { 
 const SmokeCanvas = dynamic(() => import('@/components/canvas/SmokeCanvas'),  { ssr: false });
 
 export default function Home() {
-  const [opened, setOpened] = useState(false);
+  const [opened, setOpened] = useState<boolean | null>(null);
 
-  useScrollAnimations(opened);
+  useEffect(() => {
+    setOpened(!!sessionStorage.getItem('loader_shown'));
+  }, []);
+
+  useScrollAnimations(opened === true);
 
   return (
     <>
@@ -29,12 +33,12 @@ export default function Home() {
       <SmokeField />
       <SmokeCanvas />
 
-      {!opened && (
-        <TerminalLoader onFinish={() => setOpened(true)} />
+      {opened === false && (
+        <TerminalLoader onFinish={() => { sessionStorage.setItem('loader_shown', '1'); setOpened(true); }} />
       )}
 
-      <Nav visible={opened} />
-      <DotNav visible={opened} />
+      <Nav visible={opened === true} />
+      <DotNav visible={opened === true} />
 
       <main>
         <Hero />

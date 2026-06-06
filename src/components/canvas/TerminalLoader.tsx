@@ -199,15 +199,48 @@ export default function TerminalLoader({ onFinish }: Props) {
       setP(20);
       await ms(220);
 
-      // ── 3. connect ───────────────────────────────────────────
-      push({ t: 'cmd', text: 'connect --host api.sikocoffee.com' });
-      const t1 = performance.now();
-      try { await fetch('/api/menu', { method: 'HEAD' }); } catch { /* ignore */ }
-      const pingMs = Math.round(performance.now() - t1);
-      push({ t: 'out', text: `latency  : ${pingMs}ms`, dim: true });
-      push({ t: 'ok',  text: 'connected.' });
+      // ── 3. service check ────────────────────────────────────
+      push({ t: 'cmd', text: 'check --services all' });
+      await ms(120);
+
+      const endpoints = [
+        { label: '/api/health',    url: '/api/health',    method: 'GET'  },
+        { label: '/api/menu',      url: '/api/menu',      method: 'HEAD' },
+        { label: '/api/instagram', url: '/api/instagram', method: 'HEAD' },
+      ];
+
+      const results = await Promise.all(
+        endpoints.map(async ep => {
+          const t = performance.now();
+          let status = 0;
+          try {
+            const r = await fetch(ep.url, { method: ep.method });
+            status = r.status;
+          } catch { status = 0; }
+          return { label: ep.label, status, ms: Math.round(performance.now() - t) };
+        })
+      );
+
+      const col = 22;
+      push({ t: 'div' });
+      push({ t: 'out', text: `${'endpoint'.padEnd(col)}  status    ms`, dim: true });
+      push({ t: 'div' });
+      for (const r of results) {
+        const ok  = r.status >= 200 && r.status < 400;
+        const icon = ok ? '●' : '○';
+        const statusStr = r.status > 0 ? String(r.status) : '---';
+        push({
+          t:    ok ? 'ok' : 'err',
+          text: `${icon}  ${r.label.padEnd(col)}  ${statusStr.padEnd(6)}  ${r.ms}ms`,
+        });
+        await ms(80);
+      }
+      push({ t: 'div' });
+
+      const allOk = results.every(r => r.status >= 200 && r.status < 400);
+      push({ t: allOk ? 'ok' : 'err', text: allOk ? 'all services online.' : 'some services unavailable.' });
       setP(30);
-      await ms(180);
+      await ms(200);
 
       // ── 4. fetch menu ─────────────────────────────────────────
       push({ t: 'cmd', text: 'GET /api/menu  --verbose' });
@@ -365,11 +398,20 @@ export default function TerminalLoader({ onFinish }: Props) {
             setTimeout(() => { setV(false); onFinish(); }, 950);
           }}
           className="font-mono text-[11px] tracking-[0.2em]
-            bg-transparent border-none cursor-pointer select-none
-            transition-colors duration-400"
-          style={{ color: 'rgba(212,160,23,0.22)' }}
-          onMouseEnter={e => (e.currentTarget.style.color = 'rgba(212,160,23,0.72)')}
-          onMouseLeave={e => (e.currentTarget.style.color = 'rgba(212,160,23,0.22)')}
+            bg-transparent cursor-pointer select-none
+            transition-all duration-300 px-3 py-1.5 rounded"
+          style={{
+            color:  'rgba(212,160,23,0.65)',
+            border: '1px solid rgba(212,160,23,0.25)',
+          }}
+          onMouseEnter={e => {
+            e.currentTarget.style.color  = 'rgba(212,160,23,1)';
+            e.currentTarget.style.border = '1px solid rgba(212,160,23,0.7)';
+          }}
+          onMouseLeave={e => {
+            e.currentTarget.style.color  = 'rgba(212,160,23,0.65)';
+            e.currentTarget.style.border = '1px solid rgba(212,160,23,0.25)';
+          }}
         >
           skip →
         </button>
