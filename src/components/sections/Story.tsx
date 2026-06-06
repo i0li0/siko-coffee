@@ -9,8 +9,9 @@ export default function Story() {
   return (
     <section id="story"
       className="relative min-h-screen flex flex-col items-center justify-center z-[2]
-        gap-[72px] py-[140px] px-[60px]
-        max-[700px]:gap-[54px] max-[700px]:py-[90px] max-[700px]:px-[22px]">
+        gap-[54px] py-[90px]
+        min-[700px]:gap-[72px] min-[700px]:py-[140px]"
+      style={{ paddingInline: 'clamp(24px, 6.25vw, 80px)' }}>
 
       {/* Terminal section label */}
       <div

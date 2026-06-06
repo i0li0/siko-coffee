@@ -3,8 +3,10 @@ import Image from 'next/image'
 export default function Footer() {
   return (
     <footer className="relative z-[2] flex justify-between items-center
-      px-20 py-[38px] border-t border-[rgba(184,190,200,0.07)]
-      max-[700px]:flex-col max-[700px]:gap-[10px] max-[700px]:text-center max-[700px]:px-5 max-[700px]:py-7">
+      flex-col gap-[10px] text-center py-7
+      min-[700px]:flex-row min-[700px]:gap-0 min-[700px]:text-left min-[700px]:py-[38px]
+      border-t border-[rgba(184,190,200,0.07)]"
+      style={{ paddingInline: 'clamp(24px, 6.25vw, 80px)' }}>
       <div className="flex items-center gap-[10px]">
         <Image
           src="/images/logo/logo_siko8.png"

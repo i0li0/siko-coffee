@@ -26,7 +26,8 @@ export default function Menu() {
   return (
     <section id="menu"
       className="relative min-h-screen flex items-start justify-center z-[2]
-        py-[130px] px-20 max-[700px]:py-[90px] max-[700px]:px-[22px]">
+        py-[90px] min-[700px]:py-[130px]"
+      style={{ paddingInline: 'clamp(24px, 6.25vw, 80px)' }}>
       <div className="menu-inner w-full max-w-[660px] relative max-[700px]:max-w-full">
 
         {/* Watermark */}
@@ -54,7 +55,7 @@ export default function Menu() {
         {items.map((item, i) => (
           <div
             key={item.id}
-            className="menu-item py-[26px] grid gap-6 items-start cursor-default
+            className="menu-item py-[26px] grid gap-4 items-start cursor-default
               border-b first:border-t"
             style={{
               borderColor: 'rgba(212,160,23,0.1)',
