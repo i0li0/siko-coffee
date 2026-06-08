@@ -18,6 +18,15 @@
   --dim:     rgba(232,224,208,0.45);
   --faint:   rgba(232,224,208,0.14);
 
+  /* 管理画面用変数 */
+  --admin-sidebar-bg:  #0d0d14;
+  --admin-card-bg:     #0f0f1a;
+  --admin-border:      rgba(240,235,224,0.08);
+  --admin-accent:      #B8BEC8;
+  --admin-danger:      #e05555;
+  --admin-success:     #6aaa3a;
+  --admin-warning:     #c8963a;
+
   /* レスポンシブ水平パディング */
   --section-px: 24px;
 }
