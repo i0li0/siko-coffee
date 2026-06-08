@@ -1,11 +1,20 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
-import { DynamoDBDocumentClient, ScanCommand } from '@aws-sdk/lib-dynamodb';
+import { ScanCommand } from '@aws-sdk/lib-dynamodb';
+import { getDocClient, TABLE } from '@/lib/db';
 import { stripe } from '@/lib/stripe';
 import type { Product } from '@/types/product';
 
 export const dynamic = 'force-dynamic';
 export const preferredRegion = ['hnd1'];
+
+const ALLOWED_HOSTS = new Set(['sikocoffee.com', 'www.sikocoffee.com']);
+
+function getOrigin(req: NextRequest): string {
+  const host = req.headers.get('host') ?? '';
+  if (host.includes('localhost')) return `http://${host}`;
+  if (host.endsWith('.vercel.app') || ALLOWED_HOSTS.has(host)) return `https://${host}`;
+  return 'https://www.sikocoffee.com';
+}
 
 export async function POST(req: NextRequest) {
   const formData = await req.formData();
@@ -15,12 +24,9 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Invalid productId' }, { status: 400 });
   }
 
-  const client = new DynamoDBClient({ region: 'ap-northeast-1' });
-  const docClient = DynamoDBDocumentClient.from(client);
-
-  const result = await docClient.send(
+  const result = await getDocClient().send(
     new ScanCommand({
-      TableName: 'siko-coffee-products',
+      TableName: TABLE.PRODUCTS,
       FilterExpression: 'id = :id',
       ExpressionAttributeValues: { ':id': productId },
     }),
@@ -32,8 +38,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Product not available' }, { status: 404 });
   }
 
-  const host = req.headers.get('host') ?? 'www.sikocoffee.com';
-  const origin = host.includes('localhost') ? `http://${host}` : `https://${host}`;
+  const origin = getOrigin(req);
 
   const session = await stripe.checkout.sessions.create({
     mode: 'payment',
@@ -56,5 +61,9 @@ export async function POST(req: NextRequest) {
     cancel_url: `${origin}/shop`,
   });
 
-  return NextResponse.redirect(session.url!, { status: 303 });
+  if (!session.url) {
+    return NextResponse.json({ error: 'Failed to create checkout session' }, { status: 500 });
+  }
+
+  return NextResponse.redirect(session.url, { status: 303 });
 }

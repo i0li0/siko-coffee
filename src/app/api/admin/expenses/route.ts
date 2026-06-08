@@ -1,13 +1,10 @@
-import { DynamoDBClient } from '@aws-sdk/client-dynamodb'
-import { DynamoDBDocumentClient, QueryCommand, PutCommand, DeleteCommand } from '@aws-sdk/lib-dynamodb'
+import { QueryCommand, PutCommand, DeleteCommand } from '@aws-sdk/lib-dynamodb'
 import { NextRequest, NextResponse } from 'next/server'
+import { getDocClient, TABLE } from '@/lib/db'
 import { verifyAdminToken } from '@/lib/adminAuth'
 import { randomUUID } from 'crypto'
 
 export const preferredRegion = ['hnd1']
-
-const client = new DynamoDBClient({ region: 'ap-northeast-1' })
-const docClient = DynamoDBDocumentClient.from(client)
 
 // GET /api/admin/expenses?yearMonth=YYYY-MM
 export async function GET(request: NextRequest) {
@@ -21,8 +18,8 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const result = await docClient.send(new QueryCommand({
-      TableName: 'siko-coffee-expenses',
+    const result = await getDocClient().send(new QueryCommand({
+      TableName: TABLE.EXPENSES,
       KeyConditionExpression: 'yearMonth = :ym',
       ExpressionAttributeValues: { ':ym': yearMonth },
     }))
@@ -61,8 +58,8 @@ export async function POST(request: NextRequest) {
       createdAt: new Date().toISOString(),
     }
 
-    await docClient.send(new PutCommand({
-      TableName: 'siko-coffee-expenses',
+    await getDocClient().send(new PutCommand({
+      TableName: TABLE.EXPENSES,
       Item: item,
     }))
 
@@ -87,8 +84,8 @@ export async function DELETE(request: NextRequest) {
   }
 
   try {
-    await docClient.send(new DeleteCommand({
-      TableName: 'siko-coffee-expenses',
+    await getDocClient().send(new DeleteCommand({
+      TableName: TABLE.EXPENSES,
       Key: { yearMonth, id },
     }))
     return NextResponse.json({ ok: true })

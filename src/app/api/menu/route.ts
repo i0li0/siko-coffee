@@ -1,19 +1,16 @@
-import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
-import { DynamoDBDocumentClient, ScanCommand } from '@aws-sdk/lib-dynamodb';
+import { ScanCommand } from '@aws-sdk/lib-dynamodb';
 import { NextResponse } from 'next/server';
+import { getDocClient, TABLE } from '@/lib/db';
 import type { Product } from '@/types/product';
 
 export const preferredRegion = ['hnd1'];
 export const revalidate = 3600;
 
-const client = new DynamoDBClient({ region: 'ap-northeast-1' });
-const docClient = DynamoDBDocumentClient.from(client);
-
 export async function GET() {
   try {
-    const result = await docClient.send(
+    const result = await getDocClient().send(
       new ScanCommand({
-        TableName: 'siko-coffee-products',
+        TableName: TABLE.PRODUCTS,
         // type は DynamoDB の予約語なので ExpressionAttributeNames でエスケープ
         FilterExpression: '#type = :menu AND isPublic = :true',
         ExpressionAttributeNames: { '#type': 'type' },

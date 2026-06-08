@@ -1,12 +1,9 @@
-import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
-import { DynamoDBDocumentClient, GetCommand, PutCommand } from '@aws-sdk/lib-dynamodb';
+import { GetCommand, PutCommand } from '@aws-sdk/lib-dynamodb';
 import { NextResponse } from 'next/server';
+import { getDocClient, TABLE } from '@/lib/db';
 
 export const preferredRegion = ['hnd1'];
 
-const client = new DynamoDBClient({ region: 'ap-northeast-1' });
-const docClient = DynamoDBDocumentClient.from(client);
-const CONFIG_TABLE = 'siko-coffee-config';
 const TOKEN_KEY = 'INSTAGRAM_ACCESS_TOKEN';
 
 export async function GET(req: Request) {
@@ -16,11 +13,13 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
+  const db = getDocClient();
+
   // 現在のトークンを DynamoDB → env var の順で取得
   let currentToken: string | undefined;
   try {
-    const result = await docClient.send(
-      new GetCommand({ TableName: CONFIG_TABLE, Key: { configKey: TOKEN_KEY } }),
+    const result = await db.send(
+      new GetCommand({ TableName: TABLE.CONFIG, Key: { configKey: TOKEN_KEY } }),
     );
     currentToken = result.Item?.value as string | undefined;
   } catch {
@@ -49,9 +48,9 @@ export async function GET(req: Request) {
 
   // 新しいトークンを DynamoDB に保存
   const refreshedAt = new Date().toISOString();
-  await docClient.send(
+  await db.send(
     new PutCommand({
-      TableName: CONFIG_TABLE,
+      TableName: TABLE.CONFIG,
       Item: { configKey: TOKEN_KEY, value: newToken, expiresIn, refreshedAt },
     }),
   );

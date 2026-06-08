@@ -1,15 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-
-type InventoryItem = {
-  beanId: string
-  name: string
-  origin: string
-  currentStock: number
-  alertThreshold: number
-  updatedAt: string
-}
+import type { InventoryItem } from '@/types/admin'
 
 type PurchaseForm = {
   date: string
