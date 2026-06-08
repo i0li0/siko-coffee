@@ -4,44 +4,11 @@ import { useEffect, useState, useMemo } from 'react'
 import dynamic from 'next/dynamic'
 import MetricCard from '@/components/admin/MetricCard'
 import GoalProgress from '@/components/admin/GoalProgress'
+import { FIXED_RENT, GOAL_PROFIT, GOAL_CUPS } from '@/lib/constants'
+import { CATEGORY_LABEL } from '@/lib/expenseCategories'
+import type { SaleItem, ExpenseItem, InventoryItem } from '@/types/admin'
 
 const MonthlyChart = dynamic(() => import('@/components/admin/MonthlyChart'), { ssr: false })
-
-const FIXED_RENT = 31000
-const GOAL_PROFIT = 500000
-const GOAL_CUPS = 1000
-
-type SaleItem = {
-  date: string
-  type: string
-  quantity: number
-  amount: number
-  customers?: number
-}
-
-type ExpenseItem = {
-  yearMonth: string
-  id: string
-  date: string
-  category: string
-  amount: number
-  description: string
-  allocationRate: number
-  allocatedAmount: number
-}
-
-type InventoryItem = {
-  beanId: string
-  name: string
-  currentStock: number
-  alertThreshold: number
-}
-
-const CATEGORY_LABELS: Record<string, string> = {
-  rent: '地代家賃', purchase: '仕入高', supplies: '消耗品費',
-  communication: '通信費', advertising: '広告宣伝費', transport: '旅費交通費',
-  outsourcing: '外注費', utilities: '水道光熱費', misc: '雑費',
-}
 
 function yen(n: number) {
   return `¥${n.toLocaleString()}`
@@ -130,7 +97,6 @@ export default function DashboardPage() {
   ))
   const cupsNeeded = Math.ceil((GOAL_CUPS - yearCups) / weeksLeft)
 
-  // 月次グラフデータ
   const chartData = useMemo(() => {
     const months = getMonthList(currentYear)
     const labels = months.map(m => `${parseInt(m.split('-')[1])}月`)
@@ -142,7 +108,6 @@ export default function DashboardPage() {
     return { labels, profits }
   }, [yearSales, yearExpenses, currentYear])
 
-  // 今月の経費内訳
   const expenseByCategory = useMemo(() => {
     const map: Record<string, number> = { rent: FIXED_RENT }
     for (const e of monthExpenses) {
@@ -280,7 +245,7 @@ export default function DashboardPage() {
               {expenseByCategory.map(([cat, amount]) => (
                 <div key={cat} style={{ display: 'flex', justifyContent: 'space-between' }}>
                   <span style={{ fontSize: '13px', color: 'var(--dim)' }}>
-                    {CATEGORY_LABELS[cat] ?? cat}
+                    {CATEGORY_LABEL[cat] ?? cat}
                   </span>
                   <span style={{ fontSize: '13px', color: 'var(--cream)' }}>{yen(amount)}</span>
                 </div>

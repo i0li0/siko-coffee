@@ -3,19 +3,8 @@
 import { useEffect, useState, useMemo } from 'react'
 import Link from 'next/link'
 import { CATEGORY_LABEL } from '@/lib/expenseCategories'
-
-type ExpenseItem = {
-  yearMonth: string
-  id: string
-  date: string
-  category: string
-  amount: number
-  description: string
-  allocationRate: number
-  allocatedAmount: number
-}
-
-const FIXED_RENT = 31000
+import { FIXED_RENT } from '@/lib/constants'
+import type { ExpenseItem } from '@/types/admin'
 
 function yen(n: number) { return `¥${Math.round(n).toLocaleString()}` }
 

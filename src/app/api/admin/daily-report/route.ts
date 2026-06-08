@@ -1,13 +1,11 @@
-import { DynamoDBClient } from '@aws-sdk/client-dynamodb'
-import { DynamoDBDocumentClient, QueryCommand, PutCommand } from '@aws-sdk/lib-dynamodb'
+import { QueryCommand, PutCommand } from '@aws-sdk/lib-dynamodb'
 import { NextRequest, NextResponse } from 'next/server'
+import { getDocClient, TABLE } from '@/lib/db'
 import { verifyAdminToken } from '@/lib/adminAuth'
+import { DRINK_UNIT_PRICE, BEAN_PRICE_PER_100G } from '@/lib/constants'
 import { randomUUID } from 'crypto'
 
 export const preferredRegion = ['hnd1']
-
-const client = new DynamoDBClient({ region: 'ap-northeast-1' })
-const docClient = DynamoDBDocumentClient.from(client)
 
 // GET /api/admin/daily-report?date=YYYY-MM-DD
 export async function GET(request: NextRequest) {
@@ -18,15 +16,16 @@ export async function GET(request: NextRequest) {
   if (!date) return NextResponse.json({ error: 'date required' }, { status: 400 })
 
   try {
+    const db = getDocClient()
     const [salesRes, expensesRes] = await Promise.all([
-      docClient.send(new QueryCommand({
-        TableName: 'siko-coffee-sales',
+      db.send(new QueryCommand({
+        TableName: TABLE.SALES,
         KeyConditionExpression: '#date = :date',
         ExpressionAttributeNames: { '#date': 'date' },
         ExpressionAttributeValues: { ':date': date },
       })),
-      docClient.send(new QueryCommand({
-        TableName: 'siko-coffee-expenses',
+      db.send(new QueryCommand({
+        TableName: TABLE.EXPENSES,
         KeyConditionExpression: 'yearMonth = :ym',
         FilterExpression: '#date = :date',
         ExpressionAttributeNames: { '#date': 'date' },
@@ -54,17 +53,18 @@ export async function POST(request: NextRequest) {
 
     const now = new Date().toISOString()
     const yearMonth = date.slice(0, 7)
+    const db = getDocClient()
     const puts: Promise<unknown>[] = []
 
     if (Number(drinkCount) > 0) {
-      puts.push(docClient.send(new PutCommand({
-        TableName: 'siko-coffee-sales',
+      puts.push(db.send(new PutCommand({
+        TableName: TABLE.SALES,
         Item: {
           date,
           id: randomUUID(),
           type: 'drink',
           quantity: Number(drinkCount),
-          amount: Number(drinkCount) * 500,
+          amount: Number(drinkCount) * DRINK_UNIT_PRICE,
           customers: Number(customers) || 0,
           ...(memo && { memo }),
           createdAt: now,
@@ -73,22 +73,22 @@ export async function POST(request: NextRequest) {
     }
 
     if (Number(beanGrams) > 0) {
-      puts.push(docClient.send(new PutCommand({
-        TableName: 'siko-coffee-sales',
+      puts.push(db.send(new PutCommand({
+        TableName: TABLE.SALES,
         Item: {
           date,
           id: randomUUID(),
           type: 'beans',
           quantity: Number(beanGrams),
-          amount: Math.round((Number(beanGrams) / 100) * 1000),
+          amount: Math.round((Number(beanGrams) / 100) * BEAN_PRICE_PER_100G),
           createdAt: now,
         },
       })))
     }
 
     if (Number(suppliesCost) > 0) {
-      puts.push(docClient.send(new PutCommand({
-        TableName: 'siko-coffee-expenses',
+      puts.push(db.send(new PutCommand({
+        TableName: TABLE.EXPENSES,
         Item: {
           yearMonth,
           id: randomUUID(),

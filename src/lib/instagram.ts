@@ -1,5 +1,5 @@
-import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
-import { DynamoDBDocumentClient, GetCommand } from '@aws-sdk/lib-dynamodb';
+import { GetCommand } from '@aws-sdk/lib-dynamodb';
+import { getDocClient, TABLE } from '@/lib/db';
 
 export interface InstagramPost {
   id: string;
@@ -11,15 +11,14 @@ export interface InstagramPost {
 
 const FIELDS = 'id,media_type,media_url,thumbnail_url,permalink';
 const LIMIT = 8;
+const TOKEN_KEY = 'INSTAGRAM_ACCESS_TOKEN';
 
 async function getToken(): Promise<string | undefined> {
   try {
-    const client = new DynamoDBClient({ region: 'ap-northeast-1' });
-    const docClient = DynamoDBDocumentClient.from(client);
-    const result = await docClient.send(
+    const result = await getDocClient().send(
       new GetCommand({
-        TableName: 'siko-coffee-config',
-        Key: { configKey: 'INSTAGRAM_ACCESS_TOKEN' },
+        TableName: TABLE.CONFIG,
+        Key: { configKey: TOKEN_KEY },
       }),
     );
     if (result.Item?.value) return result.Item.value as string;

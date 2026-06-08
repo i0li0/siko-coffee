@@ -1,13 +1,10 @@
-import { DynamoDBClient } from '@aws-sdk/client-dynamodb'
-import { DynamoDBDocumentClient, ScanCommand, PutCommand, UpdateCommand, DeleteCommand } from '@aws-sdk/lib-dynamodb'
+import { ScanCommand, PutCommand, UpdateCommand, DeleteCommand } from '@aws-sdk/lib-dynamodb'
 import { NextRequest, NextResponse } from 'next/server'
+import { getDocClient, TABLE } from '@/lib/db'
 import { verifyAdminToken } from '@/lib/adminAuth'
 import { randomUUID } from 'crypto'
 
 export const preferredRegion = ['hnd1']
-
-const client = new DynamoDBClient({ region: 'ap-northeast-1' })
-const docClient = DynamoDBDocumentClient.from(client)
 
 // GET /api/admin/inventory
 export async function GET(request: NextRequest) {
@@ -15,8 +12,8 @@ export async function GET(request: NextRequest) {
   if (denied) return denied
 
   try {
-    const result = await docClient.send(new ScanCommand({
-      TableName: 'siko-coffee-inventory',
+    const result = await getDocClient().send(new ScanCommand({
+      TableName: TABLE.INVENTORY,
     }))
     return NextResponse.json(result.Items ?? [])
   } catch (err) {
@@ -43,10 +40,9 @@ export async function POST(request: NextRequest) {
 
     const id = beanId ?? randomUUID()
 
-    // 既存チェック → なければ新規作成、あれば在庫加算
     if (beanId) {
-      await docClient.send(new UpdateCommand({
-        TableName: 'siko-coffee-inventory',
+      await getDocClient().send(new UpdateCommand({
+        TableName: TABLE.INVENTORY,
         Key: { beanId: id },
         UpdateExpression: 'SET currentStock = currentStock + :amount, updatedAt = :now',
         ExpressionAttributeValues: {
@@ -66,8 +62,8 @@ export async function POST(request: NextRequest) {
       updatedAt: new Date().toISOString(),
     }
 
-    await docClient.send(new PutCommand({
-      TableName: 'siko-coffee-inventory',
+    await getDocClient().send(new PutCommand({
+      TableName: TABLE.INVENTORY,
       Item: item,
     }))
 
@@ -91,8 +87,8 @@ export async function PATCH(request: NextRequest) {
       return NextResponse.json({ error: 'beanId and currentStock are required' }, { status: 400 })
     }
 
-    await docClient.send(new UpdateCommand({
-      TableName: 'siko-coffee-inventory',
+    await getDocClient().send(new UpdateCommand({
+      TableName: TABLE.INVENTORY,
       Key: { beanId },
       UpdateExpression: 'SET currentStock = :stock, updatedAt = :now',
       ExpressionAttributeValues: {
@@ -120,8 +116,8 @@ export async function DELETE(request: NextRequest) {
   }
 
   try {
-    await docClient.send(new DeleteCommand({
-      TableName: 'siko-coffee-inventory',
+    await getDocClient().send(new DeleteCommand({
+      TableName: TABLE.INVENTORY,
       Key: { beanId },
     }))
     return NextResponse.json({ ok: true })

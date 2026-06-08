@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
-import { DynamoDBDocumentClient, PutCommand } from '@aws-sdk/lib-dynamodb';
+import { PutCommand } from '@aws-sdk/lib-dynamodb';
 import { SESClient, SendEmailCommand } from '@aws-sdk/client-ses';
+import { getDocClient, TABLE } from '@/lib/db';
 import { stripe } from '@/lib/stripe';
 import type Stripe from 'stripe';
 
@@ -30,13 +30,9 @@ export async function POST(req: NextRequest) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const shipping = (session as any).shipping_details as { name?: string; address?: { postal_code?: string; state?: string; city?: string; line1?: string; line2?: string } } | null;
 
-    const docClient = DynamoDBDocumentClient.from(
-      new DynamoDBClient({ region: 'ap-northeast-1' }),
-    );
-
-    await docClient.send(
+    await getDocClient().send(
       new PutCommand({
-        TableName: 'siko-coffee-orders',
+        TableName: TABLE.ORDERS,
         Item: {
           id: session.id,
           customerEmail: session.customer_details?.email ?? null,
@@ -51,7 +47,6 @@ export async function POST(req: NextRequest) {
       }),
     );
 
-    // オーナーへのメール通知（ベストエフォート）
     try {
       const ses = new SESClient({ region: 'ap-northeast-1' });
       const addr = shipping?.address;

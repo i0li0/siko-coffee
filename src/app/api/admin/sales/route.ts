@@ -1,13 +1,10 @@
-import { DynamoDBClient } from '@aws-sdk/client-dynamodb'
-import { DynamoDBDocumentClient, QueryCommand, ScanCommand, PutCommand, DeleteCommand } from '@aws-sdk/lib-dynamodb'
+import { QueryCommand, ScanCommand, PutCommand, DeleteCommand } from '@aws-sdk/lib-dynamodb'
 import { NextRequest, NextResponse } from 'next/server'
+import { getDocClient, TABLE } from '@/lib/db'
 import { verifyAdminToken } from '@/lib/adminAuth'
 import { randomUUID } from 'crypto'
 
 export const preferredRegion = ['hnd1']
-
-const client = new DynamoDBClient({ region: 'ap-northeast-1' })
-const docClient = DynamoDBDocumentClient.from(client)
 
 // GET /api/admin/sales?date=YYYY-MM-DD  or  ?month=YYYY-MM
 export async function GET(request: NextRequest) {
@@ -20,8 +17,8 @@ export async function GET(request: NextRequest) {
 
   try {
     if (date) {
-      const result = await docClient.send(new QueryCommand({
-        TableName: 'siko-coffee-sales',
+      const result = await getDocClient().send(new QueryCommand({
+        TableName: TABLE.SALES,
         KeyConditionExpression: '#date = :date',
         ExpressionAttributeNames: { '#date': 'date' },
         ExpressionAttributeValues: { ':date': date },
@@ -31,8 +28,8 @@ export async function GET(request: NextRequest) {
 
     if (month) {
       // パーティションキー（date）は完全一致のみのため Scan + Filter で月集計
-      const result = await docClient.send(new ScanCommand({
-        TableName: 'siko-coffee-sales',
+      const result = await getDocClient().send(new ScanCommand({
+        TableName: TABLE.SALES,
         FilterExpression: 'begins_with(#date, :month)',
         ExpressionAttributeNames: { '#date': 'date' },
         ExpressionAttributeValues: { ':month': month },
@@ -71,8 +68,8 @@ export async function POST(request: NextRequest) {
       createdAt: new Date().toISOString(),
     }
 
-    await docClient.send(new PutCommand({
-      TableName: 'siko-coffee-sales',
+    await getDocClient().send(new PutCommand({
+      TableName: TABLE.SALES,
       Item: item,
     }))
 
@@ -97,8 +94,8 @@ export async function DELETE(request: NextRequest) {
   }
 
   try {
-    await docClient.send(new DeleteCommand({
-      TableName: 'siko-coffee-sales',
+    await getDocClient().send(new DeleteCommand({
+      TableName: TABLE.SALES,
       Key: { date, id },
     }))
     return NextResponse.json({ ok: true })
