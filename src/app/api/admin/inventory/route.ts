@@ -41,15 +41,24 @@ export async function POST(request: NextRequest) {
     const id = beanId ?? randomUUID()
 
     if (beanId) {
-      await getDocClient().send(new UpdateCommand({
-        TableName: TABLE.INVENTORY,
-        Key: { beanId: id },
-        UpdateExpression: 'SET currentStock = currentStock + :amount, updatedAt = :now',
-        ExpressionAttributeValues: {
-          ':amount': Number(purchaseAmount),
-          ':now': new Date().toISOString(),
-        },
-      }))
+      try {
+        await getDocClient().send(new UpdateCommand({
+          TableName: TABLE.INVENTORY,
+          Key: { beanId: id },
+          ConditionExpression: 'attribute_exists(beanId)',
+          UpdateExpression: 'SET currentStock = currentStock + :amount, updatedAt = :now',
+          ExpressionAttributeValues: {
+            ':amount': Number(purchaseAmount),
+            ':now': new Date().toISOString(),
+          },
+        }))
+      } catch (err: unknown) {
+        const name = (err as { name?: string }).name
+        if (name === 'ConditionalCheckFailedException') {
+          return NextResponse.json({ error: 'Bean not found' }, { status: 404 })
+        }
+        throw err
+      }
       return NextResponse.json({ beanId: id, added: Number(purchaseAmount) })
     }
 

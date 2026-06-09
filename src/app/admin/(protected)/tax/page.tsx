@@ -2,8 +2,7 @@
 
 import { useEffect, useState, useMemo } from 'react'
 import { CATEGORY_LABEL } from '@/lib/expenseCategories'
-
-const FIXED_RENT = 31000
+import { FIXED_RENT } from '@/lib/constants'
 const MONTHS = ['01','02','03','04','05','06','07','08','09','10','11','12']
 
 type SaleItem  = { type: string; amount: number }
@@ -42,7 +41,7 @@ export default function TaxPage() {
       setAllSales(sales)
       setAllExpenses(expenses)
       setLoading(false)
-    })
+    }).catch(() => setLoading(false))
   }, [year])
 
   const income = useMemo(() => {
@@ -197,7 +196,7 @@ export default function TaxPage() {
           <div key={cat} style={rowStyle}>
             <span style={{ fontSize: '13px', color: 'var(--dim)' }}>
               {CATEGORY_LABEL[cat] ?? cat}
-              {cat === 'rent' && <span style={{ marginLeft: '6px', fontSize: '10px', color: 'var(--admin-warning)' }}>（固定 ¥31,000×12）</span>}
+              {cat === 'rent' && <span style={{ marginLeft: '6px', fontSize: '10px', color: 'var(--admin-warning)' }}>（固定 ¥{FIXED_RENT.toLocaleString()}×12）</span>}
             </span>
             <span style={{ fontSize: '14px', color: 'var(--cream)' }}>{yen(amt)}</span>
           </div>

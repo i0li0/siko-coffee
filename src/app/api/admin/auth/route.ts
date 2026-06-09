@@ -29,6 +29,7 @@ export async function POST(request: NextRequest) {
   const totpSecret = process.env.ADMIN_TOTP_SECRET
   if (totpSecret) {
     if (!totpCode) {
+      recordFailure(ip)
       return NextResponse.json({ requireTotp: true }, { status: 200 })
     }
     const result = verifySync({ token: String(totpCode), secret: totpSecret })

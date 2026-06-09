@@ -40,26 +40,32 @@ export async function POST(req: NextRequest) {
 
   const origin = getOrigin(req);
 
-  const session = await stripe.checkout.sessions.create({
-    mode: 'payment',
-    locale: 'ja',
-    line_items: [
-      {
-        price_data: {
-          currency: 'jpy',
-          product_data: {
-            name: product.name,
-            description: product.description || undefined,
+  let session;
+  try {
+    session = await stripe.checkout.sessions.create({
+      mode: 'payment',
+      locale: 'ja',
+      line_items: [
+        {
+          price_data: {
+            currency: 'jpy',
+            product_data: {
+              name: product.name,
+              description: product.description || undefined,
+            },
+            unit_amount: product.price,
           },
-          unit_amount: product.price,
+          quantity: 1,
         },
-        quantity: 1,
-      },
-    ],
-    shipping_address_collection: { allowed_countries: ['JP'] },
-    success_url: `${origin}/shop/success?session_id={CHECKOUT_SESSION_ID}`,
-    cancel_url: `${origin}/shop`,
-  });
+      ],
+      shipping_address_collection: { allowed_countries: ['JP'] },
+      success_url: `${origin}/shop/success?session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: `${origin}/shop`,
+    });
+  } catch (err) {
+    console.error('Stripe session create error:', err);
+    return NextResponse.json({ error: 'Failed to create checkout session' }, { status: 500 });
+  }
 
   if (!session.url) {
     return NextResponse.json({ error: 'Failed to create checkout session' }, { status: 500 });

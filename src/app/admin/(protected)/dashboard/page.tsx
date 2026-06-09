@@ -22,9 +22,12 @@ function getMonthList(year: number): string[] {
 }
 
 export default function DashboardPage() {
-  const now = new Date()
-  const currentYear = now.getFullYear()
-  const currentMonth = `${currentYear}-${String(now.getMonth() + 1).padStart(2, '0')}`
+  const [currentYear, currentMonth] = useMemo(() => {
+    const now = new Date()
+    const y = now.getFullYear()
+    const m = `${y}-${String(now.getMonth() + 1).padStart(2, '0')}`
+    return [y, m]
+  }, [])
 
   const [monthSales, setMonthSales] = useState<SaleItem[]>([])
   const [monthExpenses, setMonthExpenses] = useState<ExpenseItem[]>([])
@@ -32,6 +35,7 @@ export default function DashboardPage() {
   const [yearSales, setYearSales] = useState<Record<string, SaleItem[]>>({})
   const [yearExpenses, setYearExpenses] = useState<Record<string, ExpenseItem[]>>({})
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState(false)
 
   useEffect(() => {
     async function load() {
@@ -61,7 +65,7 @@ export default function DashboardPage() {
       setYearExpenses(ye)
       setLoading(false)
     }
-    load()
+    load().catch(() => { setLoading(false); setLoadError(true) })
   }, [currentMonth, currentYear])
 
   const monthRevenue = useMemo(
@@ -93,7 +97,7 @@ export default function DashboardPage() {
   }, [yearSales, currentYear])
 
   const weeksLeft = Math.max(1, Math.ceil(
-    (new Date(currentYear, 11, 31).getTime() - now.getTime()) / (7 * 24 * 60 * 60 * 1000)
+    (new Date(currentYear, 11, 31).getTime() - Date.now()) / (7 * 24 * 60 * 60 * 1000)
   ))
   const cupsNeeded = Math.ceil((GOAL_CUPS - yearCups) / weeksLeft)
 
@@ -147,12 +151,20 @@ export default function DashboardPage() {
     )
   }
 
+  if (loadError) {
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '60vh' }}>
+        <p style={{ color: 'var(--admin-danger)', fontSize: '13px', letterSpacing: '0.10em' }}>データの読み込みに失敗しました。ページを再読み込みしてください。</p>
+      </div>
+    )
+  }
+
   return (
     <div style={{ maxWidth: '1100px' }}>
       <h2 style={{ fontSize: '18px', fontWeight: 300, letterSpacing: '0.10em', marginBottom: '28px', color: 'var(--cream)' }}>
         ダッシュボード
         <span style={{ fontSize: '11px', color: 'var(--dim)', marginLeft: '12px' }}>
-          {currentYear}年{now.getMonth() + 1}月
+          {currentYear}年{parseInt(currentMonth.split('-')[1])}月
         </span>
       </h2>
 

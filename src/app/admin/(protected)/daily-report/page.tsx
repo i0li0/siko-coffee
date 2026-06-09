@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useMemo } from 'react'
+import { DRINK_UNIT_PRICE, BEAN_PRICE_PER_100G } from '@/lib/constants'
 
 const today = () => new Date().toISOString().slice(0, 10)
 
@@ -25,8 +26,8 @@ export default function DailyReportPage() {
   const supplies = Number(suppliesCost) || 0
 
   const summary = useMemo(() => {
-    const drinkRevenue = drinks * 500
-    const beanRevenue = Math.round((beans / 100) * 1000)
+    const drinkRevenue = drinks * DRINK_UNIT_PRICE
+    const beanRevenue = Math.round((beans / 100) * BEAN_PRICE_PER_100G)
     const total = drinkRevenue + beanRevenue
     const profit = total - supplies
     const unitPrice = cust > 0 ? Math.round(total / cust) : 0
