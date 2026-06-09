@@ -3,9 +3,13 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 
+type Step = 'password' | 'totp'
+
 export default function AdminLoginPage() {
   const router = useRouter()
+  const [step, setStep] = useState<Step>('password')
   const [password, setPassword] = useState('')
+  const [totpCode, setTotpCode] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
 
@@ -14,20 +18,51 @@ export default function AdminLoginPage() {
     setError('')
     setLoading(true)
 
+    const body = step === 'totp'
+      ? { password, totpCode }
+      : { password }
+
     const res = await fetch('/api/admin/auth', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ password }),
+      body: JSON.stringify(body),
     })
 
     setLoading(false)
 
-    if (res.ok) {
-      router.push('/admin/dashboard')
-    } else {
-      setError('パスワードが違います')
-      setPassword('')
+    if (res.status === 429) {
+      const data = await res.json()
+      setError(data.error ?? 'しばらく待ってから再試行してください')
+      return
     }
+
+    if (res.ok) {
+      const data = await res.json()
+      if (data.requireTotp) {
+        setStep('totp')
+        setTotpCode('')
+        return
+      }
+      router.push('/admin/dashboard')
+      return
+    }
+
+    const data = await res.json().catch(() => ({}))
+    setError(data.error ?? 'エラーが発生しました')
+    if (step === 'totp') setTotpCode('')
+    else setPassword('')
+  }
+
+  const inputStyle: React.CSSProperties = {
+    background: 'var(--admin-sidebar-bg)',
+    border: '1px solid var(--admin-border)',
+    borderRadius: '6px',
+    padding: '12px 16px',
+    color: 'var(--cream)',
+    fontSize: '14px',
+    fontFamily: 'var(--font-sans)',
+    outline: 'none',
+    width: '100%',
   }
 
   return (
@@ -64,39 +99,64 @@ export default function AdminLoginPage() {
           letterSpacing: '0.10em',
           marginBottom: '40px',
         }}>
-          管理画面
+          {step === 'totp' ? '認証コード' : '管理画面'}
         </p>
 
         <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-          <input
-            type="password"
-            value={password}
-            onChange={e => setPassword(e.target.value)}
-            placeholder="パスワード"
-            required
-            autoFocus
-            style={{
-              background: 'var(--admin-sidebar-bg)',
-              border: '1px solid var(--admin-border)',
-              borderRadius: '6px',
-              padding: '12px 16px',
-              color: 'var(--cream)',
-              fontSize: '14px',
-              fontFamily: 'var(--font-sans)',
-              outline: 'none',
-              width: '100%',
-            }}
-          />
+          {step === 'password' ? (
+            <input
+              type="password"
+              value={password}
+              onChange={e => setPassword(e.target.value)}
+              placeholder="パスワード"
+              required
+              autoFocus
+              style={inputStyle}
+            />
+          ) : (
+            <>
+              <p style={{ fontSize: '12px', color: 'var(--dim)', textAlign: 'center', margin: 0 }}>
+                認証アプリの6桁のコードを入力してください
+              </p>
+              <input
+                type="text"
+                inputMode="numeric"
+                pattern="[0-9]{6}"
+                maxLength={6}
+                value={totpCode}
+                onChange={e => setTotpCode(e.target.value.replace(/\D/g, ''))}
+                placeholder="000000"
+                required
+                autoFocus
+                style={{ ...inputStyle, textAlign: 'center', letterSpacing: '0.3em', fontSize: '20px' }}
+              />
+              <button
+                type="button"
+                onClick={() => { setStep('password'); setError(''); setTotpCode('') }}
+                style={{
+                  background: 'transparent',
+                  border: 'none',
+                  color: 'var(--dim)',
+                  fontSize: '12px',
+                  cursor: 'pointer',
+                  textAlign: 'center',
+                  padding: 0,
+                }}
+              >
+                ← パスワード入力に戻る
+              </button>
+            </>
+          )}
 
           {error && (
-            <p style={{ fontSize: '13px', color: 'var(--admin-danger)', textAlign: 'center' }}>
+            <p style={{ fontSize: '13px', color: 'var(--admin-danger)', textAlign: 'center', margin: 0 }}>
               {error}
             </p>
           )}
 
           <button
             type="submit"
-            disabled={loading || !password}
+            disabled={loading || (step === 'password' ? !password : totpCode.length !== 6)}
             style={{
               background: loading ? 'transparent' : 'var(--admin-accent)',
               border: '1px solid var(--admin-accent)',
@@ -110,7 +170,7 @@ export default function AdminLoginPage() {
               transition: 'opacity 0.2s',
             }}
           >
-            {loading ? '確認中...' : 'ログイン'}
+            {loading ? '確認中...' : step === 'totp' ? '認証' : 'ログイン'}
           </button>
         </form>
       </div>
