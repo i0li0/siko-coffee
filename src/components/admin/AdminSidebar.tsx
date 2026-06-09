@@ -11,6 +11,7 @@ const NAV_ITEMS = [
   { href: '/admin/inventory',     label: '在庫管理' },
   { href: '/admin/orders',        label: 'EC注文' },
   { href: '/admin/monthly',       label: '月次レポート' },
+  { href: '/admin/settings',      label: '設定' },
 ] as const
 
 export default function AdminSidebar() {
