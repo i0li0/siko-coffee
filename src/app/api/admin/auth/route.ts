@@ -31,12 +31,22 @@ export async function POST(request: NextRequest) {
     if (!totpCode) {
       return NextResponse.json({ requireTotp: true }, { status: 200 })
     }
+    // Use a separate key for TOTP failures so password-guess lockout and
+    // TOTP-guess lockout don't interfere with each other.
+    const totpKey = `${ip}:totp`
+    const totpLimit = checkRateLimit(totpKey)
+    if (!totpLimit.allowed) {
+      return NextResponse.json(
+        { error: `Too many attempts. Try again in ${totpLimit.retryAfter} seconds.` },
+        { status: 429, headers: { 'Retry-After': String(totpLimit.retryAfter) } }
+      )
+    }
     const result = verifySync({ token: String(totpCode), secret: totpSecret })
-    const isValid = result.valid
-    if (!isValid) {
-      recordFailure(ip)
+    if (!result.valid) {
+      recordFailure(totpKey)
       return NextResponse.json({ error: '認証コードが違います' }, { status: 401 })
     }
+    resetFailures(totpKey)
   }
 
   resetFailures(ip)

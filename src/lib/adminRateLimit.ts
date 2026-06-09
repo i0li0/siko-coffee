@@ -18,7 +18,8 @@ export function checkRateLimit(ip: string): { allowed: boolean; retryAfter?: num
     return { allowed: false, retryAfter: Math.ceil((entry.lockedUntil - now) / 1000) }
   }
 
-  if (now - entry.firstAttempt > WINDOW_MS) {
+  // Lockout expired — reset and allow fresh window
+  if (entry.lockedUntil > 0 || now - entry.firstAttempt > WINDOW_MS) {
     store.delete(ip)
     return { allowed: true }
   }
