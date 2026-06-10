@@ -41,7 +41,7 @@ const ibmSerif = IBM_Plex_Serif({
 });
 
 export const metadata: Metadata = {
-  metadataBase: new URL('https://sikocoffee.com'),
+  metadataBase: new URL('https://www.sikocoffee.com'),
   icons: {
     icon: [
       { url: '/images/logo/logo_siko8.png', sizes: '512x512', type: 'image/png' },
@@ -52,6 +52,7 @@ export const metadata: Metadata = {
   title: 'Sikō Coffee',
   description: '思考・試行・至高・嗜好 — Think, try, pursue, savor.',
   robots: { index: true, follow: true },
+  alternates: { canonical: 'https://www.sikocoffee.com' },
   ...(process.env.NEXT_PUBLIC_GOOGLE_SITE_VERIFICATION && {
     verification: { google: process.env.NEXT_PUBLIC_GOOGLE_SITE_VERIFICATION },
   }),
@@ -61,12 +62,12 @@ export const metadata: Metadata = {
     locale: 'ja_JP',
     images: ['/images/og.jpg'],
     type: 'website',
-    url: 'https://sikocoffee.com',
+    url: 'https://www.sikocoffee.com',
   },
   twitter: {
     card: 'summary_large_image',
     title: 'Sikō Coffee',
-    description: '暗闘の向こうに、光がある。',
+    description: '暗闇の向こうに、光がある。',
     images: ['/images/og.jpg'],
   },
 };
