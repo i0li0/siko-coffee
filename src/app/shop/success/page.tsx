@@ -14,18 +14,17 @@ export default async function SuccessPage({
 }) {
   const { session_id } = await searchParams;
 
-  if (!session_id) {
-    redirect('/shop');
-  }
+  if (!session_id) redirect('/shop');
 
+  let paid = false;
   try {
     const session = await stripe.checkout.sessions.retrieve(session_id);
-    if (session.payment_status !== 'paid') {
-      redirect('/shop');
-    }
+    paid = session.payment_status === 'paid';
   } catch {
     redirect('/shop');
   }
+
+  if (!paid) redirect('/shop');
 
   return (
     <>

@@ -1,13 +1,13 @@
 import { Suspense } from 'react';
 import Link from 'next/link';
-import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
-import { DynamoDBDocumentClient, ScanCommand } from '@aws-sdk/lib-dynamodb';
+import { ScanCommand } from '@aws-sdk/lib-dynamodb';
 import Nav from '@/components/layout/Nav';
 import Footer from '@/components/layout/Footer';
 import ShopSidebar from '@/components/shop/ShopSidebar';
 import ShopProductList from '@/components/shop/ShopProductList';
 import type { Product } from '@/types/product';
 import { SHOP_CATEGORIES, type CategoryKey } from '@/lib/shopCategories';
+import { getDocClient, TABLE } from '@/lib/db';
 
 export const preferredRegion = ['hnd1'];
 export const dynamic = 'force-dynamic';
@@ -18,10 +18,8 @@ export const metadata = {
 };
 
 async function getProducts(): Promise<Product[]> {
-  const client = new DynamoDBClient({ region: 'ap-northeast-1' });
-  const docClient = DynamoDBDocumentClient.from(client);
-  const result = await docClient.send(
-    new ScanCommand({ TableName: 'siko-coffee-products' }),
+  const result = await getDocClient().send(
+    new ScanCommand({ TableName: TABLE.PRODUCTS }),
   );
   const items = (result.Items ?? []) as Product[];
   return items

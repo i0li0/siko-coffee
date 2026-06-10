@@ -1,28 +1,10 @@
-'use client';
-
-import { useState, useEffect } from 'react';
 import type { Product } from '@/types/product';
 
-const FALLBACK: Product[] = [
-  { id: 'menu_01', name: 'Hot Coffee',     nameJp: 'ホットコーヒー',       description: 'ディカフェで、深夜でも。',   price: 500,  type: 'menu', isPublic: true, canCustomize: false },
-  { id: 'menu_02', name: 'Iced Coffee',    nameJp: 'アイスコーヒー',       description: '冷たく、静かに。',           price: 500,  type: 'menu', isPublic: true, canCustomize: false },
-  { id: 'menu_03', name: 'Oat Latte',      nameJp: 'オーツオレ',           description: 'やさしさが溶けている。',     price: 500,  type: 'menu', isPublic: true, canCustomize: false },
-  { id: 'menu_04', name: 'Iced Oat Latte', nameJp: 'アイスオーツオレ',     description: '夜の終わりに、もう一杯。',   price: 500,  type: 'menu', isPublic: true, canCustomize: false },
-  { id: 'menu_05', name: 'Decaf Beans',    nameJp: 'ディカフェ豆（100g）', description: '自宅で、あの静けさを。',     price: 1000, type: 'menu', isPublic: true, canCustomize: false },
-];
+interface Props {
+  items: Product[];
+}
 
-export default function Menu() {
-  const [items, setItems] = useState<Product[]>(FALLBACK);
-
-  useEffect(() => {
-    fetch('/api/menu')
-      .then((r) => r.json())
-      .then((data: Product[]) => {
-        if (Array.isArray(data) && data.length > 0) setItems(data);
-      })
-      .catch(() => {});
-  }, []);
-
+export default function Menu({ items }: Props) {
   return (
     <section id="menu"
       className="relative min-h-screen flex items-start justify-center z-[2]

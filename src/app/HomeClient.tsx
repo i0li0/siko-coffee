@@ -14,6 +14,7 @@ import Contact from '@/components/sections/Contact';
 import { useScrollAnimations } from '@/lib/useScrollAnimations';
 import TerminalLoader from '@/components/canvas/TerminalLoader';
 import type { InstagramPost } from '@/lib/instagram';
+import type { Product } from '@/types/product';
 
 const StarsCanvas = dynamic(() => import('@/components/canvas/StarsCanvas'), { ssr: false });
 const SmokeField  = dynamic(() => import('@/components/SmokeField'),          { ssr: false });
@@ -21,9 +22,10 @@ const SmokeCanvas = dynamic(() => import('@/components/canvas/SmokeCanvas'),  { 
 
 interface Props {
   instagramPosts: InstagramPost[];
+  menuItems: Product[];
 }
 
-export default function HomeClient({ instagramPosts }: Props) {
+export default function HomeClient({ instagramPosts, menuItems }: Props) {
   const [opened, setOpened] = useState<boolean | null>(null);
 
   useEffect(() => {
@@ -50,7 +52,7 @@ export default function HomeClient({ instagramPosts }: Props) {
       <main>
         <Hero />
         <Story />
-        <Menu />
+        <Menu items={menuItems} />
         <Location />
         <Instagram posts={instagramPosts} />
         <Contact />

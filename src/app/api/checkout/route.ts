@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { ScanCommand } from '@aws-sdk/lib-dynamodb';
+import * as Sentry from '@sentry/nextjs';
 import { getDocClient, TABLE } from '@/lib/db';
 import { stripe } from '@/lib/stripe';
 import type { Product } from '@/types/product';
@@ -63,7 +64,7 @@ export async function POST(req: NextRequest) {
       cancel_url: `${origin}/shop`,
     });
   } catch (err) {
-    console.error('Stripe session create error:', err);
+    Sentry.captureException(err, { tags: { route: 'checkout' } });
     return NextResponse.json({ error: 'Failed to create checkout session' }, { status: 500 });
   }
 

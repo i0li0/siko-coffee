@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { PutCommand } from '@aws-sdk/lib-dynamodb';
 import { SESClient, SendEmailCommand } from '@aws-sdk/client-ses';
+import * as Sentry from '@sentry/nextjs';
 import { getDocClient, TABLE } from '@/lib/db';
 import { stripe } from '@/lib/stripe';
 import type Stripe from 'stripe';
@@ -79,7 +80,7 @@ export async function POST(req: NextRequest) {
       );
     } catch (emailErr) {
       // メール失敗でも注文は保存済み
-      console.error('SES email failed:', (emailErr as Error).message);
+      Sentry.captureException(emailErr, { tags: { route: 'webhook/stripe', step: 'ses' } });
     }
   }
 
