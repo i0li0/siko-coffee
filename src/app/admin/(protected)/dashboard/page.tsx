@@ -96,9 +96,9 @@ export default function DashboardPage() {
     }, 0)
   }, [yearSales, currentYear])
 
-  const weeksLeft = Math.max(1, Math.ceil(
-    (new Date(currentYear, 11, 31).getTime() - Date.now()) / (7 * 24 * 60 * 60 * 1000)
-  ))
+  const weeksLeft = useMemo(() => Math.max(1, Math.ceil(
+    (new Date(currentYear, 11, 31).getTime() - new Date().getTime()) / (7 * 24 * 60 * 60 * 1000)
+  )), [currentYear])
   const cupsNeeded = Math.ceil((GOAL_CUPS - yearCups) / weeksLeft)
 
   const chartData = useMemo(() => {

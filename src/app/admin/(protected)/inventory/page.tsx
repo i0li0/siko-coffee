@@ -34,10 +34,11 @@ export default function InventoryPage() {
       .then(r => r.json())
       .then((data: InventoryItem[]) => {
         setInventory(Array.isArray(data) ? data.sort((a, b) => a.name.localeCompare(b.name, 'ja')) : [])
-        setLoading(false)
       })
+      .finally(() => setLoading(false))
   }
 
+  // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => { loadInventory() }, [])
 
   function openNewForm() {
@@ -62,8 +63,6 @@ export default function InventoryPage() {
     try {
       const purchaseGrams = Math.round(Number(form.purchaseKg) * 1000)
       const price = Number(form.purchasePrice)
-      const yearMonth = form.date.slice(0, 7)
-
       // 在庫を更新（新規 or 加算）
       const invRes = await fetch('/api/admin/inventory', {
         method: 'POST',

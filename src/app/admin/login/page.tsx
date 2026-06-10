@@ -22,11 +22,18 @@ export default function AdminLoginPage() {
       ? { password, totpCode }
       : { password }
 
-    const res = await fetch('/api/admin/auth', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    })
+    let res: Response
+    try {
+      res = await fetch('/api/admin/auth', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+    } catch {
+      setLoading(false)
+      setError('ネットワークエラーが発生しました')
+      return
+    }
 
     setLoading(false)
 

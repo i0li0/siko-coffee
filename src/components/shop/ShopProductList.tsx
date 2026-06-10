@@ -1,3 +1,6 @@
+'use client';
+
+import { useState } from 'react';
 import type { Product } from '@/types/product';
 import type { CategoryKey } from '@/lib/shopCategories';
 
@@ -6,8 +9,34 @@ interface Props {
   category: CategoryKey;
 }
 
+function BuyButton({ productId }: { productId: string }) {
+  const [submitting, setSubmitting] = useState(false);
+
+  return (
+    <form
+      action="/api/checkout"
+      method="POST"
+      className="mt-[18px]"
+      onSubmit={() => setSubmitting(true)}
+    >
+      <input type="hidden" name="productId" value={productId} />
+      <button
+        type="submit"
+        disabled={submitting}
+        className="font-sans font-extralight text-[9.5px] tracking-[0.22em]
+          text-[rgba(184,190,200,0.55)] border border-[rgba(184,190,200,0.22)]
+          px-[22px] py-[10px] cursor-pointer bg-transparent
+          transition-all duration-300
+          hover:text-[#B8BEC8] hover:border-[rgba(184,190,200,0.5)]
+          disabled:opacity-40 disabled:cursor-not-allowed"
+      >
+        {submitting ? '処理中...' : '購入する'}
+      </button>
+    </form>
+  );
+}
+
 export default function ShopProductList({ products, category }: Props) {
-  // 準備中カテゴリが選択されている場合
   if (category === 'drip' || category === 'goods') {
     return (
       <div className="flex flex-col items-center justify-center py-[80px] gap-[24px]">
@@ -27,7 +56,6 @@ export default function ShopProductList({ products, category }: Props) {
     );
   }
 
-  // 商品がない場合
   if (products.length === 0) {
     return (
       <p className="font-serif italic text-[13px] text-[rgba(232,234,238,0.3)]
@@ -73,21 +101,7 @@ export default function ShopProductList({ products, category }: Props) {
             </span>
           </div>
 
-          {!product.canCustomize && (
-            <form action="/api/checkout" method="POST" className="mt-[18px]">
-              <input type="hidden" name="productId" value={product.id} />
-              <button
-                type="submit"
-                className="font-sans font-extralight text-[9.5px] tracking-[0.22em]
-                  text-[rgba(184,190,200,0.55)] border border-[rgba(184,190,200,0.22)]
-                  px-[22px] py-[10px] cursor-pointer bg-transparent
-                  transition-all duration-300
-                  hover:text-[#B8BEC8] hover:border-[rgba(184,190,200,0.5)]"
-              >
-                購入する
-              </button>
-            </form>
-          )}
+          {!product.canCustomize && <BuyButton productId={product.id} />}
         </div>
       ))}
     </div>

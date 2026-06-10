@@ -19,7 +19,7 @@ export default function Instagram({ posts }: Props) {
       <div className="sns-header text-center">
         <h2
           className="font-serif font-light text-[clamp(16px,2.6vw,26px)]
-            text-[rgba(232,234,238,0.45)] tracking-[0.22em] mb-2"
+            text-[rgba(232,234,238,0.58)] tracking-[0.22em] mb-2"
         >
           Instagram
         </h2>
@@ -48,6 +48,7 @@ export default function Instagram({ posts }: Props) {
               href={post.permalink}
               target="_blank"
               rel="noopener noreferrer"
+              aria-label={post.caption ? `Instagram: ${post.caption.slice(0, 60)}` : 'Sikō Coffee Instagram投稿を見る'}
               className="group aspect-square relative overflow-hidden block"
             >
               <Image

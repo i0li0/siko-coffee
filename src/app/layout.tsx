@@ -41,7 +41,7 @@ const ibmSerif = IBM_Plex_Serif({
 });
 
 export const metadata: Metadata = {
-  metadataBase: new URL('https://sikocoffee.com'),
+  metadataBase: new URL('https://www.sikocoffee.com'),
   icons: {
     icon: [
       { url: '/images/logo/logo_siko8.png', sizes: '512x512', type: 'image/png' },
@@ -52,6 +52,7 @@ export const metadata: Metadata = {
   title: 'Sikō Coffee',
   description: '思考・試行・至高・嗜好 — Think, try, pursue, savor.',
   robots: { index: true, follow: true },
+  alternates: { canonical: 'https://www.sikocoffee.com' },
   ...(process.env.NEXT_PUBLIC_GOOGLE_SITE_VERIFICATION && {
     verification: { google: process.env.NEXT_PUBLIC_GOOGLE_SITE_VERIFICATION },
   }),
@@ -61,14 +62,44 @@ export const metadata: Metadata = {
     locale: 'ja_JP',
     images: ['/images/og.jpg'],
     type: 'website',
-    url: 'https://sikocoffee.com',
+    url: 'https://www.sikocoffee.com',
   },
   twitter: {
     card: 'summary_large_image',
     title: 'Sikō Coffee',
-    description: '暗闘の向こうに、光がある。',
+    description: '暗闇の向こうに、光がある。',
     images: ['/images/og.jpg'],
   },
+};
+
+const jsonLd = {
+  '@context': 'https://schema.org',
+  '@type': 'CafeOrCoffeeShop',
+  name: 'Sikō Coffee',
+  description: 'ディカフェ専門コーヒーショップ。思考・試行・至高・嗜好の4つのしこうで構成されるブランド。',
+  url: 'https://www.sikocoffee.com',
+  telephone: null,
+  email: 'siko.is.coffee@gmail.com',
+  address: {
+    '@type': 'PostalAddress',
+    streetAddress: '潮新町１丁目１２−１７ コパン荘10号室',
+    addressLocality: '高知市',
+    addressRegion: '高知県',
+    postalCode: '781-8008',
+    addressCountry: 'JP',
+  },
+  openingHoursSpecification: [
+    {
+      '@type': 'OpeningHoursSpecification',
+      dayOfWeek: 'Saturday',
+      opens: '17:00',
+      closes: '22:00',
+    },
+  ],
+  servesCuisine: 'Coffee',
+  menu: 'https://www.sikocoffee.com/#menu',
+  hasMap: 'https://www.google.com/maps/search/?api=1&query=高知市潮新町１丁目１２−１７+コパン荘',
+  priceRange: '¥500〜¥1,000',
 };
 
 export default function RootLayout({
@@ -81,6 +112,12 @@ export default function RootLayout({
       lang="ja"
       className={`${cormorant.variable} ${ibmMono.variable} ${ibmSansJP.variable} ${ibmSerif.variable}`}
     >
+      <head>
+        <script
+          type="application/ld+json"
+          dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
+        />
+      </head>
       <body>
         {children}
         <SpeedInsights />

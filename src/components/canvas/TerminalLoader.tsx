@@ -1,7 +1,6 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import type { Product } from '@/types/product';
 
 // ── types ──────────────────────────────────────────────────────────
 type Line =
@@ -37,11 +36,10 @@ function collectEnv(): Record<string, string> {
     'connection ': conn
       ? `${conn.effectiveType ?? '—'}${conn.downlink != null ? '  ' + conn.downlink + ' Mbps' : ''}`
       : 'unknown',
-    'user-agent ': nav.userAgent.slice(0, 58) + (nav.userAgent.length > 58 ? '…' : ''),
   };
 }
 
-function brewParams(items: Product[]) {
+function brewParams() {
   const d = new Date();
   const h = d.getHours(), min = d.getMinutes();
   const dec = h + min / 60;
@@ -51,12 +49,6 @@ function brewParams(items: Product[]) {
   const bloom = temp > 92 ? '45s' : '30s';
   const period = h < 6 ? 'late-night' : h < 11 ? 'morning' : h < 17 ? 'daytime' : h < 22 ? 'evening' : 'late-night';
 
-  let rec: Product | undefined;
-  if (h >= 22 || h < 6) rec = items.find(i => i.name.toLowerCase().includes('decaf'));
-  else if (h < 11)       rec = items.find(i => i.name === 'Hot Coffee');
-  else if (h < 17)       rec = items.find(i => i.name === 'Iced Coffee');
-  else                   rec = items.find(i => i.name.includes('Latte'));
-
   return {
     brewLines: [
       `period      : ${period}`,
@@ -65,7 +57,13 @@ function brewParams(items: Product[]) {
       `brew-ratio  : ${ratio}  (coffee:water)`,
       `bloom       : ${bloom}`,
     ],
-    rec: rec ? `${rec.name}  —  ${rec.description}` : 'Hot Coffee — 一杯から。',
+    rec: h >= 22 || h < 6
+      ? 'Decaf Blend — カフェインなしで、深夜の一杯を。'
+      : h < 11
+      ? 'Hot Coffee — 朝の静けさに。'
+      : h < 17
+      ? 'Iced Coffee — 午後の光の中で。'
+      : 'Oat Latte — 夕暮れに、やさしく。',
   };
 }
 
@@ -76,7 +74,6 @@ function ProgressBar({ value }: { value: number }) {
   const pct    = String(value).padStart(3);
   return (
     <div className="flex flex-col items-center gap-3 select-none w-full">
-      {/* bar */}
       <div className="relative flex items-center gap-4">
         <span
           className="font-mono text-[clamp(12px,1.3vw,15px)] tracking-[0.05em] leading-none"
@@ -91,7 +88,6 @@ function ProgressBar({ value }: { value: number }) {
         >
           {pct}%
         </span>
-        {/* ambient glow under bar */}
         {value > 0 && (
           <span
             aria-hidden
@@ -168,6 +164,16 @@ export default function TerminalLoader({ onFinish }: Props) {
   const push = (...next: Line[]) => setL(prev => [...prev, ...next]);
   const ms   = (n: number) => new Promise<void>(r => setTimeout(r, n));
 
+  const finish = (myGen: number) => {
+    if (genRef.current !== myGen) return;
+    setE(true);
+    setTimeout(() => {
+      if (genRef.current !== myGen) return;
+      setV(false);
+      onFinish();
+    }, 950);
+  };
+
   useEffect(() => {
     const el = logRef.current;
     if (el) el.scrollTop = el.scrollHeight;
@@ -177,6 +183,9 @@ export default function TerminalLoader({ onFinish }: Props) {
     const myGen = ++genRef.current;
     const alive = () => genRef.current === myGen;
 
+    // 3-second hard cap
+    const cap = setTimeout(() => finish(myGen), 3000);
+
     async function run() {
       // ── 1. boot ─────────────────────────────────────────────
       push({ t: 'div' });
@@ -184,142 +193,58 @@ export default function TerminalLoader({ onFinish }: Props) {
       push({ t: 'out',   text: `timestamp  : ${nowStr()}`, dim: true });
       push({ t: 'out',   text: 'os         : sikocoffee-os v1.0.0', dim: true });
       push({ t: 'div' });
-      setP(6);
-      await ms(400);
+      setP(8);
+      await ms(280);
+
+      if (!alive()) return;
 
       // ── 2. env scan ──────────────────────────────────────────
       push({ t: 'cmd', text: 'scan --env client' });
-      await ms(180);
+      await ms(120);
       const env = collectEnv();
       for (const [k, v] of Object.entries(env)) {
+        if (!alive()) return;
         push({ t: 'out', text: `${k}: ${v}`, dim: true });
-        await ms(52);
+        await ms(38);
       }
       push({ t: 'ok', text: 'environment loaded.' });
-      setP(20);
-      await ms(220);
+      setP(32);
+      await ms(160);
 
-      // ── 3. service check ────────────────────────────────────
-      push({ t: 'cmd', text: 'check --services all' });
-      await ms(120);
+      if (!alive()) return;
 
-      const endpoints = [
-        { label: '/api/health',    url: '/api/health',    method: 'GET'  },
-        { label: '/api/menu',      url: '/api/menu',      method: 'HEAD' },
-        { label: '/api/instagram', url: '/api/instagram', method: 'HEAD' },
-      ];
-
-      const results = await Promise.all(
-        endpoints.map(async ep => {
-          const t = performance.now();
-          let status = 0;
-          try {
-            const r = await fetch(ep.url, { method: ep.method });
-            status = r.status;
-          } catch { status = 0; }
-          return { label: ep.label, status, ms: Math.round(performance.now() - t) };
-        })
-      );
-
-      const col = 22;
-      push({ t: 'div' });
-      push({ t: 'out', text: `${'endpoint'.padEnd(col)}  status    ms`, dim: true });
-      push({ t: 'div' });
-      for (const r of results) {
-        const ok  = r.status >= 200 && r.status < 400;
-        const icon = ok ? '●' : '○';
-        const statusStr = r.status > 0 ? String(r.status) : '---';
-        push({
-          t:    ok ? 'ok' : 'err',
-          text: `${icon}  ${r.label.padEnd(col)}  ${statusStr.padEnd(6)}  ${r.ms}ms`,
-        });
-        await ms(80);
-      }
-      push({ t: 'div' });
-
-      const allOk = results.every(r => r.status >= 200 && r.status < 400);
-      push({ t: allOk ? 'ok' : 'err', text: allOk ? 'all services online.' : 'some services unavailable.' });
-      setP(30);
-      await ms(200);
-
-      // ── 4. fetch menu ─────────────────────────────────────────
-      push({ t: 'cmd', text: 'GET /api/menu  --verbose' });
-      const t0 = performance.now();
-      let items: Product[] = [];
-
-      try {
-        const res     = await fetch('/api/menu');
-        const elapsed = Math.round(performance.now() - t0);
-        const data    = await res.json() as Product[];
-
-        push({ t: 'out', text: `status   : ${res.status} ${res.ok ? 'OK' : 'ERROR'}`, dim: true });
-        push({ t: 'out', text: `latency  : ${elapsed}ms`, dim: true });
-        push({ t: 'out', text: 'encoding : application/json; charset=utf-8', dim: true });
-
-        if (!res.ok) throw new Error(`${res.status}`);
-        items = Array.isArray(data) && data.length > 0 ? data : [];
-
-        setP(42);
-        await ms(140);
-
-        push({ t: 'div' });
-        push({ t: 'out', text: `${'id'.padEnd(10)}${'name'.padEnd(20)}${'¥'.padStart(7)}  type      avail`, dim: true });
-        push({ t: 'div' });
-
-        const step = 22 / Math.max(items.length, 1);
-        for (let i = 0; i < items.length; i++) {
-          const it = items[i];
-          push({
-            t:    'out',
-            text: `${it.id.padEnd(10)}${it.name.padEnd(20)}${('¥'+it.price.toLocaleString()).padStart(7)}  ${it.type.padEnd(8)}  ${it.isPublic ? '● public' : '○ hidden'}`,
-          });
-          setP(42 + Math.round(step * (i + 1)));
-          await ms(72);
-        }
-
-        push({ t: 'div' });
-        push({ t: 'ok', text: `${items.length} records loaded.` });
-
-      } catch {
-        push({ t: 'err', text: 'fetch failed — fallback mode.' });
-        setP(64);
-      }
-
-      await ms(200);
-
-      // ── 5. brew analysis ─────────────────────────────────────
+      // ── 3. brew analysis ─────────────────────────────────────
       push({ t: 'cmd', text: 'brew --analyze --context now' });
-      setP(74);
-      await ms(200);
-      const { brewLines, rec } = brewParams(items);
+      setP(58);
+      await ms(140);
+      const { brewLines, rec } = brewParams();
       push({ t: 'div' });
       for (const bl of brewLines) {
+        if (!alive()) return;
         push({ t: 'out', text: bl, dim: true });
-        await ms(65);
+        await ms(48);
       }
       push({ t: 'div' });
-      await ms(160);
+      await ms(120);
       push({ t: 'amber', text: `→  ${rec}` });
-      setP(92);
-      await ms(300);
+      setP(90);
+      await ms(260);
 
-      // ── 6. ready ─────────────────────────────────────────────
+      // ── 4. ready ─────────────────────────────────────────────
       if (!alive()) return;
       push({ t: 'div' });
       push({ t: 'amber', text: 'READY.' });
       push({ t: 'div' });
       setP(100);
-      await ms(1100);
+      await ms(700);
 
-      if (!alive()) return;
-      setE(true);
-      await ms(950);
-      if (!alive()) return;
-      setV(false);
-      onFinish();
+      clearTimeout(cap);
+      finish(myGen);
     }
 
     run();
+
+    return () => clearTimeout(cap);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -336,10 +261,7 @@ export default function TerminalLoader({ onFinish }: Props) {
         transition: exiting ? 'opacity 0.95s ease' : 'none',
       }}
     >
-      {/* ── Centered wrapper ── */}
       <div className="flex-1 flex flex-col items-center justify-center px-6">
-
-        {/* ── Brand ── */}
         <div className="text-center mb-10 w-full max-w-[580px]">
           <p
             className="font-mono font-medium tracking-[0.32em] mb-1
@@ -357,12 +279,10 @@ export default function TerminalLoader({ onFinish }: Props) {
           </p>
         </div>
 
-        {/* ── Progress bar ── */}
         <div className="w-full max-w-[580px] mb-10">
           <ProgressBar value={progress} />
         </div>
 
-        {/* ── Log area ── */}
         <div
           className="w-full max-w-[580px]"
           style={{
@@ -387,10 +307,8 @@ export default function TerminalLoader({ onFinish }: Props) {
             <div className="h-6" />
           </div>
         </div>
-
       </div>
 
-      {/* ── Skip ── */}
       <div className="flex justify-end px-10 pb-7">
         <button
           onClick={() => {
