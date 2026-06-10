@@ -72,6 +72,36 @@ export const metadata: Metadata = {
   },
 };
 
+const jsonLd = {
+  '@context': 'https://schema.org',
+  '@type': 'CafeOrCoffeeShop',
+  name: 'Sikō Coffee',
+  description: 'ディカフェ専門コーヒーショップ。思考・試行・至高・嗜好の4つのしこうで構成されるブランド。',
+  url: 'https://www.sikocoffee.com',
+  telephone: null,
+  email: 'siko.is.coffee@gmail.com',
+  address: {
+    '@type': 'PostalAddress',
+    streetAddress: '潮新町１丁目１２−１７ コパン荘10号室',
+    addressLocality: '高知市',
+    addressRegion: '高知県',
+    postalCode: '781-8008',
+    addressCountry: 'JP',
+  },
+  openingHoursSpecification: [
+    {
+      '@type': 'OpeningHoursSpecification',
+      dayOfWeek: 'Saturday',
+      opens: '17:00',
+      closes: '22:00',
+    },
+  ],
+  servesCuisine: 'Coffee',
+  menu: 'https://www.sikocoffee.com/#menu',
+  hasMap: 'https://www.google.com/maps/search/?api=1&query=高知市潮新町１丁目１２−１７+コパン荘',
+  priceRange: '¥500〜¥1,000',
+};
+
 export default function RootLayout({
   children,
 }: {
@@ -82,6 +112,12 @@ export default function RootLayout({
       lang="ja"
       className={`${cormorant.variable} ${ibmMono.variable} ${ibmSansJP.variable} ${ibmSerif.variable}`}
     >
+      <head>
+        <script
+          type="application/ld+json"
+          dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
+        />
+      </head>
       <body>
         {children}
         <SpeedInsights />

@@ -12,7 +12,6 @@ export default function AdminSettingsPage() {
   const [confirmedSecret, setConfirmedSecret] = useState('')
   const [error, setError] = useState('')
 
-  const totpConfigured = !!process.env.NEXT_PUBLIC_TOTP_ENABLED
 
   async function startSetup() {
     setState('loading')

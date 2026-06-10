@@ -7,7 +7,7 @@ import { randomUUID } from 'crypto'
 export const preferredRegion = ['hnd1']
 
 // GET /api/admin/inventory
-export async function GET(request: NextRequest) {
+export async function GET() {
   const denied = await verifyAdminToken()
   if (denied) return denied
 

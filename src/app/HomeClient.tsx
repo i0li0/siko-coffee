@@ -27,7 +27,9 @@ export default function HomeClient({ instagramPosts }: Props) {
   const [opened, setOpened] = useState<boolean | null>(null);
 
   useEffect(() => {
-    setOpened(!!sessionStorage.getItem('loader_shown'));
+    const shown = !!sessionStorage.getItem('loader_shown');
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setOpened(shown);
   }, []);
 
   useScrollAnimations(opened === true);

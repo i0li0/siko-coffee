@@ -5,14 +5,14 @@ export default function Hero() {
       className="relative min-h-screen flex items-center justify-center z-[2]"
     >
       <div className="text-center px-8">
-        <p
+        <h1
           className="hero-tagline font-serif font-light tracking-[0.1em] leading-[1.85]
             text-[clamp(22px,4vw,46px)]"
           style={{ color: 'var(--cream)' }}
           data-reveal
         >
           暗闇の向こうに、光がある。
-        </p>
+        </h1>
         <span
           className="hero-tagline-en block font-mono font-light mt-3
             text-[clamp(10px,1.2vw,13px)] tracking-[0.22em]"

@@ -24,6 +24,8 @@ export default function TaxPage() {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
+    let cancelled = false
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setLoading(true)
     Promise.all(
       MONTHS.flatMap(m => [
@@ -31,6 +33,7 @@ export default function TaxPage() {
         fetch(`/api/admin/expenses?yearMonth=${year}-${m}`).then(r => r.json()),
       ])
     ).then(results => {
+      if (cancelled) return
       const sales: SaleItem[] = []
       const expenses: ExpenseItem[] = []
       results.forEach((data, i) => {
@@ -41,7 +44,8 @@ export default function TaxPage() {
       setAllSales(sales)
       setAllExpenses(expenses)
       setLoading(false)
-    }).catch(() => setLoading(false))
+    }).catch(() => { if (!cancelled) setLoading(false) })
+    return () => { cancelled = true }
   }, [year])
 
   const income = useMemo(() => {

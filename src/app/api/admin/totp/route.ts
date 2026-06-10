@@ -3,7 +3,7 @@ import { generateSecret, verifySync } from 'otplib'
 import QRCode from 'qrcode'
 import { verifyAdminSession } from '@/lib/adminAuth'
 
-export async function GET(request: NextRequest) {
+export async function GET() {
   const denied = await verifyAdminSession()
   if (denied) return denied
 

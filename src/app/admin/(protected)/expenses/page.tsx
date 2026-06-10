@@ -30,13 +30,17 @@ export default function ExpensesPage() {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
+    let cancelled = false
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setLoading(true)
     fetch(`/api/admin/expenses?yearMonth=${yearMonth}`)
       .then(r => r.json())
       .then((data: ExpenseItem[]) => {
+        if (cancelled) return
         setExpenses(Array.isArray(data) ? data.sort((a, b) => b.date.localeCompare(a.date)) : [])
         setLoading(false)
       })
+    return () => { cancelled = true }
   }, [yearMonth])
 
   async function handleDelete(id: string) {

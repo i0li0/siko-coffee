@@ -7,9 +7,10 @@ export interface InstagramPost {
   media_url: string;
   thumbnail_url?: string;
   permalink: string;
+  caption?: string;
 }
 
-const FIELDS = 'id,media_type,media_url,thumbnail_url,permalink';
+const FIELDS = 'id,media_type,media_url,thumbnail_url,permalink,caption';
 const LIMIT = 8;
 const TOKEN_KEY = 'INSTAGRAM_ACCESS_TOKEN';
 

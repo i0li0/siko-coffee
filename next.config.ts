@@ -1,5 +1,6 @@
 import type { NextConfig } from 'next';
 import path from 'path';
+import fs from 'fs';
 
 // Worktree is at <repo>/.claude/worktrees/<name>, so 3 levels up is the repo root.
 // In the main repo __dirname === repo root, so resolve('../..') won't exist but
@@ -9,13 +10,44 @@ function repoRoot(): string {
   for (let i = 0; i < 4; i++) {
     const nm = path.join(dir, 'node_modules');
     try {
-      require('fs').statSync(nm);
+      fs.statSync(nm);
       return dir;
     } catch {}
     dir = path.dirname(dir);
   }
   return __dirname;
 }
+
+const securityHeaders = [
+  {
+    key: 'X-Content-Type-Options',
+    value: 'nosniff',
+  },
+  {
+    key: 'X-Frame-Options',
+    value: 'DENY',
+  },
+  {
+    key: 'Referrer-Policy',
+    value: 'strict-origin-when-cross-origin',
+  },
+  {
+    key: 'Permissions-Policy',
+    value: 'camera=(), microphone=(), geolocation=()',
+  },
+  {
+    key: 'Content-Security-Policy',
+    value: [
+      "default-src 'self'",
+      "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://www.googletagmanager.com https://www.google-analytics.com",
+      "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+      "font-src 'self' https://fonts.gstatic.com",
+      "img-src 'self' data: blob: https://*.cdninstagram.com https://cdninstagram.com https://www.google-analytics.com",
+      "connect-src 'self' https://www.google-analytics.com https://region1.google-analytics.com",
+      "frame-ancestors 'none'",
+    ].join('; '),
+  },
+];
 
 const nextConfig: NextConfig = {
   turbopack: {
@@ -27,6 +59,14 @@ const nextConfig: NextConfig = {
       { protocol: 'https', hostname: 'cdninstagram.com' },
       { protocol: 'https', hostname: '**.cdninstagram.com' },
     ],
+  },
+  async headers() {
+    return [
+      {
+        source: '/(.*)',
+        headers: securityHeaders,
+      },
+    ];
   },
 };
 
