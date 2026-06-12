@@ -12,13 +12,13 @@ import Location from '@/components/sections/Location';
 import Instagram from '@/components/sections/Instagram';
 import Contact from '@/components/sections/Contact';
 import { useScrollAnimations } from '@/lib/useScrollAnimations';
-import TerminalLoader from '@/components/canvas/TerminalLoader';
 import type { InstagramPost } from '@/lib/instagram';
 import type { Product } from '@/types/product';
 
-const StarsCanvas = dynamic(() => import('@/components/canvas/StarsCanvas'), { ssr: false });
-const SmokeField  = dynamic(() => import('@/components/SmokeField'),          { ssr: false });
-const SmokeCanvas = dynamic(() => import('@/components/canvas/SmokeCanvas'),  { ssr: false });
+const StarsCanvas    = dynamic(() => import('@/components/canvas/StarsCanvas'),     { ssr: false });
+const SmokeField     = dynamic(() => import('@/components/SmokeField'),              { ssr: false });
+const SmokeCanvas    = dynamic(() => import('@/components/canvas/SmokeCanvas'),     { ssr: false });
+const TerminalLoader = dynamic(() => import('@/components/canvas/TerminalLoader'),  { ssr: false });
 
 interface Props {
   instagramPosts: InstagramPost[];
@@ -39,8 +39,9 @@ export default function HomeClient({ instagramPosts, menuItems }: Props) {
   return (
     <>
       <StarsCanvas />
-      <SmokeField />
-      <SmokeCanvas />
+      {/* SmokeCanvas/SmokeField はローダー完了後にレンダー — ローダー中の並走JS評価を抑制 */}
+      {opened === true && <SmokeField />}
+      {opened === true && <SmokeCanvas />}
 
       {opened === false && (
         <TerminalLoader onFinish={() => { sessionStorage.setItem('loader_shown', '1'); setOpened(true); }} />
