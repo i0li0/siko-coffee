@@ -18,13 +18,17 @@ export const metadata = {
 };
 
 async function getProducts(): Promise<Product[]> {
-  const result = await getDocClient().send(
-    new ScanCommand({ TableName: TABLE.PRODUCTS }),
-  );
-  const items = (result.Items ?? []) as Product[];
-  return items
-    .filter((p) => p.isPublic && p.type !== 'menu')
-    .sort((a, b) => a.id.localeCompare(b.id));
+  try {
+    const result = await getDocClient().send(
+      new ScanCommand({ TableName: TABLE.PRODUCTS }),
+    );
+    const items = (result.Items ?? []) as Product[];
+    return items
+      .filter((p) => p.isPublic && p.type !== 'menu')
+      .sort((a, b) => a.id.localeCompare(b.id));
+  } catch {
+    return [];
+  }
 }
 
 function filterProducts(products: Product[], category: CategoryKey): Product[] {
