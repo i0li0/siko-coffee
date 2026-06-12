@@ -1,36 +1,46 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# siko.coffee
 
-## Getting Started
+自家焙煎コーヒー豆のオンラインショップ。
 
-First, run the development server:
+**本番サイト**: https://siko.coffee
+
+## 技術スタック
+
+| カテゴリ | 技術 |
+|---|---|
+| フレームワーク | Next.js 15 (App Router) |
+| ホスティング | Vercel |
+| データベース | Amazon DynamoDB |
+| 決済 | Stripe |
+| ストレージ | Vercel Blob |
+| エラー監視 | Sentry |
+| 言語 | TypeScript |
+
+## ローカル開発
 
 ```bash
+# 依存関係インストール
+npm install
+
+# 環境変数を Vercel からプル
+vercel env pull .env.local
+
+# 開発サーバー起動
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+http://localhost:3000 で確認できます。
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## コマンド
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+```bash
+npm run dev        # 開発サーバー（Turbopack）
+npm run build      # 本番ビルド
+npm run lint       # ESLint
+npm run e2e        # E2E テスト（Playwright）
+```
 
-## Learn More
+## ブランチ戦略
 
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+- `main` — 本番環境に直結。PR + CI 通過が必須。
+- `claude/*` — AI による作業ブランチ。マージ後自動削除。
