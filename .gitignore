@@ -48,3 +48,7 @@ CLAUDE.business.md
 CLAUDE.design.md
 CLAUDE.dev.md
 AGENTS.md
+
+# Sentry example pages (自動生成、不要)
+src/app/sentry-example-page/
+src/app/api/sentry-example-api/
