@@ -1,20 +1,20 @@
-# siko.coffee
+# Sikō Coffee
 
 自家焙煎コーヒー豆のオンラインショップ。
 
-**本番サイト**: https://siko.coffee
+**WEBサイト**: https://sikocoffee.com
 
 ## 技術スタック
 
-| カテゴリ | 技術 |
-|---|---|
+| カテゴリ       | 技術                    |
+| -------------- | ----------------------- |
 | フレームワーク | Next.js 15 (App Router) |
-| ホスティング | Vercel |
-| データベース | Amazon DynamoDB |
-| 決済 | Stripe |
-| ストレージ | Vercel Blob |
-| エラー監視 | Sentry |
-| 言語 | TypeScript |
+| ホスティング   | Vercel                  |
+| データベース   | Amazon DynamoDB         |
+| 決済           | Stripe                  |
+| ストレージ     | Vercel Blob             |
+| エラー監視     | Sentry                  |
+| 言語           | TypeScript              |
 
 ## ローカル開発
 
