@@ -6,6 +6,14 @@ export function useScrollAnimations(ready: boolean) {
   useEffect(() => {
     if (!ready) return
 
+    // prefers-reduced-motion: アニメーションをスキップし data-reveal 要素を即表示
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      document.querySelectorAll<HTMLElement>('[data-reveal]').forEach((el) => {
+        el.style.opacity = '1'
+      })
+      return
+    }
+
     // Dynamic imports keep GSAP/Lenis out of the SSR bundle
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let ST: any = null

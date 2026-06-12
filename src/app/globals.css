@@ -111,6 +111,10 @@ footer { background: linear-gradient(to bottom, #080600, #050400); }
 
 /* ── Scroll reveals ── */
 [data-reveal] { opacity: 0; }
+/* JS無効環境ではアニメーション前提の非表示を解除 */
+@media (scripting: none) {
+  [data-reveal] { opacity: 1; }
+}
 
 /* ── Hero scroll arrow bob ── */
 @keyframes bob {
