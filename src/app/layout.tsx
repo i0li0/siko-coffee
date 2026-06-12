@@ -38,6 +38,7 @@ const ibmSerif = IBM_Plex_Serif({
   style: ['normal', 'italic'],
   variable: '--font-ibm-serif',
   display: 'swap',
+  preload: false,
 });
 
 export const metadata: Metadata = {

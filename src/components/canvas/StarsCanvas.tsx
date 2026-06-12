@@ -80,6 +80,13 @@ export default function StarsCanvas() {
 
     window.addEventListener('resize', resizeStars, { passive: true })
     resizeStars()
+
+    // prefers-reduced-motion: 静止した星フィールドを一度描いてループしない
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      tick(performance.now())
+      return () => { window.removeEventListener('resize', resizeStars) }
+    }
+
     rafId = requestAnimationFrame(tick)
 
     ;window._setWaveIntensity = (v: number) => { intensity = v }

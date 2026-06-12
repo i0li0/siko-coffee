@@ -23,7 +23,7 @@ export async function POST(request: NextRequest) {
 
   if (!checkAdminPassword(password)) {
     recordFailure(ip)
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    return NextResponse.json({ error: 'パスワードが違います' }, { status: 401 })
   }
 
   const totpSecret = process.env.ADMIN_TOTP_SECRET

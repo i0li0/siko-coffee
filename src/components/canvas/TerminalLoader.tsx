@@ -180,6 +180,12 @@ export default function TerminalLoader({ onFinish }: Props) {
   }, [lines]);
 
   useEffect(() => {
+    // prefers-reduced-motion: ローダーをスキップして即コンテンツを表示
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      onFinish();
+      return;
+    }
+
     const myGen = ++genRef.current;
     const alive = () => genRef.current === myGen;
 
