@@ -24,13 +24,13 @@ export default function Instagram({ posts }: Props) {
           Instagram
         </h2>
         <a
-          href="https://instagram.com/siko_coffee"
+          href="https://instagram.com/sikocoffee"
           target="_blank"
           rel="noopener noreferrer"
           className="font-serif italic text-[13.5px] text-[#B8BEC8]
             tracking-[0.1em] no-underline"
         >
-          @siko_coffee
+          @sikocoffee
         </a>
       </div>
 
