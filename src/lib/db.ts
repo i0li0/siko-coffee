@@ -20,6 +20,7 @@ export const TABLE = {
   PRODUCTS:  `${prefix}products`,
   SALES:     `${prefix}sales`,
   ORDERS:    `${prefix}orders`,
+  BLENDS:    `${prefix}blends`,
   EXPENSES:  `${prefix}expenses`,
   INVENTORY: `${prefix}inventory`,
   CONFIG:    `${prefix}config`,
