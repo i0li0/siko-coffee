@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
 import {
-  BEANS, COMMUNITY, evenSplit, activeBeans, singleRatios,
+  BEANS, COMMUNITY, evenSplit, activeBeans, singleRatios, DEFAULT_GRAMS,
 } from './data';
 import type { Blend, Bean } from './data';
 import {
@@ -100,25 +100,29 @@ export default function ShopApp() {
 
   const addSingleToCart = (bean: Bean, grind = '豆のまま') => {
     const idx = BEANS.indexOf(bean);
-    setCart((c) => [...c, { name: bean.name, ratios: singleRatios(idx), grind, single: true, origin: bean.origin }]);
+    setCart((c) => [...c, { name: bean.name, ratios: singleRatios(idx), grind, grams: DEFAULT_GRAMS, single: true, origin: bean.origin }]);
     nav('cart');
   };
 
   const addToCart = (blend: Blend, grind = '豆のまま') => {
-    setCart((c) => [...c, { name: blend.name, ratios: blend.ratios, grind }]);
+    setCart((c) => [...c, { name: blend.name, ratios: blend.ratios, grind, grams: DEFAULT_GRAMS }]);
     nav('cart');
   };
 
   const addCustomToCart = (b: { ratios: number[]; name: string; publish: boolean }) => {
-    setCart((c) => [...c, { name: b.name, ratios: b.ratios, grind: '豆のまま', custom: true, publish: b.publish }]);
+    setCart((c) => [...c, { name: b.name, ratios: b.ratios, grind: '豆のまま', grams: DEFAULT_GRAMS, custom: true, publish: b.publish }]);
     nav('cart');
   };
 
   const addQuizToCart = (b: { ratios: number[]; name: string; publish: boolean }) => {
     const entry: SavedBlend = { name: b.name, ratios: b.ratios, publish: b.publish, fans: 0 };
     setSaved((s) => [entry, ...s.filter((x) => x.name !== b.name)]);
-    setCart((c) => [...c, { name: b.name, ratios: b.ratios, grind: '豆のまま', custom: true, publish: b.publish }]);
+    setCart((c) => [...c, { name: b.name, ratios: b.ratios, grind: '豆のまま', grams: DEFAULT_GRAMS, custom: true, publish: b.publish }]);
     nav('cart');
+  };
+
+  const updateGrams = (i: number, grams: number) => {
+    setCart((c) => c.map((item, j) => j === i ? { ...item, grams } : item));
   };
 
   const togglePublish = (name: string) => {
@@ -135,7 +139,7 @@ export default function ShopApp() {
       });
     } else {
       setSaved((s) => [entry, ...s]);
-      setCart((c) => [...c, { name, ratios, grind: '豆のまま', custom: true, publish }]);
+      setCart((c) => [...c, { name, ratios, grind: '豆のまま', grams: DEFAULT_GRAMS, custom: true, publish }]);
     }
     nav('cart');
   };
@@ -188,7 +192,7 @@ export default function ShopApp() {
           <ScreenDetail id={routeParam} nav={nav} addToCart={addToCart} startMaker={startMaker} />
         )}
         {route.name === 'cart' && (
-          <ScreenCart cart={cart} nav={nav} removeAt={(i) => setCart((c) => c.filter((_, j) => j !== i))} startMaker={startMaker} checkout={checkout} checkingOut={checkingOut} />
+          <ScreenCart cart={cart} nav={nav} removeAt={(i) => setCart((c) => c.filter((_, j) => j !== i))} updateGrams={updateGrams} startMaker={startMaker} checkout={checkout} checkingOut={checkingOut} />
         )}
         {route.name === 'mypage' && (
           <ScreenMyPage saved={saved} nav={nav} addCustomToCart={addCustomToCart} startMaker={startMaker} togglePublish={togglePublish} />
