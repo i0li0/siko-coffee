@@ -9,7 +9,9 @@ const NAV_ITEMS = [
   { href: '/admin/expenses',      label: '経費管理' },
   { href: '/admin/tax',           label: '確定申告' },
   { href: '/admin/inventory',     label: '在庫管理' },
-  { href: '/admin/orders',        label: 'EC注文' },
+  { href: '/admin/orders',        label: '注文管理' },
+  { href: '/admin/products',      label: '商品管理' },
+  { href: '/admin/blends',        label: 'ブレンド管理' },
   { href: '/admin/monthly',       label: '月次レポート' },
   { href: '/admin/settings',      label: '設定' },
 ] as const

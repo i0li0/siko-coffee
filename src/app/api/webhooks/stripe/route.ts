@@ -188,5 +188,44 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  // 返金完了 → 注文を refunded に更新（管理画面 / Stripe ダッシュボード両方からの返金に対応）
+  if (event.type === 'charge.refunded') {
+    const charge = event.data.object as Stripe.Charge;
+    const paymentIntent =
+      typeof charge.payment_intent === 'string'
+        ? charge.payment_intent
+        : charge.payment_intent?.id;
+
+    if (paymentIntent) {
+      try {
+        const sessions = await stripe.checkout.sessions.list({
+          payment_intent: paymentIntent,
+          limit: 1,
+        });
+        const session = sessions.data[0];
+        // ブレンド注文は client_reference_id（事前保存の orderId）、
+        // 旧 /api/checkout 経由は session.id をキーに保存している。
+        const orderId = session?.client_reference_id ?? session?.id;
+
+        if (orderId) {
+          await getDocClient().send(new UpdateCommand({
+            TableName: TABLE.ORDERS,
+            Key: { id: orderId },
+            ConditionExpression: 'attribute_exists(id)',
+            UpdateExpression: 'SET #status = :status, refundedAt = :now',
+            ExpressionAttributeNames: { '#status': 'status' },
+            ExpressionAttributeValues: {
+              ':status': 'refunded',
+              ':now': new Date().toISOString(),
+            },
+          }));
+        }
+      } catch (err) {
+        // 注文が見つからない（ConditionalCheckFailed）等は非クリティカル
+        Sentry.captureException(err, { tags: { route: 'webhook/stripe', step: 'charge-refunded' } });
+      }
+    }
+  }
+
   return NextResponse.json({ received: true });
 }
