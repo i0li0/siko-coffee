@@ -55,7 +55,16 @@ export const AXES = [
   { key: 'body' as const, label: 'コク', word: '飲みごたえ' },
 ];
 
-export const PRICE = 1480;
+export const PRICE_PER_100G = 1480;
+export const PRICE = PRICE_PER_100G; // 後方互換：旧コードが参照している箇所用
+
+export const GRAM_OPTIONS = [100, 150, 200, 250, 300, 350, 400, 450, 500] as const;
+export type GramOption = typeof GRAM_OPTIONS[number];
+export const DEFAULT_GRAMS: GramOption = 200;
+
+export function calcPrice(grams: number): number {
+  return Math.round((grams / 100) * PRICE_PER_100G);
+}
 
 export const PRESETS: Blend[] = [
   { id: 'asayake', name: 'あさやけ', en: 'Asayake', ratios: [50, 30, 20], by: null, desc: 'コクと甘みのバランス型。はじめての一袋に。', bought: 412 },

@@ -8,7 +8,8 @@ import { getDocClient, TABLE } from '@/lib/db';
 export const dynamic = 'force-dynamic';
 export const preferredRegion = ['hnd1'];
 
-const PRICE = 1480;
+const PRICE_PER_100G = 1480;
+const GRAM_OPTIONS = new Set([100, 150, 200, 250, 300, 350, 400, 450, 500]);
 const ALLOWED_HOSTS = new Set(['sikocoffee.com', 'www.sikocoffee.com']);
 
 function getOrigin(req: NextRequest): string {
@@ -22,6 +23,7 @@ interface CartItem {
   name: string;
   ratios: number[];
   grind?: string;
+  grams?: number;
   custom?: boolean;
   single?: boolean;
   publish?: boolean;
@@ -52,6 +54,10 @@ export async function POST(req: NextRequest) {
     if (Math.abs(total - 100) > 1) {
       return NextResponse.json({ error: 'Ratios must sum to 100' }, { status: 400 });
     }
+    const grams = item.grams ?? 200;
+    if (!GRAM_OPTIONS.has(grams)) {
+      return NextResponse.json({ error: 'Invalid grams' }, { status: 400 });
+    }
   }
 
   if (items.length > 20) {
@@ -70,6 +76,8 @@ export async function POST(req: NextRequest) {
 
   const lineItems = items.map((item) => {
     const grind = typeof item.grind === 'string' ? item.grind : '豆のまま';
+    const grams = item.grams ?? 200;
+    const unitAmount = Math.round((grams / 100) * PRICE_PER_100G);
     const productName = item.single
       ? `シングルオリジン ${item.name}`
       : item.custom
@@ -81,9 +89,9 @@ export async function POST(req: NextRequest) {
         currency: 'jpy' as const,
         product_data: {
           name: productName,
-          description: `${grind} / 200g`,
+          description: `${grind} / ${grams}g`,
         },
-        unit_amount: PRICE,
+        unit_amount: unitAmount,
       },
       quantity: 1,
     };

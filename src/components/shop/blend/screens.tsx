@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import type { CSSProperties } from 'react';
 import {
-  BEANS, PRESETS, PRICE, MAX_BEANS,
+  BEANS, PRESETS, PRICE_PER_100G, MAX_BEANS, GRAM_OPTIONS, DEFAULT_GRAMS, calcPrice,
   singleRatios, evenSplit, activeBeans,
   tasteWord, normalizeRatios, normalizeSubset,
   findBlend,
@@ -17,6 +17,7 @@ export interface CartItem {
   name: string;
   ratios: number[];
   grind: string;
+  grams: number;
   custom?: boolean;
   single?: boolean;
   publish?: boolean;
@@ -610,12 +611,13 @@ export function ScreenDetail({ id, nav, addToCart, startMaker }: {
 
 // ─── ScreenCart ───────────────────────────────────────────
 
-export function ScreenCart({ cart, nav, removeAt, startMaker, checkout, checkingOut }: {
+export function ScreenCart({ cart, nav, removeAt, updateGrams, startMaker, checkout, checkingOut }: {
   cart: CartItem[]; nav: NavFn; removeAt: (i: number) => void;
+  updateGrams: (i: number, grams: number) => void;
   startMaker: (ratios: number[], base: string, editIndex?: number) => void;
   checkout: () => void; checkingOut: boolean;
 }) {
-  const total = cart.length * PRICE;
+  const total = cart.reduce((sum, item) => sum + calcPrice(item.grams ?? 200), 0);
   const ship = total >= 3000 || cart.length === 0 ? 0 : 350;
 
   return (
@@ -631,35 +633,53 @@ export function ScreenCart({ cart, nav, removeAt, startMaker, checkout, checking
       )}
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-        {cart.map((item, i) => (
-          <div key={`${item.name}-${i}`} className="ss-card" style={{ padding: 14, display: 'flex', gap: 14, alignItems: 'center' }}>
-            <Bag name={item.name} ratios={item.ratios} w={58} />
-            <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 5 }}>
-              <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
-                <span className="ss-serif" style={{ fontSize: 17 }}>{item.name}</span>
-                {item.custom && <span className="ss-sticker" style={{ fontSize: 11 }}>あなたの作品</span>}
-                {item.single && <span className="ss-sticker" style={{ fontSize: 11 }}>シングルオリジン</span>}
+        {cart.map((item, i) => {
+          const grams = item.grams ?? 200;
+          return (
+            <div key={`${item.name}-${i}`} className="ss-card" style={{ padding: 14, display: 'flex', flexDirection: 'column', gap: 10 }}>
+              <div style={{ display: 'flex', gap: 14, alignItems: 'center' }}>
+                <Bag name={item.name} ratios={item.ratios} w={58} />
+                <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 5 }}>
+                  <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
+                    <span className="ss-serif" style={{ fontSize: 17 }}>{item.name}</span>
+                    {item.custom && <span className="ss-sticker" style={{ fontSize: 11 }}>あなたの作品</span>}
+                    {item.single && <span className="ss-sticker" style={{ fontSize: 11 }}>シングルオリジン</span>}
+                  </div>
+                  <RatioBar ratios={item.ratios} h={5} />
+                  <span style={{ fontSize: 10.5, color: 'var(--ss-dim)' }}>{item.grind || '豆のまま'}</span>
+                  {item.custom && (
+                    <button className="ss-nav-link" style={{ alignSelf: 'flex-start', fontSize: 11 }}
+                      onClick={() => startMaker(item.ratios, `${item.name} を再編集`, i)}>比率を編集 →</button>
+                  )}
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 8, flexShrink: 0 }}>
+                  <span className="ss-serif" style={{ fontSize: 16 }}>¥{calcPrice(grams).toLocaleString()}</span>
+                  <button className="ss-nav-link" style={{ fontSize: 11 }} onClick={() => removeAt(i)}>削除</button>
+                </div>
               </div>
-              <RatioBar ratios={item.ratios} h={5} />
-              <span style={{ fontSize: 10.5, color: 'var(--ss-dim)' }}>{item.grind || '豆のまま'} / 200g</span>
-              {item.custom && (
-                <button className="ss-nav-link" style={{ alignSelf: 'flex-start', fontSize: 11 }}
-                  onClick={() => startMaker(item.ratios, `${item.name} を再編集`, i)}>比率を編集 →</button>
-              )}
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, paddingTop: 2 }}>
+                {GRAM_OPTIONS.map((g) => (
+                  <button key={g} className={`ss-chip${grams === g ? ' is-on' : ''}`}
+                    style={{ fontSize: 11.5, padding: '4px 10px' }}
+                    onClick={() => updateGrams(i, g)}>
+                    {g}g
+                  </button>
+                ))}
+              </div>
             </div>
-            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 8 }}>
-              <span className="ss-serif" style={{ fontSize: 16 }}>¥1,480</span>
-              <button className="ss-nav-link" style={{ fontSize: 11 }} onClick={() => removeAt(i)}>削除</button>
-            </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
 
       {cart.length > 0 && (
         <div style={{ marginTop: 22, borderTop: '1px solid var(--ss-hair)', paddingTop: 16, display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <div style={{ display: 'flex', fontSize: 12, color: 'var(--ss-dim)' }}>
+            <span>基準価格</span>
+            <span style={{ marginLeft: 'auto' }}>¥{PRICE_PER_100G.toLocaleString()} / 100g</span>
+          </div>
           <div style={{ display: 'flex', fontSize: 12.5, color: 'var(--ss-dim)' }}>
             <span>送料</span>
-            <span style={{ marginLeft: 'auto' }}>{ship === 0 ? '無料' : `¥${ship}`}(¥3,000以上で無料)</span>
+            <span style={{ marginLeft: 'auto' }}>{ship === 0 ? '無料' : `¥${ship}`}（¥3,000以上で無料）</span>
           </div>
           <div style={{ display: 'flex', alignItems: 'baseline' }}>
             <span style={{ fontSize: 14 }}>合計</span>
