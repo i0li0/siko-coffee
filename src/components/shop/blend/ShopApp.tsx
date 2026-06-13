@@ -1,9 +1,9 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
 import {
-  BEANS, evenSplit, activeBeans, singleRatios,
+  BEANS, COMMUNITY, evenSplit, activeBeans, singleRatios,
 } from './data';
 import type { Blend, Bean } from './data';
 import {
@@ -43,12 +43,43 @@ function ShopHeader({ route, nav, cartCount }: { route: Route; nav: NavFn; cartC
   );
 }
 
+function readSession<T>(key: string, fallback: T): T {
+  if (typeof window === 'undefined') return fallback;
+  try {
+    const raw = sessionStorage.getItem(key);
+    return raw ? (JSON.parse(raw) as T) : fallback;
+  } catch { return fallback; }
+}
+
 export default function ShopApp() {
   const [route, setRoute] = useState<Route>({ name: 'top' });
-  const [cart, setCart] = useState<CartItem[]>([]);
-  const [saved, setSaved] = useState<SavedBlend[]>([]);
+  const [cart, setCart] = useState<CartItem[]>(() => readSession('ss_cart', []));
+  const [saved, setSaved] = useState<SavedBlend[]>(() => readSession('ss_saved', []));
   const [draft, setDraft] = useState<Draft>({ ratios: [34, 33, 33], base: 'まっさら', selected: [0, 1, 2] });
   const [checkingOut, setCheckingOut] = useState(false);
+  const [communityBlends, setCommunityBlends] = useState<Blend[]>(COMMUNITY);
+  const hydrated = useRef(false);
+
+  // セッション内永続化（初回マウント後から保存開始）
+  useEffect(() => { hydrated.current = true; }, []);
+  useEffect(() => {
+    if (!hydrated.current) return;
+    try { sessionStorage.setItem('ss_cart', JSON.stringify(cart)); } catch { /* quota */ }
+  }, [cart]);
+  useEffect(() => {
+    if (!hydrated.current) return;
+    try { sessionStorage.setItem('ss_saved', JSON.stringify(saved)); } catch { /* quota */ }
+  }, [saved]);
+
+  // 公開ブレンドをDBから取得（フォールバック: ハードコードデータ）
+  useEffect(() => {
+    fetch('/api/blends')
+      .then((r) => r.json())
+      .then((data: { blends: Blend[] }) => {
+        if (data.blends.length > 0) setCommunityBlends(data.blends);
+      })
+      .catch(() => { /* fallback to COMMUNITY */ });
+  }, []);
 
   useEffect(() => { window.scrollTo(0, 0); }, [route]);
 
@@ -81,6 +112,17 @@ export default function ShopApp() {
   const addCustomToCart = (b: { ratios: number[]; name: string; publish: boolean }) => {
     setCart((c) => [...c, { name: b.name, ratios: b.ratios, grind: '豆のまま', custom: true, publish: b.publish }]);
     nav('cart');
+  };
+
+  const addQuizToCart = (b: { ratios: number[]; name: string; publish: boolean }) => {
+    const entry: SavedBlend = { name: b.name, ratios: b.ratios, publish: b.publish, fans: 0 };
+    setSaved((s) => [entry, ...s.filter((x) => x.name !== b.name)]);
+    setCart((c) => [...c, { name: b.name, ratios: b.ratios, grind: '豆のまま', custom: true, publish: b.publish }]);
+    nav('cart');
+  };
+
+  const togglePublish = (name: string) => {
+    setSaved((s) => s.map((b) => b.name === name ? { ...b, publish: !b.publish } : b));
   };
 
   const onSaveBlend = ({ ratios, name, publish }: { ratios: number[]; name: string; publish: boolean }) => {
@@ -128,7 +170,7 @@ export default function ShopApp() {
       <ShopHeader route={route} nav={nav} cartCount={cart.length} />
       <main className="ss-main">
         {route.name === 'top' && (
-          <ScreenTop nav={nav} addToCart={addToCart} startMaker={startMaker} addSingleToCart={addSingleToCart} />
+          <ScreenTop nav={nav} addToCart={addToCart} startMaker={startMaker} addSingleToCart={addSingleToCart} communityBlends={communityBlends} />
         )}
         {route.name === 'select' && (
           <ScreenSelect nav={nav} initial={Array.isArray(routeParam) ? routeParam : undefined} onSelectDone={onSelectDone} />
@@ -140,7 +182,7 @@ export default function ShopApp() {
           <ScreenMaker key={JSON.stringify(draft)} draft={draft} nav={nav} onSaveBlend={onSaveBlend} />
         )}
         {route.name === 'quiz' && (
-          <ScreenQuiz nav={nav} startMaker={startMaker} addCustomToCart={addCustomToCart} />
+          <ScreenQuiz nav={nav} startMaker={startMaker} addCustomToCart={addQuizToCart} />
         )}
         {route.name === 'detail' && typeof routeParam === 'string' && (
           <ScreenDetail id={routeParam} nav={nav} addToCart={addToCart} startMaker={startMaker} />
@@ -149,7 +191,7 @@ export default function ShopApp() {
           <ScreenCart cart={cart} nav={nav} removeAt={(i) => setCart((c) => c.filter((_, j) => j !== i))} startMaker={startMaker} checkout={checkout} checkingOut={checkingOut} />
         )}
         {route.name === 'mypage' && (
-          <ScreenMyPage saved={saved} nav={nav} addCustomToCart={addCustomToCart} startMaker={startMaker} />
+          <ScreenMyPage saved={saved} nav={nav} addCustomToCart={addCustomToCart} startMaker={startMaker} togglePublish={togglePublish} />
         )}
       </main>
       <footer style={{ borderTop: '1px solid var(--ss-hair)', padding: '26px 22px', textAlign: 'center', display: 'flex', gap: 18, justifyContent: 'center', alignItems: 'center', flexWrap: 'wrap' }}>

@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import type { CSSProperties } from 'react';
 import {
-  BEANS, PRESETS, COMMUNITY, PRICE, MAX_BEANS,
+  BEANS, PRESETS, PRICE, MAX_BEANS,
   singleRatios, evenSplit, activeBeans,
   tasteWord, normalizeRatios, normalizeSubset,
   findBlend,
@@ -74,11 +74,12 @@ function MiniMaker({ goMaker }: { goMaker: (ratios: number[], base: string) => v
   );
 }
 
-export function ScreenTop({ nav, addToCart, startMaker, addSingleToCart }: {
+export function ScreenTop({ nav, addToCart, startMaker, addSingleToCart, communityBlends }: {
   nav: NavFn;
   addToCart: (b: Blend, grind?: string) => void;
   startMaker: (ratios: number[], base: string) => void;
   addSingleToCart: (bean: Bean) => void;
+  communityBlends: Blend[];
 }) {
   return (
     <div className="ss-screen">
@@ -130,14 +131,14 @@ export function ScreenTop({ nav, addToCart, startMaker, addSingleToCart }: {
         <button className="ss-btn ss-btn--sm" style={{ marginLeft: 'auto' }} onClick={() => nav('quiz')}>好み診断をはじめる</button>
       </div>
 
-      <SectionHead eyebrow="Community" title="みんなのブレンド" hand="お客様の作品です" right="ランキング" />
+      <SectionHead eyebrow="Community" title="みんなのブレンド" hand="お客様の作品です" right="新着順" />
       <div className="ss-grid-cards">
-        {COMMUNITY.map((b) => (
+        {communityBlends.map((b) => (
           <BlendCardH key={b.id} blend={b} onBuy={() => addToCart(b)} onOpen={() => nav('detail', b.id)} />
         ))}
       </div>
       <div style={{ marginTop: 22, display: 'flex', justifyContent: 'center' }}>
-        <button className="ss-btn ss-btn--ghost" onClick={() => nav('select')}>＋ じぶんのブレンドをつくって、ここに並べる</button>
+        <button className="ss-btn ss-btn--ghost" onClick={() => nav('select')}>＋ じぶんのブレンドをつくる</button>
       </div>
     </div>
   );
@@ -367,7 +368,7 @@ function NamingSheet({ ratios, base, onClose, onSave }: {
           </span>
           <span style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
             <span style={{ fontSize: 13 }}>「みんなのブレンド」に公開する</span>
-            <span style={{ fontSize: 10.5, color: 'var(--ss-dim)' }}>他のお客様が購入・アレンジできるようになります(あとから非公開にもできます)</span>
+            <span style={{ fontSize: 10.5, color: 'var(--ss-dim)' }}>他のお客様が購入・アレンジできるようになります。マイページからいつでも変更できます。</span>
           </span>
         </label>
         <button className="ss-btn" style={{ width: '100%', height: 52, marginTop: 10 }} disabled={!name.trim()}
@@ -631,7 +632,7 @@ export function ScreenCart({ cart, nav, removeAt, startMaker, checkout, checking
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
         {cart.map((item, i) => (
-          <div key={i} className="ss-card" style={{ padding: 14, display: 'flex', gap: 14, alignItems: 'center' }}>
+          <div key={`${item.name}-${i}`} className="ss-card" style={{ padding: 14, display: 'flex', gap: 14, alignItems: 'center' }}>
             <Bag name={item.name} ratios={item.ratios} w={58} />
             <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 5 }}>
               <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
@@ -677,10 +678,11 @@ export function ScreenCart({ cart, nav, removeAt, startMaker, checkout, checking
 
 // ─── ScreenMyPage ─────────────────────────────────────────
 
-export function ScreenMyPage({ saved, nav, addCustomToCart, startMaker }: {
+export function ScreenMyPage({ saved, nav, addCustomToCart, startMaker, togglePublish }: {
   saved: SavedBlend[]; nav: NavFn;
   addCustomToCart: (b: SavedBlend) => void;
   startMaker: (ratios: number[], base: string) => void;
+  togglePublish: (name: string) => void;
 }) {
   return (
     <div className="ss-screen" style={{ maxWidth: 620, margin: '0 auto', paddingTop: 34 }}>
@@ -700,8 +702,8 @@ export function ScreenMyPage({ saved, nav, addCustomToCart, startMaker }: {
         </div>
       )}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-        {saved.map((b, i) => (
-          <div key={i} className="ss-card" style={{ padding: 16, display: 'flex', gap: 16, alignItems: 'center' }}>
+        {saved.map((b) => (
+          <div key={b.name} className="ss-card" style={{ padding: 16, display: 'flex', gap: 16, alignItems: 'center' }}>
             <Bag name={b.name} ratios={b.ratios} w={62} />
             <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 6 }}>
               <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap' }}>
@@ -711,9 +713,16 @@ export function ScreenMyPage({ saved, nav, addCustomToCart, startMaker }: {
                   : <span style={{ fontSize: 10.5, color: 'var(--ss-dim)' }}>非公開</span>}
               </div>
               <RatioBar ratios={b.ratios} h={5} />
-              <div style={{ display: 'flex', gap: 8, marginTop: 2 }}>
+              <div style={{ display: 'flex', gap: 8, marginTop: 2, flexWrap: 'wrap' }}>
                 <button className="ss-btn ss-btn--sm" onClick={() => addCustomToCart(b)}>もう一度買う</button>
                 <button className="ss-btn ss-btn--ghost ss-btn--sm" onClick={() => startMaker(b.ratios, `${b.name} をアレンジ`)}>アレンジ</button>
+                <button
+                  className="ss-btn ss-btn--ghost ss-btn--sm"
+                  style={{ fontSize: 10.5 }}
+                  onClick={() => togglePublish(b.name)}
+                >
+                  {b.publish ? '非公開にする' : '公開する'}
+                </button>
               </div>
             </div>
           </div>
