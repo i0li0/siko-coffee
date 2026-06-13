@@ -155,7 +155,7 @@ export function ScreenSelect({ nav, initial, onSelectDone }: {
 
   const toggle = (i: number) => {
     if (sel.includes(i)) { setSel(sel.filter((x) => x !== i)); return; }
-    if (sel.length >= MAX_BEANS) { setBump(Date.now()); return; }
+    if (sel.length >= MAX_BEANS) { setBump((n) => n + 1); return; }
     setSel([...sel, i]);
   };
 
