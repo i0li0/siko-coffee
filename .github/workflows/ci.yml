@@ -60,23 +60,11 @@ jobs:
         env:
           STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY || 'sk_test_placeholder' }}
 
-      - name: Start server
-        run: npm start &
-        env:
-          PORT: 3000
-
-      - name: Wait for server
-        run: |
-          for i in $(seq 1 30); do
-            curl -sf http://localhost:3000 > /dev/null && echo "Server ready" && break
-            echo "Waiting... ($i/30)"
-            sleep 1
-          done
-
+      # サーバの起動・準備完了待ち・タイムアウトは Playwright の webServer 機構に一任する。
+      # 起動失敗時は job が確実に落ちるため、以前の curl 待ちループのような取りこぼし
+      # （ERR_CONNECTION_REFUSED のまま続行）が起きない。
       - name: Run E2E tests
         run: npm run e2e
-        env:
-          PLAYWRIGHT_BASE_URL: http://localhost:3000
 
       - uses: actions/upload-artifact@v4
         if: failure()
