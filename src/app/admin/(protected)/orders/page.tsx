@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import type { OrderRecord, OrderItemRecord, OrderStatus } from '@/types/admin'
+import { CARRIERS, carrierLabel } from '@/lib/carriers'
 
 const STATUS_META: Record<OrderStatus, { label: string; color: string }> = {
   pending:    { label: '未決済',     color: 'var(--dim)' },
@@ -60,6 +61,8 @@ export default function OrdersPage() {
   const [tab, setTab] = useState<'all' | OrderStatus>('all')
   const [busyId, setBusyId] = useState<string | null>(null)
   const [error, setError] = useState('')
+  // 発送フォーム（業者＋追跡番号の手入力）の対象注文
+  const [shipForm, setShipForm] = useState<{ id: string; carrier: string; tracking: string } | null>(null)
 
   function load() {
     setLoading(true)
@@ -84,7 +87,7 @@ export default function OrdersPage() {
     [orders, tab],
   )
 
-  async function updateStatus(order: OrderRecord, next: OrderStatus) {
+  async function updateStatus(order: OrderRecord, next: OrderStatus, extra?: { carrier: string; trackingNumber: string }) {
     const meta = STATUS_META[next]
     if (next === 'refunded') {
       if (!confirm(`この注文を返金します。\nStripe で実際の返金処理が走ります。よろしいですか？`)) return
@@ -97,7 +100,7 @@ export default function OrdersPage() {
       const res = await fetch(`/api/admin/orders/${order.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: next }),
+        body: JSON.stringify({ status: next, ...extra }),
       })
       if (!res.ok) {
         const j = await res.json().catch(() => ({}))
@@ -105,11 +108,27 @@ export default function OrdersPage() {
       }
       const updated = await res.json()
       setOrders(prev => prev.map(o => (o.id === order.id ? { ...o, ...updated } : o)))
+      setShipForm(null)
     } catch (e) {
       setError(e instanceof Error ? e.message : '更新に失敗しました')
     } finally {
       setBusyId(null)
     }
+  }
+
+  // 「発送済へ」を押したら、まず業者＋追跡番号の入力フォームを開く。
+  function startShip(order: OrderRecord) {
+    setError('')
+    setShipForm({ id: order.id, carrier: CARRIERS[0].id, tracking: '' })
+  }
+
+  function submitShip(order: OrderRecord) {
+    if (!shipForm) return
+    if (!shipForm.tracking.trim()) {
+      setError('追跡番号を入力してください')
+      return
+    }
+    updateStatus(order, 'shipped', { carrier: shipForm.carrier, trackingNumber: shipForm.tracking.trim() })
   }
 
   const th: React.CSSProperties = {
@@ -232,6 +251,20 @@ export default function OrdersPage() {
                     </td>
                     <td style={td}>
                       <StatusBadge status={order.status} />
+                      {order.trackingNumber && (
+                        <div style={{ fontSize: '10px', color: 'var(--dim)', marginTop: '5px' }}>
+                          {carrierLabel(order.carrier)}
+                          <br />
+                          {order.trackingUrl ? (
+                            <a href={order.trackingUrl} target="_blank" rel="noopener noreferrer"
+                              style={{ color: 'var(--admin-accent)' }}>
+                              {order.trackingNumber}
+                            </a>
+                          ) : (
+                            order.trackingNumber
+                          )}
+                        </div>
+                      )}
                     </td>
                     <td style={{ ...td, textAlign: 'right' }}>
                       {nexts.length === 0 ? (
@@ -243,7 +276,7 @@ export default function OrdersPage() {
                             return (
                               <button
                                 key={ns}
-                                onClick={() => updateStatus(order, ns)}
+                                onClick={() => (ns === 'shipped' ? startShip(order) : updateStatus(order, ns))}
                                 disabled={busy}
                                 style={{
                                   padding: '5px 11px',
@@ -259,6 +292,60 @@ export default function OrdersPage() {
                               </button>
                             )
                           })}
+                        </div>
+                      )}
+
+                      {shipForm?.id === order.id && (
+                        <div style={{
+                          marginTop: '10px', display: 'flex', flexDirection: 'column', gap: '6px',
+                          alignItems: 'flex-end',
+                        }}>
+                          <select
+                            value={shipForm.carrier}
+                            onChange={(e) => setShipForm({ ...shipForm, carrier: e.target.value })}
+                            style={{
+                              padding: '5px 8px', background: 'var(--admin-card-bg)',
+                              border: '1px solid var(--admin-border)', borderRadius: '4px',
+                              color: 'var(--cream)', fontSize: '11px',
+                            }}
+                          >
+                            {CARRIERS.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}
+                          </select>
+                          <input
+                            value={shipForm.tracking}
+                            onChange={(e) => setShipForm({ ...shipForm, tracking: e.target.value })}
+                            placeholder="追跡番号"
+                            style={{
+                              padding: '5px 8px', background: 'var(--admin-card-bg)',
+                              border: '1px solid var(--admin-border)', borderRadius: '4px',
+                              color: 'var(--cream)', fontSize: '11px', width: '140px',
+                            }}
+                          />
+                          <div style={{ display: 'flex', gap: '6px' }}>
+                            <button
+                              onClick={() => setShipForm(null)}
+                              disabled={busy}
+                              style={{
+                                padding: '5px 11px', background: 'transparent',
+                                border: '1px solid var(--admin-border)', borderRadius: '4px',
+                                color: 'var(--dim)', fontSize: '11px', cursor: 'pointer',
+                              }}
+                            >
+                              取消
+                            </button>
+                            <button
+                              onClick={() => submitShip(order)}
+                              disabled={busy}
+                              style={{
+                                padding: '5px 11px', background: 'transparent',
+                                border: '1px solid var(--admin-accent)', borderRadius: '4px',
+                                color: busy ? 'var(--dim)' : 'var(--admin-accent)',
+                                fontSize: '11px', cursor: busy ? 'not-allowed' : 'pointer',
+                              }}
+                            >
+                              発送を確定
+                            </button>
+                          </div>
                         </div>
                       )}
                     </td>

@@ -4,6 +4,7 @@ import { PutCommand } from '@aws-sdk/lib-dynamodb';
 import * as Sentry from '@sentry/nextjs';
 import { stripe } from '@/lib/stripe';
 import { getDocClient, TABLE } from '@/lib/db';
+import { buildShippingOptions } from '@/lib/shipping';
 
 export const dynamic = 'force-dynamic';
 export const preferredRegion = ['hnd1'];
@@ -74,10 +75,12 @@ export async function POST(req: NextRequest) {
   const origin = getOrigin(req);
   const orderId = randomUUID();
 
+  let subtotal = 0;
   const lineItems = items.map((item) => {
     const grind = typeof item.grind === 'string' ? item.grind : '豆のまま';
     const grams = item.grams ?? 200;
     const unitAmount = Math.round((grams / 100) * PRICE_PER_100G);
+    subtotal += unitAmount;
     const productName = item.single
       ? `シングルオリジン ${item.name}`
       : item.custom
@@ -120,6 +123,7 @@ export async function POST(req: NextRequest) {
       locale: 'ja',
       line_items: lineItems,
       shipping_address_collection: { allowed_countries: ['JP'] },
+      shipping_options: buildShippingOptions(subtotal),
       client_reference_id: orderId,
       success_url: `${origin}/shop/success?session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: `${origin}/shop`,

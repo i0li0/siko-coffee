@@ -3,6 +3,7 @@ import { ScanCommand } from '@aws-sdk/lib-dynamodb';
 import * as Sentry from '@sentry/nextjs';
 import { getDocClient, TABLE } from '@/lib/db';
 import { stripe } from '@/lib/stripe';
+import { buildShippingOptions } from '@/lib/shipping';
 import type { Product } from '@/types/product';
 
 export const dynamic = 'force-dynamic';
@@ -60,6 +61,7 @@ export async function POST(req: NextRequest) {
         },
       ],
       shipping_address_collection: { allowed_countries: ['JP'] },
+      shipping_options: buildShippingOptions(product.price),
       success_url: `${origin}/shop/success?session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: `${origin}/shop`,
     });

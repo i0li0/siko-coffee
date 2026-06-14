@@ -9,6 +9,7 @@ import {
   findBlend,
 } from './data';
 import type { Bean, Blend } from './data';
+import { calcShipping, FREE_SHIPPING_THRESHOLD } from '@/lib/shipping';
 import { Bag, RatioBar, TasteDots, BeanLegend, BlendCardH, SingleCard, SectionHead } from './atoms';
 
 // ─── types ───────────────────────────────────────────────
@@ -618,7 +619,7 @@ export function ScreenCart({ cart, nav, removeAt, updateGrams, startMaker, check
   checkout: () => void; checkingOut: boolean;
 }) {
   const total = cart.reduce((sum, item) => sum + calcPrice(item.grams ?? 200), 0);
-  const ship = total >= 3000 || cart.length === 0 ? 0 : 350;
+  const ship = cart.length === 0 ? 0 : calcShipping(total);
 
   return (
     <div className="ss-screen" style={{ maxWidth: 620, margin: '0 auto', paddingTop: 34 }}>
@@ -679,7 +680,7 @@ export function ScreenCart({ cart, nav, removeAt, updateGrams, startMaker, check
           </div>
           <div style={{ display: 'flex', fontSize: 12.5, color: 'var(--ss-dim)' }}>
             <span>送料</span>
-            <span style={{ marginLeft: 'auto' }}>{ship === 0 ? '無料' : `¥${ship}`}（¥3,000以上で無料）</span>
+            <span style={{ marginLeft: 'auto' }}>{ship === 0 ? '無料' : `¥${ship}`}（¥{FREE_SHIPPING_THRESHOLD.toLocaleString()}以上で無料）</span>
           </div>
           <div style={{ display: 'flex', alignItems: 'baseline' }}>
             <span style={{ fontSize: 14 }}>合計</span>

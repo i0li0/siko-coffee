@@ -78,6 +78,16 @@ export interface OrderRecord {
   deliveredAt?: string
   cancelledAt?: string
   refundedAt?: string
+  // 配送追跡（発送時に手入力）
+  carrier?: string
+  trackingNumber?: string
+  trackingUrl?: string
+  // 顧客通知メールの冪等性フラグ
+  confirmationSentAt?: string
+  shippedNotifiedAt?: string
+  deliveredNotifiedAt?: string
+  // 在庫減算の冪等性フラグ（適用時刻）
+  inventoryAppliedAt?: string
 }
 
 // ───────────────────────────────────────── ブレンド管理

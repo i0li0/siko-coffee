@@ -4,7 +4,22 @@ import * as Sentry from '@sentry/nextjs'
 import { getDocClient, TABLE } from '@/lib/db'
 import { verifyAdminToken } from '@/lib/adminAuth'
 import { stripe } from '@/lib/stripe'
+import { sendEmail, OWNER_EMAIL } from '@/lib/email'
+import { shippedNotice, deliveredNotice } from '@/lib/emailTemplates'
+import { buildTrackingUrl, carrierLabel, getCarrier } from '@/lib/carriers'
+import { signOrderToken } from '@/lib/orderToken'
 import type { OrderRecord, OrderStatus } from '@/types/admin'
+
+const SITE_URL = process.env.SITE_URL || 'https://www.sikocoffee.com'
+
+async function buildOrderUrl(orderId: string): Promise<string | undefined> {
+  try {
+    const token = await signOrderToken(orderId)
+    return `${SITE_URL}/shop/order/${orderId}?t=${token}`
+  } catch {
+    return undefined
+  }
+}
 
 export const dynamic = 'force-dynamic'
 export const preferredRegion = ['hnd1']
@@ -40,15 +55,29 @@ export async function PATCH(
   const { id } = await params
 
   let nextStatus: OrderStatus
+  let carrier: string | undefined
+  let trackingNumber: string | undefined
   try {
     const body = await request.json()
     nextStatus = body.status
+    carrier = typeof body.carrier === 'string' ? body.carrier.trim() : undefined
+    trackingNumber = typeof body.trackingNumber === 'string' ? body.trackingNumber.trim() : undefined
   } catch {
     return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 })
   }
 
   if (!nextStatus || !(nextStatus in TRANSITIONS)) {
     return NextResponse.json({ error: 'Invalid status' }, { status: 400 })
+  }
+
+  // 発送時は配送業者と追跡番号が必須。
+  if (nextStatus === 'shipped') {
+    if (!carrier || !getCarrier(carrier)) {
+      return NextResponse.json({ error: '配送業者を選択してください' }, { status: 400 })
+    }
+    if (!trackingNumber) {
+      return NextResponse.json({ error: '追跡番号を入力してください' }, { status: 400 })
+    }
   }
 
   try {
@@ -111,6 +140,19 @@ export async function PATCH(
       setExpr += ', #ts = :ts'
     }
 
+    // 発送時：配送業者・追跡番号・追跡URLを保存。
+    let trackingUrl: string | undefined
+    if (nextStatus === 'shipped' && carrier && trackingNumber) {
+      trackingUrl = buildTrackingUrl(carrier, trackingNumber)
+      values[':carrier'] = carrier
+      values[':tnum'] = trackingNumber
+      setExpr += ', carrier = :carrier, trackingNumber = :tnum'
+      if (trackingUrl) {
+        values[':turl'] = trackingUrl
+        setExpr += ', trackingUrl = :turl'
+      }
+    }
+
     const updated = await getDocClient().send(new UpdateCommand({
       TableName: TABLE.ORDERS,
       Key: { id },
@@ -119,6 +161,23 @@ export async function PATCH(
       ExpressionAttributeValues: values,
       ReturnValues: 'ALL_NEW',
     }))
+
+    // 顧客への通知メール（遷移が成立したときのみ＝重複送信しない）。
+    if (order.customerEmail && (nextStatus === 'shipped' || nextStatus === 'delivered')) {
+      const orderUrl = await buildOrderUrl(id)
+      const mail =
+        nextStatus === 'shipped'
+          ? shippedNotice({
+              orderId: id,
+              customerName: order.customerName,
+              carrierLabel: carrierLabel(carrier),
+              trackingNumber: trackingNumber!,
+              trackingUrl,
+              orderUrl,
+            })
+          : deliveredNotice({ orderId: id, customerName: order.customerName, orderUrl })
+      await sendEmail({ to: order.customerEmail, subject: mail.subject, text: mail.text, html: mail.html, replyTo: OWNER_EMAIL })
+    }
 
     return NextResponse.json(updated.Attributes)
   } catch (err) {
