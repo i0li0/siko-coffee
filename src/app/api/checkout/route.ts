@@ -19,7 +19,13 @@ function getOrigin(req: NextRequest): string {
 }
 
 export async function POST(req: NextRequest) {
-  const formData = await req.formData();
+  let formData: FormData;
+  try {
+    formData = await req.formData();
+  } catch {
+    // フォーム以外のボディ（JSON 等）が来た場合は不正リクエスト扱い。
+    return NextResponse.json({ error: 'Invalid request body' }, { status: 400 });
+  }
   const productId = formData.get('productId');
 
   if (!productId || typeof productId !== 'string') {

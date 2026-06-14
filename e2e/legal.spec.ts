@@ -10,7 +10,8 @@ test.describe('法令ページ', () => {
   test('プライバシーポリシーページが表示される', async ({ page }) => {
     await page.goto('/legal/privacy');
     await expect(page).toHaveTitle(/プライバシー|Sikō Coffee/);
-    await expect(page.getByText(/プライバシー/)).toBeVisible();
+    // 本文中にも「プライバシー」が出現するため見出しに限定する。
+    await expect(page.getByRole('heading', { name: /プライバシー/ })).toBeVisible();
   });
 
   test('存在しないページは 404', async ({ page }) => {
