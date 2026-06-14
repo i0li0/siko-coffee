@@ -9,7 +9,8 @@ test.describe('ホームページ', () => {
   test('ナビゲーションが表示される', async ({ page }) => {
     await page.goto('/');
     // TerminalLoader 完了を待つ（最大 15 秒）
-    await expect(page.getByRole('navigation')).toBeVisible({ timeout: 15_000 });
+    // ページには複数の nav（メイン / セクションナビ）があるため先頭に限定する。
+    await expect(page.getByRole('navigation').first()).toBeVisible({ timeout: 15_000 });
     await expect(page.getByRole('link', { name: /shop/i })).toBeVisible();
   });
 

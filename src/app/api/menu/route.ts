@@ -1,12 +1,16 @@
 import { ScanCommand } from '@aws-sdk/lib-dynamodb';
 import { NextResponse } from 'next/server';
-import { getDocClient, TABLE } from '@/lib/db';
+import { getDocClient, isDbConfigured, TABLE } from '@/lib/db';
 import type { Product } from '@/types/product';
 
 export const preferredRegion = ['hnd1'];
 export const revalidate = 3600;
 
 export async function GET() {
+  // DynamoDB 未設定の環境（CI 等）では空メニューとして正常応答する。
+  if (!isDbConfigured()) {
+    return NextResponse.json([]);
+  }
   try {
     const result = await getDocClient().send(
       new ScanCommand({
