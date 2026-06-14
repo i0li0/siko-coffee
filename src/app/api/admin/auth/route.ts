@@ -10,7 +10,7 @@ function getClientIp(req: NextRequest): string {
 
 export async function POST(request: NextRequest) {
   const ip = getClientIp(request)
-  const { allowed, retryAfter } = checkRateLimit(ip)
+  const { allowed, retryAfter } = await checkRateLimit(ip)
 
   if (!allowed) {
     return NextResponse.json(
@@ -22,25 +22,25 @@ export async function POST(request: NextRequest) {
   const { password, totpCode } = await request.json()
 
   if (!checkAdminPassword(password)) {
-    recordFailure(ip)
+    await recordFailure(ip)
     return NextResponse.json({ error: 'パスワードが違います' }, { status: 401 })
   }
 
   const totpSecret = process.env.ADMIN_TOTP_SECRET
   if (totpSecret) {
     if (!totpCode) {
-      recordFailure(ip)
+      await recordFailure(ip)
       return NextResponse.json({ requireTotp: true }, { status: 200 })
     }
     const result = verifySync({ token: String(totpCode), secret: totpSecret })
     const isValid = result.valid
     if (!isValid) {
-      recordFailure(ip)
+      await recordFailure(ip)
       return NextResponse.json({ error: '認証コードが違います' }, { status: 401 })
     }
   }
 
-  resetFailures(ip)
+  await resetFailures(ip)
   const sessionToken = await createSessionToken()
   const response = NextResponse.json({ ok: true })
 
