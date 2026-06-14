@@ -8,7 +8,8 @@ export default defineConfig({
   workers: process.env.CI ? 1 : undefined,
   reporter: 'html',
   use: {
-    baseURL: process.env.PLAYWRIGHT_BASE_URL ?? 'http://localhost:3000',
+    // 空文字（CI で vars 未設定時）も localhost にフォールバックさせる。
+    baseURL: process.env.PLAYWRIGHT_BASE_URL || 'http://localhost:3000',
     trace: 'on-first-retry',
   },
   projects: [
@@ -17,7 +18,8 @@ export default defineConfig({
   webServer: process.env.PLAYWRIGHT_BASE_URL
     ? undefined
     : {
-        command: 'npm run build && npm run start',
+        // CI では事前の Build ステップでビルド済みのため start のみ。ローカルは build+start。
+        command: process.env.CI ? 'npm run start' : 'npm run build && npm run start',
         url: 'http://localhost:3000',
         reuseExistingServer: !process.env.CI,
         timeout: 120_000,
