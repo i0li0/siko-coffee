@@ -1,5 +1,5 @@
 import { GetCommand, PutCommand, DeleteCommand } from '@aws-sdk/lib-dynamodb'
-import { getDocClient, TABLE } from '@/lib/db'
+import { getDocClient, TABLE, isDbConfigured } from '@/lib/db'
 
 const MAX_ATTEMPTS = 5
 const WINDOW_MS = 15 * 60 * 1000
@@ -41,6 +41,9 @@ async function putEntry(ip: string, entry: Entry): Promise<void> {
 
 export async function checkRateLimit(ip: string): Promise<{ allowed: boolean; retryAfter?: number }> {
   const now = Date.now()
+  // DB 未設定（CI / ローカル等）は永続ストアが無いためレート制限をスキップする。
+  // 「設定済みなのに障害」のときだけフェイルクローズしたいので、両者を区別する。
+  if (!isDbConfigured()) return { allowed: true }
   let entry: Entry | null
   try {
     entry = await getEntry(ip)
@@ -69,6 +72,7 @@ export async function checkRateLimit(ip: string): Promise<{ allowed: boolean; re
 }
 
 export async function recordFailure(ip: string): Promise<void> {
+  if (!isDbConfigured()) return
   const now = Date.now()
   let entry: Entry | null
   try {
@@ -87,6 +91,7 @@ export async function recordFailure(ip: string): Promise<void> {
 }
 
 export async function resetFailures(ip: string): Promise<void> {
+  if (!isDbConfigured()) return
   try {
     await getDocClient().send(
       new DeleteCommand({ TableName: TABLE.CONFIG, Key: { configKey: key(ip) } })
