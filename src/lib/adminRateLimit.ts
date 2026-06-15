@@ -15,16 +15,14 @@ interface Entry {
   lockedUntil: number
 }
 
+// 「項目なし」は null を返すが、DynamoDB エラーは throw する。
+// 呼び出し側でエラーをフェイルクローズ（ログイン拒否）扱いにするため、ここで握りつぶさない。
 async function getEntry(ip: string): Promise<Entry | null> {
-  try {
-    const res = await getDocClient().send(
-      new GetCommand({ TableName: TABLE.CONFIG, Key: { configKey: key(ip) } })
-    )
-    if (!res.Item) return null
-    return res.Item as Entry
-  } catch {
-    return null
-  }
+  const res = await getDocClient().send(
+    new GetCommand({ TableName: TABLE.CONFIG, Key: { configKey: key(ip) } })
+  )
+  if (!res.Item) return null
+  return res.Item as Entry
 }
 
 async function putEntry(ip: string, entry: Entry): Promise<void> {
@@ -43,7 +41,14 @@ async function putEntry(ip: string, entry: Entry): Promise<void> {
 
 export async function checkRateLimit(ip: string): Promise<{ allowed: boolean; retryAfter?: number }> {
   const now = Date.now()
-  const entry = await getEntry(ip)
+  let entry: Entry | null
+  try {
+    entry = await getEntry(ip)
+  } catch {
+    // DynamoDB 障害時はフェイルクローズ（ブルートフォースを許さない）。
+    // 管理データ自体が DynamoDB 上にあるため、障害中にログインできなくても実害はない。
+    return { allowed: false, retryAfter: 60 }
+  }
   if (!entry) return { allowed: true }
 
   if (entry.lockedUntil > now) {
@@ -65,7 +70,13 @@ export async function checkRateLimit(ip: string): Promise<{ allowed: boolean; re
 
 export async function recordFailure(ip: string): Promise<void> {
   const now = Date.now()
-  const entry = await getEntry(ip)
+  let entry: Entry | null
+  try {
+    entry = await getEntry(ip)
+  } catch {
+    // 読み取り失敗時は新規エントリ作成にフォールバック（best-effort）。
+    entry = null
+  }
   if (!entry || now - entry.firstAttempt > WINDOW_MS) {
     await putEntry(ip, { count: 1, firstAttempt: now, lockedUntil: 0 })
     return

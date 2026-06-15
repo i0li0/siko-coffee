@@ -2,6 +2,7 @@ import { ScanCommand, DeleteCommand } from '@aws-sdk/lib-dynamodb';
 import { NextResponse } from 'next/server';
 import * as Sentry from '@sentry/nextjs';
 import { getDocClient, TABLE } from '@/lib/db';
+import { verifyBearer } from '@/lib/safeCompare';
 
 export const preferredRegion = ['hnd1'];
 
@@ -11,8 +12,7 @@ const MAX_AGE_MS = 24 * 60 * 60 * 1000;
 
 export async function GET(req: Request) {
   // Vercel Cron は Authorization: Bearer {CRON_SECRET} を自動付与する
-  const secret = process.env.CRON_SECRET;
-  if (!secret || req.headers.get('authorization') !== `Bearer ${secret}`) {
+  if (!verifyBearer(req.headers.get('authorization'), process.env.CRON_SECRET)) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 

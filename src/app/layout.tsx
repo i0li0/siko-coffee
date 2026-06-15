@@ -6,6 +6,7 @@ import {
   IBM_Plex_Serif,
 } from 'next/font/google';
 import { SpeedInsights } from '@vercel/speed-insights/next';
+import { Analytics } from '@vercel/analytics/next';
 import { GoogleAnalytics } from '@next/third-parties/google';
 import './globals.css';
 
@@ -121,6 +122,7 @@ export default function RootLayout({
       </head>
       <body>
         {children}
+        <Analytics />
         <SpeedInsights />
       </body>
       {process.env.NEXT_PUBLIC_GA_MEASUREMENT_ID && (
