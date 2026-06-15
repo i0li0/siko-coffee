@@ -1,5 +1,5 @@
 import { GetCommand, PutCommand, DeleteCommand } from '@aws-sdk/lib-dynamodb'
-import { getDocClient, isDbConfigured, TABLE } from '@/lib/db'
+import { getDocClient, TABLE, isDbConfigured } from '@/lib/db'
 
 const MAX_ATTEMPTS = 5
 const WINDOW_MS = 15 * 60 * 1000
@@ -15,16 +15,14 @@ interface Entry {
   lockedUntil: number
 }
 
+// 「項目なし」は null を返すが、DynamoDB エラーは throw する。
+// 呼び出し側でエラーをフェイルクローズ（ログイン拒否）扱いにするため、ここで握りつぶさない。
 async function getEntry(ip: string): Promise<Entry | null> {
-  try {
-    const res = await getDocClient().send(
-      new GetCommand({ TableName: TABLE.CONFIG, Key: { configKey: key(ip) } })
-    )
-    if (!res.Item) return null
-    return res.Item as Entry
-  } catch {
-    return null
-  }
+  const res = await getDocClient().send(
+    new GetCommand({ TableName: TABLE.CONFIG, Key: { configKey: key(ip) } })
+  )
+  if (!res.Item) return null
+  return res.Item as Entry
 }
 
 async function putEntry(ip: string, entry: Entry): Promise<void> {
@@ -37,17 +35,23 @@ async function putEntry(ip: string, entry: Entry): Promise<void> {
       })
     )
   } catch {
-    // DynamoDB 障害時はフェイルオープン（ログイン試行を止めない）
+    // 書き込み失敗は best-effort（次回 checkRateLimit が読めなければフェイルクローズ側で守る）
   }
 }
 
 export async function checkRateLimit(ip: string): Promise<{ allowed: boolean; retryAfter?: number }> {
-  // AWS 認証情報が無い環境（CI のモック実行など）では DynamoDB を呼ばず、
-  // フェイルオープンでレート制限をスキップする。
-  if (!isDbConfigured()) return { allowed: true }
-
   const now = Date.now()
-  const entry = await getEntry(ip)
+  // DB 未設定（CI / ローカル等）は永続ストアが無いためレート制限をスキップする。
+  // 「設定済みなのに障害」のときだけフェイルクローズしたいので、両者を区別する。
+  if (!isDbConfigured()) return { allowed: true }
+  let entry: Entry | null
+  try {
+    entry = await getEntry(ip)
+  } catch {
+    // DynamoDB 障害時はフェイルクローズ（ブルートフォースを許さない）。
+    // 管理データ自体が DynamoDB 上にあるため、障害中にログインできなくても実害はない。
+    return { allowed: false, retryAfter: 60 }
+  }
   if (!entry) return { allowed: true }
 
   if (entry.lockedUntil > now) {
@@ -69,9 +73,14 @@ export async function checkRateLimit(ip: string): Promise<{ allowed: boolean; re
 
 export async function recordFailure(ip: string): Promise<void> {
   if (!isDbConfigured()) return
-
   const now = Date.now()
-  const entry = await getEntry(ip)
+  let entry: Entry | null
+  try {
+    entry = await getEntry(ip)
+  } catch {
+    // 読み取り失敗時は新規エントリ作成にフォールバック（best-effort）。
+    entry = null
+  }
   if (!entry || now - entry.firstAttempt > WINDOW_MS) {
     await putEntry(ip, { count: 1, firstAttempt: now, lockedUntil: 0 })
     return
@@ -83,7 +92,6 @@ export async function recordFailure(ip: string): Promise<void> {
 
 export async function resetFailures(ip: string): Promise<void> {
   if (!isDbConfigured()) return
-
   try {
     await getDocClient().send(
       new DeleteCommand({ TableName: TABLE.CONFIG, Key: { configKey: key(ip) } })

@@ -19,6 +19,15 @@ function repoRoot(): string {
   return __dirname;
 }
 
+// 本番では 'unsafe-eval' を排除する（Next 本番ランタイムは eval 不要）。
+// 'unsafe-inline' は静的プリレンダ済みページのインラインスクリプト用に維持する。
+// （nonce で完全排除するには全ページを動的レンダリングする必要があり、トレードオフが大きい）
+// 開発時のみ HMR / React Refresh のため eval とインラインを許可する。
+const isProd = process.env.NODE_ENV === 'production';
+const scriptSrc = isProd
+  ? "script-src 'self' 'unsafe-inline' https://www.googletagmanager.com https://www.google-analytics.com"
+  : "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://www.googletagmanager.com https://www.google-analytics.com";
+
 const securityHeaders = [
   {
     key: 'X-Content-Type-Options',
@@ -40,12 +49,15 @@ const securityHeaders = [
     key: 'Content-Security-Policy',
     value: [
       "default-src 'self'",
-      "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://www.googletagmanager.com https://www.google-analytics.com",
+      scriptSrc,
       "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
       "font-src 'self' https://fonts.gstatic.com",
       "img-src 'self' data: blob: https://*.cdninstagram.com https://cdninstagram.com https://www.google-analytics.com",
       "connect-src 'self' https://www.google-analytics.com https://region1.google-analytics.com",
       "frame-ancestors 'none'",
+      "base-uri 'self'",
+      "form-action 'self'",
+      "object-src 'none'",
     ].join('; '),
   },
 ];
