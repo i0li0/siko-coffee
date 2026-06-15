@@ -137,6 +137,26 @@ footer { background: linear-gradient(to bottom, #080600, #050400); }
   margin-left: 2px;
 }
 
+/* ── 公式マスコット「シコうさ」idle animation ── */
+@keyframes rabbitBreathe {
+  0%, 100% { transform: translateY(0)     scale(1);     }
+  50%       { transform: translateY(-3.5%) scale(1.028); }
+}
+@keyframes rabbitBlink {
+  0%, 92%, 100% { transform: scaleY(1);   }
+  96%            { transform: scaleY(0.08); }
+}
+.rabbit-idle {
+  animation: rabbitBreathe 4.6s ease-in-out infinite;
+  transform-origin: 50% 90%;
+  will-change: transform;
+}
+.rabbit-eye {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: rabbitBlink 5.2s ease-in-out infinite;
+}
+
 /* ── Terminal scan line overlay ── */
 .scanlines {
   pointer-events: none;
@@ -155,6 +175,7 @@ footer { background: linear-gradient(to bottom, #080600, #050400); }
   .wisp { animation: none; opacity: 0.3; }
   .hero-scroll { animation: none; opacity: 0.4; }
   .terminal-cursor { animation: none; }
+  .rabbit-idle, .rabbit-eye { animation: none; }
   #smoke-canvas { display: none; }
   #wave-overlay { transition: none; }
   * { transition-duration: 0.01ms !important; animation-duration: 0.01ms !important; }
