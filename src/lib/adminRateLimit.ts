@@ -35,7 +35,7 @@ async function putEntry(ip: string, entry: Entry): Promise<void> {
       })
     )
   } catch {
-    // DynamoDB 障害時はフェイルオープン（ログイン試行を止めない）
+    // 書き込み失敗は best-effort（次回 checkRateLimit が読めなければフェイルクローズ側で守る）
   }
 }
 
