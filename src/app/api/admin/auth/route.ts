@@ -5,7 +5,12 @@ import { createSessionToken } from '@/lib/adminSession'
 import { verifySync } from 'otplib'
 
 function getClientIp(req: NextRequest): string {
-  return req.headers.get('x-forwarded-for')?.split(',')[0].trim() ?? 'unknown'
+  // Vercel が付与する x-real-ip は実クライアントIP（詐称不可）。
+  // x-forwarded-for の先頭値はクライアントが任意に詐称でき、レート制限を回避できるため使わない。
+  const realIp = req.headers.get('x-real-ip')?.trim()
+  if (realIp) return realIp
+  // 非 Vercel 環境（ローカル等）向けフォールバック。
+  return req.headers.get('x-forwarded-for')?.split(',')[0].trim() || 'unknown'
 }
 
 export async function POST(request: NextRequest) {

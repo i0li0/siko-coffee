@@ -1,12 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { revalidatePath } from 'next/cache';
+import { verifyBearer } from '@/lib/safeCompare';
 
 export const dynamic = 'force-dynamic';
 export const preferredRegion = ['hnd1'];
 
 export async function POST(req: NextRequest) {
-  const secret = process.env.REVALIDATE_SECRET;
-  if (!secret || req.headers.get('authorization') !== `Bearer ${secret}`) {
+  if (!verifyBearer(req.headers.get('authorization'), process.env.REVALIDATE_SECRET)) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
