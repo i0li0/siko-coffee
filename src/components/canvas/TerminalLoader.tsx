@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
+import PixelRabbit from './PixelRabbit';
 
 // ── types ──────────────────────────────────────────────────────────
 type Line =
@@ -13,6 +14,13 @@ type Line =
 
 interface Props { onFinish: () => void }
 
+interface ConnectionInfo {
+  effectiveType?: string;
+  downlink?: number;
+  rtt?: number;
+  saveData?: boolean;
+}
+
 // ── helpers ────────────────────────────────────────────────────────
 function pad(n: number, w = 2) { return String(n).padStart(w, '0'); }
 function nowStr() {
@@ -21,9 +29,14 @@ function nowStr() {
        + `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
 }
 
+function connection(): ConnectionInfo | undefined {
+  return (navigator as Navigator & { connection?: ConnectionInfo }).connection;
+}
+
+// ── 実データ収集 — フェイクなし、すべて実機 / 実通信の情報 ──────────
 function collectEnv(): Record<string, string> {
   const nav  = navigator;
-  const conn = (nav as { connection?: { effectiveType?: string; downlink?: number } }).connection;
+  const conn = connection();
   const tz   = Intl.DateTimeFormat().resolvedOptions().timeZone;
   const dpr  = window.devicePixelRatio;
   const dark = window.matchMedia('(prefers-color-scheme: dark)').matches;
@@ -37,6 +50,71 @@ function collectEnv(): Record<string, string> {
       ? `${conn.effectiveType ?? '—'}${conn.downlink != null ? '  ' + conn.downlink + ' Mbps' : ''}`
       : 'unknown',
   };
+}
+
+function gpuRenderer(): string {
+  try {
+    const canvas = document.createElement('canvas');
+    const gl = (canvas.getContext('webgl') || canvas.getContext('experimental-webgl')) as WebGLRenderingContext | null;
+    if (!gl) return 'unavailable';
+    const dbg = gl.getExtension('WEBGL_debug_renderer_info');
+    if (dbg) {
+      const r = gl.getParameter((dbg as { UNMASKED_RENDERER_WEBGL: number }).UNMASKED_RENDERER_WEBGL);
+      return String(r);
+    }
+    return String(gl.getParameter(gl.RENDERER));
+  } catch {
+    return 'unavailable';
+  }
+}
+
+function collectHardware(): Record<string, string> {
+  const nav = navigator as Navigator & { deviceMemory?: number };
+  return {
+    'cpu-threads': `${nav.hardwareConcurrency ?? '—'} logical`,
+    'device-mem ': nav.deviceMemory ? `≈ ${nav.deviceMemory} GB` : 'undisclosed',
+    'gpu        ': gpuRenderer(),
+    'color-depth': `${window.screen.colorDepth}-bit`,
+    'touch-pts  ': `${nav.maxTouchPoints} max`,
+  };
+}
+
+function collectNetwork(): Record<string, string> {
+  const conn = connection();
+  return {
+    'status     ': navigator.onLine ? 'online' : 'offline',
+    'protocol   ': location.protocol.replace(':', ''),
+    'host       ': location.host,
+    'eff-type   ': conn?.effectiveType ?? 'unknown',
+    'downlink   ': conn?.downlink != null ? `${conn.downlink} Mbps` : '—',
+    'rtt        ': conn?.rtt != null ? `${conn.rtt} ms` : '—',
+  };
+}
+
+function collectPerf(): Record<string, string> | null {
+  const nav = performance.getEntriesByType('navigation')[0] as PerformanceNavigationTiming | undefined;
+  if (!nav) return null;
+  const span = (a: number, b: number) => `${Math.max(0, Math.round(b - a))} ms`;
+  return {
+    'dns-lookup ': span(nav.domainLookupStart, nav.domainLookupEnd),
+    'tcp-connect': span(nav.connectStart, nav.connectEnd),
+    'ttfb       ': span(nav.requestStart, nav.responseStart),
+    'dom-ready  ': `${Math.round(nav.domContentLoadedEventEnd)} ms`,
+    'transfer   ': nav.transferSize ? `${(nav.transferSize / 1024).toFixed(1)} KB` : 'cached',
+  };
+}
+
+function featureChecks(): [string, boolean][] {
+  const test = (fn: () => boolean) => { try { return fn(); } catch { return false; } };
+  return [
+    ['cookies enabled',  navigator.cookieEnabled],
+    ['local-storage',    test(() => { localStorage.setItem('__t', '1'); localStorage.removeItem('__t'); return true; })],
+    ['service-worker',   'serviceWorker' in navigator],
+    ['webgl2 context',   test(() => !!document.createElement('canvas').getContext('webgl2'))],
+    ['web-assembly',     typeof WebAssembly === 'object'],
+    ['intl / icu',       typeof Intl === 'object'],
+    ['clipboard api',    !!navigator.clipboard],
+  ];
 }
 
 function brewParams() {
@@ -68,22 +146,21 @@ function brewParams() {
 }
 
 // ── progress bar ───────────────────────────────────────────────────
-const COLS = 36;
-function ProgressBar({ value }: { value: number }) {
-  const filled = Math.round((value / 100) * COLS);
+function ProgressBar({ value, cols }: { value: number; cols: number }) {
+  const filled = Math.round((value / 100) * cols);
   const pct    = String(value).padStart(3);
   return (
     <div className="flex flex-col items-center gap-3 select-none w-full">
-      <div className="relative flex items-center gap-4">
+      <div className="relative flex items-center gap-2 sm:gap-4 max-w-full">
         <span
-          className="font-mono text-[clamp(12px,1.3vw,15px)] tracking-[0.05em] leading-none"
+          className="font-mono text-[clamp(11px,1.3vw,15px)] tracking-[0.05em] leading-none"
           style={{ color: 'var(--amber)' }}
         >
           {'█'.repeat(filled)}
-          <span style={{ color: 'var(--amber3)' }}>{'░'.repeat(COLS - filled)}</span>
+          <span style={{ color: 'var(--amber3)' }}>{'░'.repeat(cols - filled)}</span>
         </span>
         <span
-          className="font-mono text-[clamp(11px,1.1vw,13px)] tabular-nums w-[2.8em] text-right"
+          className="font-mono text-[clamp(10px,1.1vw,13px)] tabular-nums w-[2.8em] text-right shrink-0"
           style={{ color: value === 100 ? 'var(--amber)' : 'var(--amber2)' }}
         >
           {pct}%
@@ -93,7 +170,7 @@ function ProgressBar({ value }: { value: number }) {
             aria-hidden
             className="absolute left-0 bottom-[-6px] h-[6px] rounded-full pointer-events-none blur-[6px]"
             style={{
-              width: `${(filled / COLS) * 100}%`,
+              width: `${(filled / cols) * 100}%`,
               background: 'var(--amber)',
               opacity: 0.35,
               transition: 'width 0.4s ease',
@@ -158,6 +235,8 @@ export default function TerminalLoader({ onFinish }: Props) {
   const [lines,    setL] = useState<Line[]>([]);
   const [exiting,  setE] = useState(false);
   const [visible,  setV] = useState(true);
+  // モバイルではプログレスバーのブロック数を絞り、枠内に収める（ssr:false なので window 参照可）
+  const [cols] = useState(() => (typeof window !== 'undefined' && window.innerWidth < 480 ? 22 : 36));
   const logRef           = useRef<HTMLDivElement>(null);
   const genRef           = useRef(0);
 
@@ -189,60 +268,96 @@ export default function TerminalLoader({ onFinish }: Props) {
     const myGen = ++genRef.current;
     const alive = () => genRef.current === myGen;
 
-    // 3-second hard cap
-    const cap = setTimeout(() => finish(myGen), 3000);
+    // hard cap — content が長くなったぶん上限を引き上げ
+    const cap = setTimeout(() => finish(myGen), 5200);
+
+    async function dump(cmd: string, data: Record<string, string> | null, okMsg: string, p: number) {
+      push({ t: 'cmd', text: cmd });
+      await ms(110);
+      if (!alive()) return;
+      if (!data) { push({ t: 'err', text: 'no data available.' }); setP(p); return; }
+      for (const [k, v] of Object.entries(data)) {
+        if (!alive()) return;
+        push({ t: 'out', text: `${k}: ${v}`, dim: true });
+        await ms(26);
+      }
+      push({ t: 'ok', text: okMsg });
+      setP(p);
+    }
 
     async function run() {
+      // この世代の出力をクリーンに始める（StrictMode の二重実行・再起動対策）
+      setL([]);
+
       // ── 1. boot ─────────────────────────────────────────────
       push({ t: 'div' });
       push({ t: 'amber', text: 'SIKŌ COFFEE  //  SYSTEM BOOT' });
       push({ t: 'out',   text: `timestamp  : ${nowStr()}`, dim: true });
       push({ t: 'out',   text: 'os         : sikocoffee-os v1.0.0', dim: true });
+      push({ t: 'out',   text: `platform   : ${navigator.platform}`, dim: true });
       push({ t: 'div' });
       setP(8);
-      await ms(280);
-
+      await ms(260);
       if (!alive()) return;
 
       // ── 2. env scan ──────────────────────────────────────────
-      push({ t: 'cmd', text: 'scan --env client' });
-      await ms(120);
-      const env = collectEnv();
-      for (const [k, v] of Object.entries(env)) {
-        if (!alive()) return;
-        push({ t: 'out', text: `${k}: ${v}`, dim: true });
-        await ms(38);
-      }
-      push({ t: 'ok', text: 'environment loaded.' });
-      setP(32);
-      await ms(160);
-
+      await dump('scan --env client', collectEnv(), 'environment loaded.', 22);
+      await ms(140);
       if (!alive()) return;
 
-      // ── 3. brew analysis ─────────────────────────────────────
-      push({ t: 'cmd', text: 'brew --analyze --context now' });
-      setP(58);
+      // ── 3. hardware inspect ──────────────────────────────────
+      await dump('inspect --hardware', collectHardware(), 'device profiled.', 40);
       await ms(140);
+      if (!alive()) return;
+
+      // ── 4. network probe ─────────────────────────────────────
+      await dump('net --probe', collectNetwork(), 'link established.', 55);
+      await ms(140);
+      if (!alive()) return;
+
+      // ── 5. navigation timing ─────────────────────────────────
+      await dump('perf --navigation', collectPerf(), 'metrics captured.', 70);
+      await ms(140);
+      if (!alive()) return;
+
+      // ── 6. feature checks ────────────────────────────────────
+      push({ t: 'cmd', text: 'features --check' });
+      await ms(110);
+      let okCount = 0;
+      for (const [name, ok] of featureChecks()) {
+        if (!alive()) return;
+        if (ok) okCount++;
+        push(ok ? { t: 'ok', text: name } : { t: 'err', text: `${name} (unsupported)` });
+        await ms(26);
+      }
+      push({ t: 'amber', text: `${okCount}/7 capabilities online.` });
+      setP(85);
+      await ms(150);
+      if (!alive()) return;
+
+      // ── 7. brew analysis ─────────────────────────────────────
+      push({ t: 'cmd', text: 'brew --analyze --context now' });
+      await ms(130);
       const { brewLines, rec } = brewParams();
       push({ t: 'div' });
       for (const bl of brewLines) {
         if (!alive()) return;
         push({ t: 'out', text: bl, dim: true });
-        await ms(48);
+        await ms(40);
       }
       push({ t: 'div' });
-      await ms(120);
+      await ms(110);
       push({ t: 'amber', text: `→  ${rec}` });
-      setP(90);
-      await ms(260);
-
-      // ── 4. ready ─────────────────────────────────────────────
+      setP(95);
+      await ms(240);
       if (!alive()) return;
+
+      // ── 8. ready ─────────────────────────────────────────────
       push({ t: 'div' });
       push({ t: 'amber', text: 'READY.' });
       push({ t: 'div' });
       setP(100);
-      await ms(700);
+      await ms(650);
 
       clearTimeout(cap);
       finish(myGen);
@@ -267,8 +382,8 @@ export default function TerminalLoader({ onFinish }: Props) {
         transition: exiting ? 'opacity 0.95s ease' : 'none',
       }}
     >
-      <div className="flex-1 flex flex-col items-center justify-center px-6">
-        <div className="text-center mb-10 w-full max-w-[580px]">
+      <div className="flex-1 flex flex-col items-center justify-center px-5 sm:px-6 min-h-0">
+        <div className="text-center mb-5 sm:mb-6 w-full max-w-[580px]">
           <p
             className="font-mono font-medium tracking-[0.32em] mb-1
               text-[clamp(10px,1.05vw,12px)] select-none"
@@ -285,14 +400,17 @@ export default function TerminalLoader({ onFinish }: Props) {
           </p>
         </div>
 
-        <div className="w-full max-w-[580px] mb-10">
-          <ProgressBar value={progress} />
+        {/* 公式マスコット「シコうさ」— ロゴとターミナルの間に配置 */}
+        <PixelRabbit className="mb-6 sm:mb-8 w-[clamp(76px,15vw,112px)] h-auto" />
+
+        <div className="w-full max-w-[580px] mb-7 sm:mb-10">
+          <ProgressBar value={progress} cols={cols} />
         </div>
 
         <div
           className="w-full max-w-[580px]"
           style={{
-            height: '38vh',
+            height: 'min(38vh, 320px)',
             maskImage:       'linear-gradient(to bottom, transparent 0%, black 14%, black 100%)',
             WebkitMaskImage: 'linear-gradient(to bottom, transparent 0%, black 14%, black 100%)',
             overflow: 'hidden',
@@ -315,7 +433,7 @@ export default function TerminalLoader({ onFinish }: Props) {
         </div>
       </div>
 
-      <div className="flex justify-end px-10 pb-7">
+      <div className="flex justify-end px-6 sm:px-10 pb-6 sm:pb-7">
         <button
           onClick={() => {
             setE(true);
