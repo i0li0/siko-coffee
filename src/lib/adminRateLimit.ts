@@ -1,5 +1,5 @@
 import { GetCommand, PutCommand, DeleteCommand } from '@aws-sdk/lib-dynamodb'
-import { getDocClient, TABLE } from '@/lib/db'
+import { getDocClient, isDbConfigured, TABLE } from '@/lib/db'
 
 const MAX_ATTEMPTS = 5
 const WINDOW_MS = 15 * 60 * 1000
@@ -42,6 +42,10 @@ async function putEntry(ip: string, entry: Entry): Promise<void> {
 }
 
 export async function checkRateLimit(ip: string): Promise<{ allowed: boolean; retryAfter?: number }> {
+  // AWS 認証情報が無い環境（CI のモック実行など）では DynamoDB を呼ばず、
+  // フェイルオープンでレート制限をスキップする。
+  if (!isDbConfigured()) return { allowed: true }
+
   const now = Date.now()
   const entry = await getEntry(ip)
   if (!entry) return { allowed: true }
@@ -64,6 +68,8 @@ export async function checkRateLimit(ip: string): Promise<{ allowed: boolean; re
 }
 
 export async function recordFailure(ip: string): Promise<void> {
+  if (!isDbConfigured()) return
+
   const now = Date.now()
   const entry = await getEntry(ip)
   if (!entry || now - entry.firstAttempt > WINDOW_MS) {
@@ -76,6 +82,8 @@ export async function recordFailure(ip: string): Promise<void> {
 }
 
 export async function resetFailures(ip: string): Promise<void> {
+  if (!isDbConfigured()) return
+
   try {
     await getDocClient().send(
       new DeleteCommand({ TableName: TABLE.CONFIG, Key: { configKey: key(ip) } })
