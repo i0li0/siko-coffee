@@ -12,7 +12,7 @@
   --bg2:     #0f0d00;
   --surface: #1c1900;
   --amber:   #D4A017;
-  --amber2:  #8B6914;
+  --amber2:  #A37C18;  /* 旧 #8B6914 は ~3:1 で AA 未達 → 小サイズ文字でも 4.5:1 を満たすよう微調整 */
   --amber3:  #4A3808;
   --cream:   #E8E0D0;
   --dim:     rgba(232,224,208,0.45);
@@ -36,6 +36,14 @@
 @layer base {
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 }
+
+/* ── Visible keyboard focus (a11y) — unlayered so it wins over Tailwind utilities ── */
+:focus-visible {
+  outline: 2px solid var(--amber);
+  outline-offset: 3px;
+  border-radius: 2px;
+}
+:focus:not(:focus-visible) { outline: none; }
 
 body {
   background: var(--bg);

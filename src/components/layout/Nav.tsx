@@ -2,20 +2,70 @@
 
 import Image from 'next/image';
 import { usePathname } from 'next/navigation';
+import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
 
 interface Props {
   visible: boolean;
   logoHref?: string;
 }
 
+const SECTIONS: { id: string; label: string }[] = [
+  { id: 'hero', label: 'Top' },
+  { id: 'story', label: 'Story' },
+  { id: 'menu', label: 'Menu' },
+  { id: 'location', label: 'Location' },
+  { id: 'sns', label: 'Instagram' },
+  { id: 'contact', label: 'Contact' },
+];
+
 export default function Nav({ visible, logoHref }: Props) {
   const pathname = usePathname();
   const isShop = pathname?.startsWith('/shop');
+  const isHome = pathname === '/';
+
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+
+  // Escape to close + return focus, click outside to close
+  useEffect(() => {
+    if (!menuOpen) return;
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') {
+        setMenuOpen(false);
+        triggerRef.current?.focus();
+      }
+    }
+    function onPointer(e: MouseEvent) {
+      if (
+        !menuRef.current?.contains(e.target as Node) &&
+        !triggerRef.current?.contains(e.target as Node)
+      ) {
+        setMenuOpen(false);
+      }
+    }
+    document.addEventListener('keydown', onKey);
+    document.addEventListener('mousedown', onPointer);
+    return () => {
+      document.removeEventListener('keydown', onKey);
+      document.removeEventListener('mousedown', onPointer);
+    };
+  }, [menuOpen]);
 
   function scrollTo(id: string) {
     const el = document.getElementById(id);
     if (!el) return;
     window._lenis?.scrollTo(el, { duration: 1.6 });
+  }
+
+  function onSectionClick(e: ReactMouseEvent, id: string) {
+    // On the home page intercept and smooth-scroll; elsewhere let the
+    // anchor (/#id) navigate to home and scroll natively.
+    if (isHome) {
+      e.preventDefault();
+      scrollTo(id);
+    }
+    setMenuOpen(false);
   }
 
   const isExternalHref = logoHref && !logoHref.startsWith('#');
@@ -28,21 +78,54 @@ export default function Nav({ visible, logoHref }: Props) {
       px-5 py-4 pointer-events-none
       min-[700px]:px-11 min-[700px]:py-6"
     >
-      {/* ── サイドバーアイコン（左） ── */}
-      <button
-        aria-label="Menu"
-        className={`absolute left-5 top-1/2 -translate-y-1/2 flex flex-col gap-[5px] p-1
-          group min-[700px]:left-11 ${itemCls}`}
-      >
-        {[0, 1, 2].map((i) => (
-          <span
-            key={i}
-            className="block h-px bg-[rgba(255,252,245,0.75)] transition-all duration-300
-              group-hover:bg-[var(--amber)]"
-            style={{ width: i === 1 ? '18px' : '24px' }}
-          />
-        ))}
-      </button>
+      {/* ── セクションメニュー（左） ── */}
+      <div className={`absolute left-5 top-1/2 -translate-y-1/2 min-[700px]:left-11 ${itemCls}`}>
+        <button
+          ref={triggerRef}
+          type="button"
+          aria-label="Section menu"
+          aria-haspopup="true"
+          aria-expanded={menuOpen}
+          aria-controls="nav-section-menu"
+          onClick={() => setMenuOpen((o) => !o)}
+          className="group flex items-center justify-center min-w-[44px] min-h-[44px] -ml-2.5"
+        >
+          <span className="flex flex-col gap-[5px]">
+            {[0, 1, 2].map((i) => (
+              <span
+                key={i}
+                className={`block h-px transition-all duration-300
+                  ${menuOpen ? 'bg-[var(--amber)]' : 'bg-[rgba(255,252,245,0.75)] group-hover:bg-[var(--amber)]'}`}
+                style={{ width: i === 1 ? '18px' : '24px' }}
+              />
+            ))}
+          </span>
+        </button>
+
+        {menuOpen && (
+          <div
+            id="nav-section-menu"
+            ref={menuRef}
+            className="absolute left-0 top-[calc(100%+10px)] min-w-[168px] flex flex-col py-2
+              rounded-md border bg-[var(--bg2)]
+              shadow-[0_10px_34px_rgba(0,0,0,0.55)]"
+            style={{ borderColor: 'var(--faint)' }}
+          >
+            {SECTIONS.map((s) => (
+              <a
+                key={s.id}
+                href={`/#${s.id}`}
+                onClick={(e) => onSectionClick(e, s.id)}
+                className="px-5 py-2.5 font-mono text-[13px] tracking-[0.08em] no-underline
+                  text-[var(--cream)] transition-colors duration-200
+                  hover:text-[var(--amber)] hover:bg-[var(--surface)]"
+              >
+                {s.label}
+              </a>
+            ))}
+          </div>
+        )}
+      </div>
 
       {/* ── ロゴ（中央） ── */}
       <a
@@ -65,9 +148,9 @@ export default function Nav({ visible, logoHref }: Props) {
         />
       </a>
 
-      {/* ── shop / login テキスト（中央寄り） ── */}
+      {/* ── shop / login テキスト（右端） ── */}
       <div className={`absolute top-1/2 -translate-y-1/2
-        right-[68px] min-[700px]:right-[10%]
+        right-5 min-[700px]:right-11
         transition-opacity duration-[1200ms]
         ${visible ? 'opacity-100' : 'opacity-0'}`}>
         {isShop ? (
@@ -97,27 +180,6 @@ export default function Nav({ visible, logoHref }: Props) {
           </a>
         )}
       </div>
-
-      {/* ── ユーザーアイコン（右端・常時表示） ── */}
-      <button
-        aria-label="User"
-        className={`absolute right-11 top-1/2 -translate-y-1/2 group pointer-events-auto
-          right-5 min-[700px]:right-11 transition-opacity duration-[1200ms]
-          ${visible ? 'opacity-100' : 'opacity-0'}`}
-      >
-        <span className="flex items-center justify-center w-[26px] h-[26px] rounded-full
-          border border-[rgba(255,252,245,0.3)]
-          transition-all duration-300 group-hover:border-[var(--amber)]">
-          <svg width="12" height="12" viewBox="0 0 14 14" fill="none">
-            <circle cx="7" cy="4.5" r="2.5"
-              className="group-hover:[stroke:var(--amber)]"
-              stroke="rgba(255,252,245,0.75)" strokeWidth="1" />
-            <path d="M1.5 12.5c0-3.038 2.462-5.5 5.5-5.5s5.5 2.462 5.5 5.5"
-              className="group-hover:[stroke:var(--amber)]"
-              stroke="rgba(255,252,245,0.75)" strokeWidth="1" strokeLinecap="round" />
-          </svg>
-        </span>
-      </button>
     </nav>
   );
 }
