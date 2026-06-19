@@ -5,6 +5,15 @@ import { useEffect, useState } from 'react'
 const SECTIONS = ['hero', 'story', 'menu', 'location', 'sns', 'contact'] as const
 type Section = typeof SECTIONS[number]
 
+const LABELS: Record<Section, string> = {
+  hero: 'トップ',
+  story: 'ストーリー',
+  menu: 'メニュー',
+  location: 'ロケーション',
+  sns: 'Instagram',
+  contact: 'お問い合わせ',
+}
+
 interface Props { visible: boolean }
 
 export default function DotNav({ visible }: Props) {
@@ -35,22 +44,28 @@ export default function DotNav({ visible }: Props) {
   return (
     <nav
       aria-label="Section navigation"
-      className={`fixed right-[22px] top-1/2 -translate-y-1/2 z-[100]
-        flex flex-col gap-[13px] transition-opacity duration-[1200ms]
-        max-[700px]:right-3 ${visible ? 'opacity-100' : 'opacity-0'}`}
+      className={`fixed right-[14px] top-1/2 -translate-y-1/2 z-[100]
+        flex flex-col gap-[2px] transition-opacity duration-[1200ms]
+        max-[700px]:right-1 ${visible ? 'opacity-100' : 'opacity-0'}`}
     >
       {SECTIONS.map((s) => (
         <button
           key={s}
-          title={s.charAt(0).toUpperCase() + s.slice(1)}
+          type="button"
+          aria-label={`${LABELS[s]}セクションへ移動`}
+          aria-current={active === s ? 'true' : undefined}
           onClick={() => goTo(s)}
-          className={`w-[5px] h-[5px] rounded-full border-none p-0 cursor-pointer
-            transition-all duration-[400ms]
-            ${active === s
-              ? 'bg-[#B8BEC8] scale-150'
-              : 'bg-[rgba(184,190,200,0.2)] hover:bg-[rgba(184,190,200,0.5)]'
-            }`}
-        />
+          className="group flex items-center justify-center w-7 h-7 border-none p-0
+            bg-transparent cursor-pointer"
+        >
+          <span
+            className={`block w-[5px] h-[5px] rounded-full transition-all duration-[400ms]
+              ${active === s
+                ? 'bg-[var(--amber)] scale-150'
+                : 'bg-[rgba(212,160,23,0.25)] group-hover:bg-[rgba(212,160,23,0.55)]'
+              }`}
+          />
+        </button>
       ))}
     </nav>
   )

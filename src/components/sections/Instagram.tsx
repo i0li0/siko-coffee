@@ -19,7 +19,7 @@ export default function Instagram({ posts }: Props) {
       <div className="sns-header text-center">
         <h2
           className="font-serif font-light text-[clamp(16px,2.6vw,26px)]
-            text-[rgba(232,234,238,0.58)] tracking-[0.22em] mb-2"
+            text-[rgba(232,224,208,0.6)] tracking-[0.22em] mb-2"
         >
           Instagram
         </h2>
@@ -27,8 +27,8 @@ export default function Instagram({ posts }: Props) {
           href="https://instagram.com/sikocoffee"
           target="_blank"
           rel="noopener noreferrer"
-          className="font-serif italic text-[13.5px] text-[#B8BEC8]
-            tracking-[0.1em] no-underline"
+          className="font-serif italic text-[13.5px] text-[var(--amber)]
+            tracking-[0.1em] no-underline transition-colors duration-300 hover:text-[#F6E0A0]"
         >
           @sikocoffee
         </a>
@@ -61,10 +61,15 @@ export default function Instagram({ posts }: Props) {
               />
               {post.media_type === 'VIDEO' && (
                 <span
-                  className="absolute inset-0 flex items-center justify-center
-                    text-[rgba(232,234,238,0.5)] text-[22px] pointer-events-none"
+                  className="absolute inset-0 flex items-center justify-center pointer-events-none"
+                  aria-hidden="true"
                 >
-                  ▶
+                  <svg
+                    width="22" height="22" viewBox="0 0 24 24"
+                    style={{ filter: 'drop-shadow(0 1px 3px rgba(0,0,0,0.6))' }}
+                  >
+                    <polygon points="8,5 19,12 8,19" fill="rgba(232,224,208,0.92)" />
+                  </svg>
                 </span>
               )}
             </a>
