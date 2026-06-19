@@ -27,7 +27,7 @@ export default function Hero() {
           id="hero-scroll-link"
           className="hero-scroll inline-block mt-14 font-serif text-xl
             cursor-pointer no-underline"
-          style={{ color: 'rgba(212,160,23,0.35)' }}
+          style={{ color: 'rgba(212,160,23,0.6)' }}
           data-reveal
           data-d="2"
         >

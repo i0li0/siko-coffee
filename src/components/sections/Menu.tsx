@@ -63,7 +63,7 @@ export default function Menu({ items }: Props) {
               </span>
               <span
                 className="item-desc block font-serif italic text-[12.5px] tracking-[0.07em]"
-                style={{ color: 'rgba(212,160,23,0.38)' }}
+                style={{ color: 'rgba(212,160,23,0.72)' }}
               >
                 {item.description}
               </span>
