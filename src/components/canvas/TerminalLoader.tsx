@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import PixelRabbit from './PixelRabbit';
+import AsciiRabbit from './AsciiRabbit';
 
 // ── types ──────────────────────────────────────────────────────────
 type Line =
@@ -400,8 +400,8 @@ export default function TerminalLoader({ onFinish }: Props) {
           </p>
         </div>
 
-        {/* 公式マスコット「シコうさ」— ロゴとターミナルの間に配置 */}
-        <PixelRabbit className="mb-6 sm:mb-8 w-[clamp(76px,15vw,112px)] h-auto" />
+        {/* 公式マスコット「シコうさ」— ロゴとターミナルの間に配置（ASCII アート版） */}
+        <AsciiRabbit className="mb-6 sm:mb-8" />
 
         <div className="w-full max-w-[580px] mb-7 sm:mb-10">
           <ProgressBar value={progress} cols={cols} />
