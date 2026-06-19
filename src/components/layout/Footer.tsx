@@ -4,7 +4,7 @@ import Link from 'next/link'
 export default function Footer() {
   const year = new Date().getFullYear()
   return (
-    <footer className="relative z-[2] border-t border-[rgba(184,190,200,0.07)]"
+    <footer className="relative z-[2] border-t border-[var(--faint)]"
       style={{ paddingInline: 'clamp(24px, 6.25vw, 80px)' }}>
       <div className="flex justify-between items-center
         flex-col gap-[10px] text-center py-7
@@ -18,16 +18,16 @@ export default function Footer() {
             className="h-6 w-auto brightness-[0.7]"
           />
           <span className="font-serif font-light text-[13px] tracking-[0.18em]
-            text-[rgba(184,190,200,0.5)]">
+            text-[rgba(212,160,23,0.5)]">
             Coffee
           </span>
         </div>
         <span className="font-sans font-extralight text-[10.5px] tracking-[0.14em]
-          text-[rgba(232,234,238,0.16)]">
+          text-[rgba(232,224,208,0.22)]">
           思考 · 試行 · 至高 · 嗜好
         </span>
         <span className="font-serif text-[10.5px] tracking-[0.05em]
-          text-[rgba(232,234,238,0.12)]">
+          text-[rgba(232,224,208,0.2)]">
           © {year}
         </span>
       </div>

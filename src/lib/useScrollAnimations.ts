@@ -39,16 +39,34 @@ export function useScrollAnimations(ready: boolean) {
       ;window._lenis = lenis
 
       /* ── Hero ── */
-      gsap.timeline({ delay: 0.15 })
-        .fromTo('.hero-tagline',
+      const heroTl = gsap.timeline({ delay: 0.2 })
+
+      // 「光がある」ハロー — タグラインに先んじて滲み広がる
+      heroTl.fromTo('.hero-glow',
+        { opacity: 0, scale: 0.6 },
+        { opacity: 1, scale: 1, duration: 2.0, ease: 'power2.out' }, 0)
+
+      // タグライン — 一文字ずつ blur→clear で闇から浮かび上がる
+      const heroTagline = document.querySelector<HTMLElement>('.hero-tagline')
+      if (heroTagline) {
+        const split = new SplitType(heroTagline, { types: 'chars' })
+        gsap.set(heroTagline, { opacity: 1 })
+        heroTl.fromTo(split.chars!,
+          { opacity: 0, yPercent: 40, filter: 'blur(6px)' },
+          { opacity: 1, yPercent: 0, filter: 'blur(0px)',
+            stagger: 0.045, duration: 0.95, ease: 'power3.out' }, 0.1)
+      } else {
+        heroTl.fromTo('.hero-tagline',
           { opacity: 0, y: 20 },
-          { opacity: 1, y: 0, duration: 1.3, ease: 'power3.out' })
-        .fromTo('.hero-tagline-en',
-          { opacity: 0, y: 14 },
-          { opacity: 1, y: 0, duration: 1.2, ease: 'power2.out' }, '-=0.55')
+          { opacity: 1, y: 0, duration: 1.3, ease: 'power3.out' }, 0.1)
+      }
+
+      heroTl.fromTo('.hero-tagline-en',
+        { opacity: 0, y: 14 },
+        { opacity: 1, y: 0, duration: 1.2, ease: 'power2.out' }, '-=0.55')
         .fromTo('.hero-scroll',
           { opacity: 0 },
-          { opacity: 1, duration: 0.9, ease: 'power2.out' }, '-=0.6')
+          { opacity: 1, duration: 0.9, ease: 'power2.out' }, '-=0.5')
 
       /* ── Story kanji ── */
       const storyTl = gsap.timeline({

@@ -13,6 +13,8 @@ export default function Story() {
         min-[700px]:gap-[72px] min-[700px]:py-[140px]"
       style={{ paddingInline: 'clamp(24px, 6.25vw, 80px)' }}>
 
+      <h2 className="sr-only">私たちの思想 — 思考・試行・至高・嗜好</h2>
+
       {/* Terminal section label */}
       <div
         className="font-mono text-[11px] tracking-[0.16em] select-none"

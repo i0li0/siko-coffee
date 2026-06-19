@@ -150,8 +150,15 @@ function ProgressBar({ value, cols }: { value: number; cols: number }) {
   const filled = Math.round((value / 100) * cols);
   const pct    = String(value).padStart(3);
   return (
-    <div className="flex flex-col items-center gap-3 select-none w-full">
-      <div className="relative flex items-center gap-2 sm:gap-4 max-w-full">
+    <div
+      className="flex flex-col items-center gap-3 select-none w-full"
+      role="progressbar"
+      aria-label="サイトの読み込み"
+      aria-valuemin={0}
+      aria-valuemax={100}
+      aria-valuenow={value}
+    >
+      <div className="relative flex items-center gap-2 sm:gap-4 max-w-full" aria-hidden="true">
         <span
           className="font-mono text-[clamp(11px,1.3vw,15px)] tracking-[0.05em] leading-none"
           style={{ color: 'var(--amber)' }}
@@ -239,12 +246,22 @@ export default function TerminalLoader({ onFinish }: Props) {
   const [cols] = useState(() => (typeof window !== 'undefined' && window.innerWidth < 480 ? 22 : 36));
   const logRef           = useRef<HTMLDivElement>(null);
   const genRef           = useRef(0);
+  const dismissedRef     = useRef(false);
 
   const push = (...next: Line[]) => setL(prev => [...prev, ...next]);
   const ms   = (n: number) => new Promise<void>(r => setTimeout(r, n));
 
+  // ユーザー操作（skip / Escape）による即時離脱。多重発火を防ぐ。
+  const dismiss = () => {
+    if (dismissedRef.current) return;
+    dismissedRef.current = true;
+    setE(true);
+    setTimeout(() => { setV(false); onFinish(); }, 950);
+  };
+
   const finish = (myGen: number) => {
-    if (genRef.current !== myGen) return;
+    if (genRef.current !== myGen || dismissedRef.current) return;
+    dismissedRef.current = true;
     setE(true);
     setTimeout(() => {
       if (genRef.current !== myGen) return;
@@ -257,6 +274,14 @@ export default function TerminalLoader({ onFinish }: Props) {
     const el = logRef.current;
     if (el) el.scrollTop = el.scrollHeight;
   }, [lines]);
+
+  // Escape でローダーを離脱（escape-routes / modal-escape）
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') dismiss(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     // prefers-reduced-motion: ローダーをスキップして即コンテンツを表示
@@ -375,6 +400,9 @@ export default function TerminalLoader({ onFinish }: Props) {
 
   return (
     <div
+      role="dialog"
+      aria-label="サイトを読み込み中"
+      aria-busy={!exiting}
       className="fixed inset-0 z-[1000] flex flex-col"
       style={{
         background: 'var(--bg)',
@@ -407,7 +435,9 @@ export default function TerminalLoader({ onFinish }: Props) {
           <ProgressBar value={progress} cols={cols} />
         </div>
 
+        {/* 擬似ターミナルのログは装飾。SR には進捗(progressbar)で伝えるためここは読み上げ対象外 */}
         <div
+          aria-hidden="true"
           className="w-full max-w-[580px]"
           style={{
             height: 'min(38vh, 320px)',
@@ -435,25 +465,11 @@ export default function TerminalLoader({ onFinish }: Props) {
 
       <div className="flex justify-end px-6 sm:px-10 pb-6 sm:pb-7">
         <button
-          onClick={() => {
-            setE(true);
-            setTimeout(() => { setV(false); onFinish(); }, 950);
-          }}
-          className="font-mono text-[11px] tracking-[0.2em]
-            bg-transparent cursor-pointer select-none
-            transition-all duration-300 px-3 py-1.5 rounded"
-          style={{
-            color:  'rgba(212,160,23,0.65)',
-            border: '1px solid rgba(212,160,23,0.25)',
-          }}
-          onMouseEnter={e => {
-            e.currentTarget.style.color  = 'rgba(212,160,23,1)';
-            e.currentTarget.style.border = '1px solid rgba(212,160,23,0.7)';
-          }}
-          onMouseLeave={e => {
-            e.currentTarget.style.color  = 'rgba(212,160,23,0.65)';
-            e.currentTarget.style.border = '1px solid rgba(212,160,23,0.25)';
-          }}
+          type="button"
+          onClick={dismiss}
+          aria-label="読み込みをスキップしてサイトを表示"
+          className="loader-skip font-mono text-[11px] tracking-[0.2em]
+            bg-transparent cursor-pointer select-none px-3 py-1.5 rounded"
         >
           skip →
         </button>

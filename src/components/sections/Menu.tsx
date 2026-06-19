@@ -12,6 +12,8 @@ export default function Menu({ items }: Props) {
       style={{ paddingInline: 'clamp(24px, 6.25vw, 80px)' }}>
       <div className="menu-inner w-full max-w-[660px] relative max-[700px]:max-w-full">
 
+        <h2 className="sr-only">ドリンクメニュー</h2>
+
         {/* Watermark */}
         <span
           className="font-serif font-light absolute top-1/2 left-1/2
