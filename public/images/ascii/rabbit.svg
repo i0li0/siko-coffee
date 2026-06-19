@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="420" height="460" viewBox="0 0 420 460"><rect width="420" height="460" fill="#ffffff"></rect>
+  <defs>
+    <clipPath id="cf"><path d="M126 232 C 120 188 150 156 196 154 C 244 152 282 178 290 222 C 296 258 282 296 250 314 C 214 334 158 330 134 300 C 118 280 116 256 126 232 Z"></path></clipPath>
+    <clipPath id="ct"><circle cx="315" cy="250" r="28"></circle></clipPath>
+  </defs>
+  <path d="M234 172 C 232 116 252 72 270 58 C 283 80 282 126 258 176 C 250 182 240 180 234 172 Z" fill="#e6e4e0" stroke="#1a1a1a" stroke-width="7" stroke-linejoin="round"></path>
+  <path d="M192 174 C 186 116 196 70 212 52 C 228 72 236 120 228 172 C 218 183 202 183 192 174 Z" fill="#ffffff" stroke="#1a1a1a" stroke-width="7" stroke-linejoin="round"></path>
+  <path d="M205 162 C 201 120 207 86 214 70 C 222 86 224 122 219 162 C 214 169 210 169 205 162 Z" fill="#e6e4e0"></path>
+  <circle cx="315" cy="250" r="28" fill="#ffffff" stroke="#1a1a1a" stroke-width="6.5"></circle>
+  <g clip-path="url(#ct)"><ellipse cx="331" cy="266" rx="27" ry="25" fill="#e6e4e0"></ellipse></g>
+  <circle cx="315" cy="250" r="28" fill="none" stroke="#1a1a1a" stroke-width="6.5"></circle>
+  <path d="M126 232 C 120 188 150 156 196 154 C 244 152 282 178 290 222 C 296 258 282 296 250 314 C 214 334 158 330 134 300 C 118 280 116 256 126 232 Z" fill="#ffffff"></path>
+  <g clip-path="url(#cf)"><path d="M126 232 C 120 188 150 156 196 154 C 244 152 282 178 290 222 C 296 258 282 296 250 314 C 214 334 158 330 134 300 C 118 280 116 256 126 232 Z" fill="#e6e4e0"></path><path d="M126 232 C 120 188 150 156 196 154 C 244 152 282 178 290 222 C 296 258 282 296 250 314 C 214 334 158 330 134 300 C 118 280 116 256 126 232 Z" fill="#ffffff" transform="translate(-19,-23)"></path></g>
+  <path d="M126 232 C 120 188 150 156 196 154 C 244 152 282 178 290 222 C 296 258 282 296 250 314 C 214 334 158 330 134 300 C 118 280 116 256 126 232 Z" fill="none" stroke="#1a1a1a" stroke-width="7.5" stroke-linejoin="round"></path>
+  <rect x="150" y="226" width="13" height="38" rx="6.5" fill="#1a1a1a" transform="rotate(-6 156 245)"></rect>
+  <rect x="194" y="230" width="13" height="38" rx="6.5" fill="#1a1a1a" transform="rotate(-2 200 249)"></rect>
+  <path d="M158 340 C 152 316 162 298 178 300 C 192 302 196 320 190 342 C 186 354 162 354 158 340 Z" fill="#e6e4e0" stroke="#1a1a1a" stroke-width="7" stroke-linejoin="round"></path>
+  <path d="M124 332 C 116 308 126 290 142 292 C 156 294 162 312 156 336 C 152 348 128 348 124 332 Z" fill="#ffffff" stroke="#1a1a1a" stroke-width="7" stroke-linejoin="round"></path></svg>
