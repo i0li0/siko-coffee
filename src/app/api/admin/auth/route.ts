@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
+import * as Sentry from '@sentry/nextjs'
 import { checkAdminPassword } from '@/lib/adminPassword'
 import { checkRateLimit, recordFailure, resetFailures } from '@/lib/adminRateLimit'
-import { createSessionToken } from '@/lib/adminSession'
+import { createSessionToken, revokeSession } from '@/lib/adminSession'
+import { getTotpSecret } from '@/lib/adminTotp'
 import { verifySync } from 'otplib'
 
 function getClientIp(req: NextRequest): string {
@@ -24,43 +26,69 @@ export async function POST(request: NextRequest) {
     )
   }
 
-  const { password, totpCode } = await request.json()
+  let password: string, totpCode: string | undefined
+  try {
+    const body = await request.json()
+    password = body.password
+    totpCode = body.totpCode
+  } catch {
+    return NextResponse.json({ error: 'Invalid request body' }, { status: 400 })
+  }
 
   if (!checkAdminPassword(password)) {
     await recordFailure(ip)
+    Sentry.captureMessage('Admin login failed: wrong password', {
+      level: 'warning',
+      tags: { event: 'admin_login_failure', reason: 'password' },
+      extra: { ip },
+    })
     return NextResponse.json({ error: 'パスワードが違います' }, { status: 401 })
   }
 
-  const totpSecret = process.env.ADMIN_TOTP_SECRET
+  const totpSecret = await getTotpSecret()
   if (totpSecret) {
     if (!totpCode) {
-      await recordFailure(ip)
       return NextResponse.json({ requireTotp: true }, { status: 200 })
     }
     const result = verifySync({ token: String(totpCode), secret: totpSecret })
     const isValid = result.valid
     if (!isValid) {
       await recordFailure(ip)
+      Sentry.captureMessage('Admin login failed: wrong TOTP', {
+        level: 'warning',
+        tags: { event: 'admin_login_failure', reason: 'totp' },
+        extra: { ip },
+      })
       return NextResponse.json({ error: '認証コードが違います' }, { status: 401 })
     }
   }
 
   await resetFailures(ip)
   const sessionToken = await createSessionToken()
+
+  Sentry.captureMessage('Admin login success', {
+    level: 'info',
+    tags: { event: 'admin_login_success' },
+    extra: { ip },
+  })
+
   const response = NextResponse.json({ ok: true })
 
   response.cookies.set('admin_session', sessionToken, {
     httpOnly: true,
     sameSite: 'strict',
     secure: process.env.NODE_ENV === 'production',
-    maxAge: 60 * 60 * 24 * 7,
+    maxAge: 60 * 60 * 25,
     path: '/',
   })
 
   return response
 }
 
-export async function DELETE() {
+export async function DELETE(request: NextRequest) {
+  const token = request.cookies.get('admin_session')?.value
+  if (token) await revokeSession(token)
+
   const response = NextResponse.json({ ok: true })
   response.cookies.delete('admin_session')
   return response

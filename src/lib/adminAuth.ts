@@ -1,11 +1,11 @@
 import { cookies } from 'next/headers'
 import { NextResponse } from 'next/server'
-import { verifySessionToken } from './adminSession'
+import { verifySessionStrict } from './adminSession'
 
 export async function verifyAdminSession(): Promise<NextResponse | null> {
   const store = await cookies()
   const token = store.get('admin_session')?.value ?? ''
-  if (!token || !(await verifySessionToken(token))) {
+  if (!token || !(await verifySessionStrict(token))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
   return null

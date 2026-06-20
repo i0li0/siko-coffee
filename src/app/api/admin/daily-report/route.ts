@@ -7,6 +7,8 @@ import { randomUUID } from 'crypto'
 
 export const preferredRegion = ['hnd1']
 
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/
+
 // GET /api/admin/daily-report?date=YYYY-MM-DD
 export async function GET(request: NextRequest) {
   const denied = await verifyAdminToken()
@@ -14,6 +16,7 @@ export async function GET(request: NextRequest) {
 
   const date = request.nextUrl.searchParams.get('date')
   if (!date) return NextResponse.json({ error: 'date required' }, { status: 400 })
+  if (!DATE_RE.test(date)) return NextResponse.json({ error: 'Invalid date format (YYYY-MM-DD)' }, { status: 400 })
 
   try {
     const db = getDocClient()
@@ -50,6 +53,7 @@ export async function POST(request: NextRequest) {
     const { date, drinkCount, beanGrams, customers, suppliesCost, memo } = body
 
     if (!date) return NextResponse.json({ error: 'date required' }, { status: 400 })
+    if (!DATE_RE.test(date)) return NextResponse.json({ error: 'Invalid date format (YYYY-MM-DD)' }, { status: 400 })
 
     const now = new Date().toISOString()
     const yearMonth = date.slice(0, 7)

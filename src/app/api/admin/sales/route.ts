@@ -6,6 +6,9 @@ import { randomUUID } from 'crypto'
 
 export const preferredRegion = ['hnd1']
 
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/
+const MONTH_RE = /^\d{4}-\d{2}$/
+
 // GET /api/admin/sales?date=YYYY-MM-DD  or  ?month=YYYY-MM
 export async function GET(request: NextRequest) {
   const denied = await verifyAdminToken()
@@ -14,6 +17,13 @@ export async function GET(request: NextRequest) {
   const { searchParams } = request.nextUrl
   const date = searchParams.get('date')
   const month = searchParams.get('month')
+
+  if (date && !DATE_RE.test(date)) {
+    return NextResponse.json({ error: 'Invalid date format (YYYY-MM-DD)' }, { status: 400 })
+  }
+  if (month && !MONTH_RE.test(month)) {
+    return NextResponse.json({ error: 'Invalid month format (YYYY-MM)' }, { status: 400 })
+  }
 
   try {
     if (date) {
@@ -56,6 +66,9 @@ export async function POST(request: NextRequest) {
     if (!date || !type || amount === undefined) {
       return NextResponse.json({ error: 'date, type, amount are required' }, { status: 400 })
     }
+    if (!DATE_RE.test(date)) {
+      return NextResponse.json({ error: 'Invalid date format (YYYY-MM-DD)' }, { status: 400 })
+    }
 
     const item = {
       date,
@@ -91,6 +104,9 @@ export async function DELETE(request: NextRequest) {
 
   if (!date || !id) {
     return NextResponse.json({ error: 'date and id are required' }, { status: 400 })
+  }
+  if (!DATE_RE.test(date)) {
+    return NextResponse.json({ error: 'Invalid date format (YYYY-MM-DD)' }, { status: 400 })
   }
 
   try {
