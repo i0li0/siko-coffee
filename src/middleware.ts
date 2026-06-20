@@ -1,18 +1,25 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { verifySessionToken } from '@/lib/adminSession'
 
-// 管理エリアのうち認証が必要なパス。ログイン関連は除外する。
 function needsAdminSession(pathname: string): boolean {
   if (pathname === '/admin/login') return false
   if (pathname.startsWith('/api/admin/auth')) return false
   return pathname.startsWith('/admin') || pathname.startsWith('/api/admin')
 }
 
-export async function proxy(request: NextRequest) {
+export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl
 
-  // 管理ページ・管理APIのセッションゲート（多層防御）。
-  // 各 API ルートも個別に verifyAdminToken するが、ここで前段ブロックする。
+  if (pathname.startsWith('/api/admin')) {
+    const origin = request.headers.get('origin')
+    if (origin) {
+      const allowed = new URL(request.url).origin
+      if (origin !== allowed) {
+        return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+      }
+    }
+  }
+
   if (needsAdminSession(pathname)) {
     const token = request.cookies.get('admin_session')?.value ?? ''
     if (!token || !(await verifySessionToken(token))) {

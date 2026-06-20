@@ -1,17 +1,27 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 
-type SetupState = 'idle' | 'loading' | 'scan' | 'verify' | 'done'
+type SetupState = 'loading' | 'idle' | 'scan' | 'verifying' | 'done'
 
 export default function AdminSettingsPage() {
-  const [state, setState] = useState<SetupState>('idle')
+  const [state, setState] = useState<SetupState>('loading')
+  const [enabled, setEnabled] = useState(false)
   const [secret, setSecret] = useState('')
   const [qrCodeDataUrl, setQrCodeDataUrl] = useState('')
   const [code, setCode] = useState('')
-  const [confirmedSecret, setConfirmedSecret] = useState('')
   const [error, setError] = useState('')
+  const [disabling, setDisabling] = useState(false)
 
+  useEffect(() => {
+    fetch('/api/admin/totp')
+      .then(r => r.json())
+      .then(data => {
+        setEnabled(data.enabled)
+        setState('idle')
+      })
+      .catch(() => setState('idle'))
+  }, [])
 
   async function startSetup() {
     setState('loading')
@@ -19,6 +29,7 @@ export default function AdminSettingsPage() {
     const res = await fetch('/api/admin/totp')
     if (!res.ok) { setState('idle'); setError('エラーが発生しました'); return }
     const data = await res.json()
+    setEnabled(data.enabled)
     setSecret(data.secret)
     setQrCodeDataUrl(data.qrCodeDataUrl)
     setState('scan')
@@ -27,7 +38,7 @@ export default function AdminSettingsPage() {
   async function verifyCode(e: React.FormEvent) {
     e.preventDefault()
     setError('')
-    setState('verify')
+    setState('verifying')
     const res = await fetch('/api/admin/totp', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -40,8 +51,22 @@ export default function AdminSettingsPage() {
       setCode('')
       return
     }
-    setConfirmedSecret(secret)
+    setEnabled(true)
     setState('done')
+  }
+
+  async function disableTotp() {
+    if (!confirm('二段階認証を無効にしますか？')) return
+    setDisabling(true)
+    const res = await fetch('/api/admin/totp', { method: 'DELETE' })
+    setDisabling(false)
+    if (res.ok) {
+      setEnabled(false)
+      setState('idle')
+      setSecret('')
+      setQrCodeDataUrl('')
+      setCode('')
+    }
   }
 
   const cardStyle: React.CSSProperties = {
@@ -74,24 +99,47 @@ export default function AdminSettingsPage() {
       </h1>
 
       <div style={cardStyle}>
-        <h2 style={{ fontSize: '14px', color: 'var(--cream)', letterSpacing: '0.08em', marginBottom: '8px' }}>
-          二段階認証 (TOTP)
-        </h2>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+          <h2 style={{ fontSize: '14px', color: 'var(--cream)', letterSpacing: '0.08em', margin: 0 }}>
+            二段階認証 (TOTP)
+          </h2>
+          {enabled && (
+            <span style={{ fontSize: '11px', color: '#4caf50', letterSpacing: '0.08em' }}>有効</span>
+          )}
+        </div>
 
-        {state === 'idle' && (
+        {state === 'loading' && (
+          <p style={{ fontSize: '13px', color: 'var(--dim)' }}>読み込み中...</p>
+        )}
+
+        {state === 'idle' && !enabled && (
           <>
             <p style={{ fontSize: '13px', color: 'var(--dim)', lineHeight: 1.7, marginBottom: '24px' }}>
               Google Authenticator などの認証アプリを使った二段階認証を設定できます。
-              設定後は ADMIN_TOTP_SECRET 環境変数を Vercel に追加してください。
             </p>
             <button onClick={startSetup} style={btnStyle}>
               セットアップを開始
             </button>
+            {error && (
+              <p style={{ fontSize: '13px', color: 'var(--admin-danger)', marginTop: '12px' }}>{error}</p>
+            )}
           </>
         )}
 
-        {state === 'loading' && (
-          <p style={{ fontSize: '13px', color: 'var(--dim)' }}>生成中...</p>
+        {state === 'idle' && enabled && (
+          <>
+            <p style={{ fontSize: '13px', color: 'var(--dim)', lineHeight: 1.7, marginBottom: '24px' }}>
+              二段階認証は有効です。新しい認証アプリに切り替える場合は再設定できます。
+            </p>
+            <div style={{ display: 'flex', gap: '12px' }}>
+              <button onClick={startSetup} style={btnStyle}>
+                再設定
+              </button>
+              <button onClick={disableTotp} disabled={disabling} style={dangerBtnStyle}>
+                {disabling ? '無効化中...' : '無効化'}
+              </button>
+            </div>
+          </>
         )}
 
         {state === 'scan' && (
@@ -153,27 +201,18 @@ export default function AdminSettingsPage() {
           </>
         )}
 
+        {state === 'verifying' && (
+          <p style={{ fontSize: '13px', color: 'var(--dim)' }}>確認中...</p>
+        )}
+
         {state === 'done' && (
           <>
             <p style={{ fontSize: '13px', color: '#4caf50', marginBottom: '20px' }}>
-              ✓ 認証コードの確認が完了しました
+              二段階認証が有効になりました。次回ログインから認証コードが必要です。
             </p>
-            <p style={labelStyle}>Vercel に以下の環境変数を追加してください</p>
-            <div style={{
-              background: 'var(--admin-sidebar-bg)',
-              border: '1px solid var(--admin-border)',
-              borderRadius: '6px',
-              padding: '14px',
-              fontSize: '13px',
-              color: 'var(--cream)',
-              marginBottom: '8px',
-            }}>
-              <span style={{ color: 'var(--dim)' }}>ADMIN_TOTP_SECRET=</span>
-              <span style={{ userSelect: 'all' }}>{confirmedSecret}</span>
-            </div>
-            <p style={{ fontSize: '12px', color: 'var(--admin-danger)', marginTop: '8px' }}>
-              このシークレットは安全な場所に保管し、第三者と共有しないでください。
-            </p>
+            <button onClick={() => setState('idle')} style={btnStyle}>
+              戻る
+            </button>
           </>
         )}
       </div>
@@ -187,6 +226,18 @@ const btnStyle: React.CSSProperties = {
   borderRadius: '6px',
   padding: '10px 20px',
   color: '#0d0d14',
+  fontSize: '13px',
+  fontFamily: 'var(--font-sans)',
+  letterSpacing: '0.08em',
+  cursor: 'pointer',
+}
+
+const dangerBtnStyle: React.CSSProperties = {
+  background: 'transparent',
+  border: '1px solid var(--admin-danger)',
+  borderRadius: '6px',
+  padding: '10px 20px',
+  color: 'var(--admin-danger)',
   fontSize: '13px',
   fontFamily: 'var(--font-sans)',
   letterSpacing: '0.08em',
