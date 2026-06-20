@@ -1,5 +1,6 @@
 'use client'
 
+import Link from 'next/link'
 import { signOut } from 'next-auth/react'
 
 interface Props {
@@ -90,7 +91,7 @@ export default function AccountClient({ user }: Props) {
           textAlign: 'center',
           marginTop: '24px',
         }}>
-          <a href="/" style={{ color: 'var(--amber)', textDecoration: 'none' }}>← トップに戻る</a>
+          <Link href="/" style={{ color: 'var(--amber)', textDecoration: 'none' }}>← トップに戻る</Link>
         </p>
       </div>
     </div>
