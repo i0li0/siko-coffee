@@ -35,13 +35,13 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         const user = await adapter.getUserByEmail!(email)
         if (!user) return null
 
-        const item = user as typeof user & { hashedPassword?: string }
+        const item = user as typeof user & { hashedPassword?: string; emailVerified?: Date | null }
         if (!item.hashedPassword) return null
 
         const valid = await compare(password, item.hashedPassword)
         if (!valid) return null
 
-        return { id: user.id, email: user.email, name: user.name }
+        return { id: user.id, email: user.email, name: user.name, emailVerified: item.emailVerified ?? null }
       },
     }),
   ],
@@ -49,12 +49,14 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
     jwt({ token, user }) {
       if (user) {
         token.id = user.id
+        token.emailVerified = (user as typeof user & { emailVerified?: Date | null }).emailVerified ?? null
       }
       return token
     },
     session({ session, token }) {
       if (session.user && token.id) {
         session.user.id = token.id as string
+        ;(session.user as typeof session.user & { emailVerified?: Date | null }).emailVerified = token.emailVerified ? new Date(token.emailVerified as string) : null
       }
       return session
     },
