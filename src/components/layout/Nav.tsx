@@ -7,6 +7,7 @@ import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from 
 interface Props {
   visible: boolean;
   logoHref?: string;
+  onReplay?: () => void;
 }
 
 const SECTIONS: { id: string; label: string }[] = [
@@ -18,7 +19,7 @@ const SECTIONS: { id: string; label: string }[] = [
   { id: 'contact', label: 'Contact' },
 ];
 
-export default function Nav({ visible, logoHref }: Props) {
+export default function Nav({ visible, logoHref, onReplay }: Props) {
   const pathname = usePathname();
   const isShop = pathname?.startsWith('/shop');
   const isHome = pathname === '/';
@@ -123,6 +124,20 @@ export default function Nav({ visible, logoHref }: Props) {
                 {s.label}
               </a>
             ))}
+            {onReplay && (
+              <>
+                <div className="my-1" style={{ borderTop: '1px solid var(--faint)' }} />
+                <button
+                  type="button"
+                  onClick={() => { setMenuOpen(false); onReplay(); }}
+                  className="px-5 py-2.5 font-mono text-[13px] tracking-[0.08em] text-left
+                    text-[var(--amber3)] transition-colors duration-200
+                    hover:text-[var(--amber)] hover:bg-[var(--surface)]"
+                >
+                  ▸ Terminal
+                </button>
+              </>
+            )}
           </div>
         )}
       </div>
