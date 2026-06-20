@@ -128,9 +128,10 @@ export default function AuthForm({ mode }: Props) {
             type="password"
             value={password}
             onChange={e => setPassword(e.target.value)}
-            placeholder="パスワード（8文字以上）"
+            placeholder="パスワード（8〜72文字）"
             required
             minLength={8}
+            maxLength={72}
             style={inputStyle}
           />
 
