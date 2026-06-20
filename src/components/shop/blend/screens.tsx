@@ -63,6 +63,7 @@ function MiniMaker({ goMaker }: { goMaker: (ratios: number[], base: string) => v
             <span style={{ marginLeft: 'auto', fontSize: 14, fontFamily: 'var(--ss-serif)', color: 'var(--ss-gold)' }}>{ratios[i]}%</span>
           </div>
           <input type="range" className="ss-range" min="0" max="100" value={ratios[i]}
+            aria-label={`${b.name}の配合比率`}
             style={{ '--tr-pct': `${ratios[i]}%`, '--tr-fill': b.color } as CSSProperties}
             onChange={(e) => setRatios(normalizeRatios(ratios, i, +e.target.value))} />
         </div>
@@ -125,7 +126,11 @@ export function ScreenTop({ nav, addToCart, startMaker, addSingleToCart, communi
       </div>
 
       <div className="ss-card" style={{ marginTop: 26, padding: '18px 22px', display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap', borderStyle: 'dashed', borderColor: 'rgba(200,169,110,0.3)' }}>
-        <span style={{ fontSize: 22 }}>☕</span>
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--ss-gold)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={{ flexShrink: 0 }}>
+          <circle cx="12" cy="12" r="10" />
+          <path d="M9.09 9a3 3 0 015.83 1c0 2-3 3-3 3" />
+          <line x1="12" y1="17" x2="12.01" y2="17" />
+        </svg>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
           <span style={{ fontSize: 14, fontWeight: 400 }}>どれがいいか、わからない?</span>
           <span style={{ fontSize: 11.5, color: 'var(--ss-dim)' }}>3つの質問に答えると、ぴったりの配合を提案します</span>
@@ -298,7 +303,7 @@ export function ScreenSingle({ beanKey, nav, addSingleToCart }: {
             </div>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginTop: 6 }}>
-            <span className="ss-serif" style={{ fontSize: 26, color: 'var(--ss-gold)' }}>
+            <span className="ss-serif ss-price" style={{ fontSize: 26, color: 'var(--ss-gold)' }}>
               ¥ 1,480 <span style={{ fontSize: 13, color: 'var(--ss-dim)' }}>/ 200g</span>
             </span>
           </div>
@@ -342,7 +347,7 @@ function NamingSheet({ ratios, base, onClose, onSave }: {
   const roll = () => { setName(NAME_IDEAS[Math.floor(Math.random() * NAME_IDEAS.length)]); setBurst(Date.now()); };
 
   return (
-    <div className="ss-overlay" onClick={onClose}>
+    <div className="ss-overlay" onClick={onClose} role="dialog" aria-modal="true" aria-label="ブレンドの名前をつける">
       <div className="ss-sheet" onClick={(e) => e.stopPropagation()} style={{ position: 'relative' }}>
         <Confetti seed={burst} />
         <div style={{ width: 38, height: 4, borderRadius: 2, background: 'var(--ss-faint)', margin: '0 auto 18px' }} />
@@ -364,15 +369,20 @@ function NamingSheet({ ratios, base, onClose, onSave }: {
             value={name} onChange={(e) => setName(e.target.value)} />
           <button className="ss-btn ss-btn--ghost" style={{ height: 48, padding: '0 16px', whiteSpace: 'nowrap' }} onClick={roll}>🎲 名前の案</button>
         </div>
-        <label style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '14px 2px', cursor: 'pointer', borderTop: '1px solid var(--ss-hair)' }}>
-          <span onClick={() => setPublish(!publish)} style={{ width: 42, height: 23, borderRadius: 12, flexShrink: 0, background: publish ? 'var(--ss-gold)' : 'rgba(240,235,224,0.15)', position: 'relative', transition: 'background 0.2s' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '14px 2px', cursor: 'pointer', borderTop: '1px solid var(--ss-hair)' }} onClick={() => setPublish(!publish)}>
+          <button
+            role="switch"
+            aria-checked={publish}
+            aria-label="みんなのブレンドに公開する"
+            onClick={(e) => { e.stopPropagation(); setPublish(!publish); }}
+            style={{ width: 42, height: 23, borderRadius: 12, flexShrink: 0, background: publish ? 'var(--ss-gold)' : 'rgba(240,235,224,0.15)', position: 'relative', transition: 'background 0.2s', border: 'none', cursor: 'pointer', padding: 0 }}>
             <span style={{ position: 'absolute', top: 2.5, left: publish ? 22 : 3, width: 18, height: 18, borderRadius: '50%', background: '#0a0a14', transition: 'left 0.25s var(--ss-spring)' }} />
-          </span>
+          </button>
           <span style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
             <span style={{ fontSize: 13 }}>「みんなのブレンド」に公開する</span>
             <span style={{ fontSize: 10.5, color: 'var(--ss-dim)' }}>他のお客様が購入・アレンジできるようになります。マイページからいつでも変更できます。</span>
           </span>
-        </label>
+        </div>
         <button className="ss-btn" style={{ width: '100%', height: 52, marginTop: 10 }} disabled={!name.trim()}
           onClick={() => onSave(name.trim(), publish)}>
           「{name.trim() || '…'}」を保存してカートへ — ¥1,480
@@ -430,6 +440,7 @@ export function ScreenMaker({ draft, nav, onSaveBlend }: {
                 </span>
               </div>
               <input type="range" className="ss-range" min="0" max="100" value={ratios[i]}
+                aria-label={`${b.name}の配合比率`}
                 style={{ '--tr-pct': `${ratios[i]}%`, '--tr-fill': b.color } as CSSProperties}
                 onChange={(e) => setRatios(normalizeSubset(ratios, selected, i, +e.target.value))} />
             </div>
@@ -548,7 +559,7 @@ export function ScreenQuiz({ nav, startMaker, addCustomToCart }: {
           <button key={i} className="ss-card ss-card--hover"
             style={{ padding: '20px 20px', display: 'flex', alignItems: 'center', gap: 16, color: 'var(--ss-cream)', fontFamily: 'var(--ss-sans)', fontSize: 15.5, fontWeight: 400, cursor: 'pointer', textAlign: 'left', '--hover-rot': i % 2 ? '0.6deg' : '-0.6deg' } as CSSProperties}
             onClick={() => { const next = [...answers, i]; setAnswers(next); if (step < QUIZ.length - 1) setStep(step + 1); }}>
-            <span style={{ fontSize: 24 }}>{o.e}</span>{o.t}
+            <span style={{ fontSize: 24 }} aria-hidden="true">{o.e}</span>{o.t}
           </button>
         ))}
       </div>
@@ -596,7 +607,7 @@ export function ScreenDetail({ id, nav, addToCart, startMaker }: {
               ))}
             </div>
           </div>
-          <span className="ss-serif" style={{ fontSize: 26, color: 'var(--ss-gold)' }}>
+          <span className="ss-serif ss-price" style={{ fontSize: 26, color: 'var(--ss-gold)' }}>
             ¥ 1,480 <span style={{ fontSize: 13, color: 'var(--ss-dim)' }}>/ 200g</span>
           </span>
           <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
@@ -654,7 +665,7 @@ export function ScreenCart({ cart, nav, removeAt, updateGrams, startMaker, check
                   )}
                 </div>
                 <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 8, flexShrink: 0 }}>
-                  <span className="ss-serif" style={{ fontSize: 16 }}>¥{calcPrice(grams).toLocaleString()}</span>
+                  <span className="ss-serif ss-price" style={{ fontSize: 16 }}>¥{calcPrice(grams).toLocaleString()}</span>
                   <button className="ss-nav-link" style={{ fontSize: 11 }} onClick={() => removeAt(i)}>削除</button>
                 </div>
               </div>
@@ -684,7 +695,7 @@ export function ScreenCart({ cart, nav, removeAt, updateGrams, startMaker, check
           </div>
           <div style={{ display: 'flex', alignItems: 'baseline' }}>
             <span style={{ fontSize: 14 }}>合計</span>
-            <span className="ss-serif" style={{ marginLeft: 'auto', fontSize: 28, color: 'var(--ss-gold)' }}>
+            <span className="ss-serif ss-price" style={{ marginLeft: 'auto', fontSize: 28, color: 'var(--ss-gold)' }}>
               ¥ {(total + ship).toLocaleString()}
             </span>
           </div>

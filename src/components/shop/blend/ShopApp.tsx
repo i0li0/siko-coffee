@@ -17,23 +17,34 @@ interface Route {
   param?: string | number[];
 }
 
+function CartIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M6 2L3 6v14a2 2 0 002 2h14a2 2 0 002-2V6l-3-4z" />
+      <line x1="3" y1="6" x2="21" y2="6" />
+      <path d="M16 10a4 4 0 01-8 0" />
+    </svg>
+  );
+}
+
 function ShopHeader({ route, nav, cartCount }: { route: Route; nav: NavFn; cartCount: number }) {
   return (
     <header className="ss-header">
+      <a href="#ss-main" className="ss-skip-link">メインコンテンツへ</a>
       <div className="ss-header-in">
-        <button style={{ display: 'flex', alignItems: 'baseline', gap: 9, cursor: 'pointer', background: 'none', border: 'none', padding: 0 }} onClick={() => nav('top')}>
+        <button style={{ display: 'flex', alignItems: 'baseline', gap: 9, cursor: 'pointer', background: 'none', border: 'none', padding: 0 }} onClick={() => nav('top')} aria-label="Sikō Coffee ショップトップへ">
           <span className="ss-serif" style={{ fontSize: 21, letterSpacing: '0.16em', color: 'var(--ss-cream)' }}>Sikō</span>
           <span className="ss-eyebrow" style={{ fontSize: 9 }}>shop</span>
         </button>
-        <nav style={{ display: 'flex', gap: 18, marginLeft: 10 }} className="ss-header-nav">
-          <button className={`ss-nav-link${['maker', 'select', 'single'].includes(route.name) ? ' is-on' : ''}`} onClick={() => nav('select')}>つくる</button>
-          <button className={`ss-nav-link${route.name === 'quiz' ? ' is-on' : ''}`} onClick={() => nav('quiz')}>好み診断</button>
-          <button className={`ss-nav-link${route.name === 'mypage' ? ' is-on' : ''}`} onClick={() => nav('mypage')}>マイページ</button>
+        <nav aria-label="ショップナビゲーション" style={{ display: 'flex', gap: 18, marginLeft: 10 }} className="ss-header-nav">
+          <button className={`ss-nav-link${['maker', 'select', 'single'].includes(route.name) ? ' is-on' : ''}`} onClick={() => nav('select')} aria-current={['maker', 'select', 'single'].includes(route.name) ? 'page' : undefined}>つくる</button>
+          <button className={`ss-nav-link${route.name === 'quiz' ? ' is-on' : ''}`} onClick={() => nav('quiz')} aria-current={route.name === 'quiz' ? 'page' : undefined}>好み診断</button>
+          <button className={`ss-nav-link${route.name === 'mypage' ? ' is-on' : ''}`} onClick={() => nav('mypage')} aria-current={route.name === 'mypage' ? 'page' : undefined}>マイページ</button>
         </nav>
-        <button onClick={() => nav('cart')} style={{ marginLeft: 'auto', position: 'relative', width: 38, height: 38, borderRadius: 10, border: '1px solid rgba(200,169,110,0.35)', background: 'transparent', cursor: 'pointer', color: 'var(--ss-gold)', fontSize: 15, transition: 'background 0.2s' }}>
-          ☕
+        <button onClick={() => nav('cart')} aria-label={`カート${cartCount > 0 ? ` (${cartCount}点)` : ''}`} style={{ marginLeft: 'auto', position: 'relative', width: 44, height: 44, borderRadius: 10, border: '1px solid rgba(200,169,110,0.35)', background: 'transparent', cursor: 'pointer', color: 'var(--ss-gold)', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'background 0.2s' }}>
+          <CartIcon />
           {cartCount > 0 && (
-            <span style={{ position: 'absolute', top: -7, right: -7, minWidth: 18, height: 18, borderRadius: 9, background: 'var(--ss-gold)', color: '#14100a', fontSize: 10.5, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 4px' }}>
+            <span aria-hidden="true" style={{ position: 'absolute', top: -7, right: -7, minWidth: 18, height: 18, borderRadius: 9, background: 'var(--ss-gold)', color: '#14100a', fontSize: 10.5, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 4px' }}>
               {cartCount}
             </span>
           )}
@@ -81,7 +92,11 @@ export default function ShopApp() {
       .catch(() => { /* fallback to COMMUNITY */ });
   }, []);
 
-  useEffect(() => { window.scrollTo(0, 0); }, [route]);
+  const mainRef = useRef<HTMLElement>(null);
+  useEffect(() => {
+    window.scrollTo(0, 0);
+    mainRef.current?.focus({ preventScroll: true });
+  }, [route]);
 
   const nav: NavFn = (name, param) => setRoute({ name, param });
 
@@ -172,7 +187,7 @@ export default function ShopApp() {
     <div className="ss-root">
       <div className="ss-stars" />
       <ShopHeader route={route} nav={nav} cartCount={cart.length} />
-      <main className="ss-main">
+      <main className="ss-main" id="ss-main" ref={mainRef} tabIndex={-1} style={{ outline: 'none' }}>
         {route.name === 'top' && (
           <ScreenTop nav={nav} addToCart={addToCart} startMaker={startMaker} addSingleToCart={addSingleToCart} communityBlends={communityBlends} />
         )}

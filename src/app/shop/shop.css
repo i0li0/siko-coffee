@@ -243,6 +243,52 @@ input[type='range'].ss-range::-moz-range-thumb {
 /* ── wiggle ── */
 @keyframes ssWiggle { 25% { transform: rotate(2deg); } 75% { transform: rotate(-3deg); } }
 
+/* ── skip link ── */
+.ss-skip-link {
+  position: absolute; left: -9999px; top: auto; z-index: 100;
+  padding: 10px 18px; font-size: 13px; font-family: var(--ss-sans);
+  background: var(--ss-gold); color: #14100a; border-radius: 0 0 8px 0;
+  text-decoration: none; font-weight: 500;
+}
+.ss-skip-link:focus { left: 0; top: 0; }
+
+/* ── stagger entrance for grid items ── */
+.ss-grid-cards > * {
+  animation: ssStaggerIn 0.4s ease both;
+}
+.ss-grid-cards > *:nth-child(1) { animation-delay: 0ms; }
+.ss-grid-cards > *:nth-child(2) { animation-delay: 40ms; }
+.ss-grid-cards > *:nth-child(3) { animation-delay: 80ms; }
+.ss-grid-cards > *:nth-child(4) { animation-delay: 120ms; }
+.ss-grid-cards > *:nth-child(5) { animation-delay: 160ms; }
+.ss-grid-cards > *:nth-child(6) { animation-delay: 200ms; }
+@keyframes ssStaggerIn { from { opacity: 0; transform: translateY(12px); } }
+
+/* ── press feedback for cards ── */
+.ss-card--hover:active {
+  transform: scale(0.97) !important;
+  transition-duration: 0.1s;
+}
+
+/* ── tabular figures for prices ── */
+.ss-price {
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── touch-friendly nav links ── */
+.ss-nav-link {
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+}
+
+/* ── section divider ── */
+.ss-divider {
+  height: 1px;
+  background: linear-gradient(to right, transparent, var(--ss-hair), transparent);
+  margin: 32px 0;
+}
+
 /* ── reduced-motion & mobile ── */
 @media (prefers-reduced-motion: reduce) {
   .ss-root * { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
