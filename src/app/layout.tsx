@@ -8,6 +8,7 @@ import {
 import { SpeedInsights } from '@vercel/speed-insights/next';
 import { Analytics } from '@vercel/analytics/next';
 import { GoogleAnalytics } from '@next/third-parties/google';
+import SessionProvider from '@/components/auth/SessionProvider';
 import './globals.css';
 
 const cormorant = Cormorant_Garamond({
@@ -121,7 +122,9 @@ export default function RootLayout({
         />
       </head>
       <body>
-        {children}
+        <SessionProvider>
+          {children}
+        </SessionProvider>
         <Analytics />
         <SpeedInsights />
       </body>
