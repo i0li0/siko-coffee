@@ -256,7 +256,7 @@ export default function TerminalLoader({ onFinish, replay = false }: Props) {
     if (dismissedRef.current) return;
     dismissedRef.current = true;
     setE(true);
-    setTimeout(() => { setV(false); onFinish(); }, 950);
+    setTimeout(() => { setV(false); onFinish(); }, 1100);
   };
 
   const finish = (myGen: number) => {
@@ -268,7 +268,7 @@ export default function TerminalLoader({ onFinish, replay = false }: Props) {
       if (genRef.current !== myGen) return;
       setV(false);
       onFinish();
-    }, 950);
+    }, 1100);
   };
 
   useEffect(() => {
