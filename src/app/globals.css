@@ -251,3 +251,9 @@ footer { background: linear-gradient(to bottom, #080600, #050400); }
 }
 .menu-item:hover .item-desc { max-height: 22px; opacity: 1; }
 @media (hover: none) { .item-desc { max-height: 22px; opacity: 0.55; } }
+
+/* ── Admin card hover ── */
+.admin-metric-card:hover {
+  border-color: rgba(240,235,224,0.14);
+  box-shadow: 0 2px 12px rgba(0,0,0,0.2);
+}
