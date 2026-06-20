@@ -93,20 +93,27 @@ export async function PATCH(request: NextRequest) {
   if (denied) return denied
 
   try {
-    const { beanId, currentStock } = await request.json()
+    const { beanId, currentStock, name, origin, stockType } = await request.json()
 
-    if (!beanId || currentStock === undefined) {
-      return NextResponse.json({ error: 'beanId and currentStock are required' }, { status: 400 })
+    if (!beanId) {
+      return NextResponse.json({ error: 'beanId is required' }, { status: 400 })
     }
+
+    const parts: string[] = ['updatedAt = :now']
+    const values: Record<string, unknown> = { ':now': new Date().toISOString() }
+    const names: Record<string, string> = {}
+
+    if (currentStock !== undefined) { parts.push('currentStock = :stock'); values[':stock'] = Number(currentStock) }
+    if (name !== undefined) { parts.push('#n = :name'); values[':name'] = name; names['#n'] = 'name' }
+    if (origin !== undefined) { parts.push('origin = :origin'); values[':origin'] = origin }
+    if (stockType !== undefined) { parts.push('stockType = :st'); values[':st'] = stockType }
 
     await getDocClient().send(new UpdateCommand({
       TableName: TABLE.INVENTORY,
       Key: { beanId },
-      UpdateExpression: 'SET currentStock = :stock, updatedAt = :now',
-      ExpressionAttributeValues: {
-        ':stock': Number(currentStock),
-        ':now': new Date().toISOString(),
-      },
+      UpdateExpression: 'SET ' + parts.join(', '),
+      ExpressionAttributeValues: values,
+      ...(Object.keys(names).length > 0 ? { ExpressionAttributeNames: names } : {}),
     }))
 
     return NextResponse.json({ ok: true })
