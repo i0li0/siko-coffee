@@ -1,23 +1,31 @@
 'use client'
 
-import { useEffect, useState } from 'react'
-import type { InventoryItem } from '@/types/admin'
+import { useEffect, useMemo, useState } from 'react'
+import type { InventoryItem, InventoryCategory, CoffeeStockType } from '@/types/admin'
 
 type PurchaseForm = {
   date: string
-  beanId: string        // 空なら新規
+  beanId: string
   name: string
   origin: string
   purchaseKg: string
   purchasePrice: string
   alertThreshold: string
+  category: InventoryCategory
+  stockType: CoffeeStockType
+  unit: string
 }
 
 const today = () => new Date().toISOString().slice(0, 10)
 
-function emptyForm(): PurchaseForm {
-  return { date: today(), beanId: '', name: '', origin: '', purchaseKg: '', purchasePrice: '', alertThreshold: '500' }
+function emptyForm(category: InventoryCategory = 'coffee'): PurchaseForm {
+  return {
+    date: today(), beanId: '', name: '', origin: '', purchaseKg: '', purchasePrice: '', alertThreshold: '500',
+    category, stockType: 'green', unit: category === 'supply' ? '個' : 'g',
+  }
 }
+
+const STOCK_TYPE_LABEL: Record<CoffeeStockType, string> = { green: '生豆', roasted: '焙煎豆' }
 
 export default function InventoryPage() {
   const [inventory, setInventory] = useState<InventoryItem[]>([])
@@ -27,6 +35,7 @@ export default function InventoryPage() {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const [editingStock, setEditingStock] = useState<{ beanId: string; value: string } | null>(null)
+  const [tab, setTab] = useState<InventoryCategory>('coffee')
 
   function loadInventory() {
     setLoading(true)
@@ -41,29 +50,41 @@ export default function InventoryPage() {
   // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => { loadInventory() }, [])
 
+  const filtered = useMemo(() => {
+    return inventory.filter(i => (i.category ?? 'coffee') === tab)
+  }, [inventory, tab])
+
   function openNewForm() {
-    setForm(emptyForm())
+    setForm(emptyForm(tab))
     setShowForm(true)
     setError('')
   }
 
   function openPurchaseForm(item: InventoryItem) {
-    setForm({ ...emptyForm(), beanId: item.beanId, name: item.name, origin: item.origin, alertThreshold: String(item.alertThreshold) })
+    setForm({
+      ...emptyForm(item.category ?? 'coffee'),
+      beanId: item.beanId, name: item.name, origin: item.origin,
+      alertThreshold: String(item.alertThreshold),
+      stockType: item.stockType ?? 'green',
+      unit: item.unit ?? 'g',
+    })
     setShowForm(true)
     setError('')
   }
 
   async function handleSave() {
     if (!form.name || !form.purchaseKg || !form.purchasePrice) {
-      setError('豆の名前・購入量・金額は必須です')
+      setError('名前・購入量・金額は必須です')
       return
     }
     setSaving(true)
     setError('')
     try {
-      const purchaseGrams = Math.round(Number(form.purchaseKg) * 1000)
+      const purchaseAmount = form.category === 'coffee'
+        ? Math.round(Number(form.purchaseKg) * 1000)
+        : Number(form.purchaseKg)
       const price = Number(form.purchasePrice)
-      // 在庫を更新（新規 or 加算）
+
       const invRes = await fetch('/api/admin/inventory', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -71,21 +92,28 @@ export default function InventoryPage() {
           beanId: form.beanId || undefined,
           name: form.name,
           origin: form.origin,
-          purchaseAmount: purchaseGrams,
+          purchaseAmount,
           alertThreshold: Number(form.alertThreshold) || 500,
+          category: form.category,
+          stockType: form.category === 'coffee' ? form.stockType : undefined,
+          unit: form.unit || undefined,
         }),
       })
       if (!invRes.ok) throw new Error()
 
-      // 仕入費用を経費テーブルへ自動登録
+      const expCategory = form.category === 'coffee' ? 'purchase' : 'supplies'
+      const desc = form.category === 'coffee'
+        ? `仕入：${form.name} ${form.purchaseKg}kg（${STOCK_TYPE_LABEL[form.stockType]}）`
+        : `資材：${form.name} ${form.purchaseKg}${form.unit}`
+
       await fetch('/api/admin/expenses', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           date: form.date,
-          category: 'purchase',
+          category: expCategory,
           amount: price,
-          description: `仕入：${form.name} ${form.purchaseKg}kg`,
+          description: desc,
           allocationRate: 1,
         }),
       })
@@ -129,6 +157,16 @@ export default function InventoryPage() {
     display: 'block', marginBottom: '5px',
   }
 
+  const tabBtn = (active: boolean): React.CSSProperties => ({
+    padding: '8px 18px', background: active ? 'rgba(240,235,224,0.06)' : 'transparent',
+    border: `1px solid ${active ? 'var(--admin-accent)' : 'var(--admin-border)'}`, borderRadius: '6px',
+    color: active ? 'var(--cream)' : 'var(--dim)', fontSize: '13px', cursor: 'pointer',
+    letterSpacing: '0.06em',
+  })
+
+  const isCoffee = tab === 'coffee'
+  const unitLabel = (item: InventoryItem) => item.unit ?? (item.category === 'supply' ? '個' : 'g')
+
   return (
     <div style={{ maxWidth: '900px' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '28px' }}>
@@ -141,8 +179,14 @@ export default function InventoryPage() {
             fontSize: '13px', letterSpacing: '0.08em', cursor: 'pointer',
           }}
         >
-          + 新規豆を登録
+          + {isCoffee ? '豆を登録' : '資材を登録'}
         </button>
+      </div>
+
+      {/* タブ */}
+      <div style={{ display: 'flex', gap: '6px', marginBottom: '20px' }}>
+        <button onClick={() => { setTab('coffee'); setShowForm(false) }} style={tabBtn(tab === 'coffee')}>コーヒー豆</button>
+        <button onClick={() => { setTab('supply'); setShowForm(false) }} style={tabBtn(tab === 'supply')}>資材</button>
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: showForm ? '1fr 320px' : '1fr', gap: '20px', alignItems: 'start' }}>
@@ -151,13 +195,13 @@ export default function InventoryPage() {
         <div>
           {loading ? (
             <p style={{ color: 'var(--dim)', fontSize: '13px' }}>読み込み中...</p>
-          ) : inventory.length === 0 ? (
+          ) : filtered.length === 0 ? (
             <div style={{
               background: 'var(--admin-card-bg)', border: '1px solid var(--admin-border)',
               borderRadius: '8px', padding: '40px', textAlign: 'center',
             }}>
               <p style={{ color: 'var(--dim)', fontSize: '13px', marginBottom: '16px' }}>
-                在庫が登録されていません
+                {isCoffee ? '在庫が登録されていません' : '資材が登録されていません'}
               </p>
               <button
                 onClick={openNewForm}
@@ -167,7 +211,7 @@ export default function InventoryPage() {
                   color: 'var(--dim)', fontSize: '12px', cursor: 'pointer',
                 }}
               >
-                最初の豆を登録する
+                {isCoffee ? '最初の豆を登録する' : '最初の資材を登録する'}
               </button>
             </div>
           ) : (
@@ -178,27 +222,47 @@ export default function InventoryPage() {
               <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                 <thead>
                   <tr>
-                    {['豆の名前', '産地', '現在の在庫', '閾値', '最終更新', ''].map((h, i) => (
+                    {[
+                      isCoffee ? '豆の名前' : '資材名',
+                      isCoffee ? '産地' : '',
+                      isCoffee ? '種別' : '',
+                      '現在の在庫', '閾値', '最終更新', '',
+                    ].filter(Boolean).map((h, i) => (
                       <th key={i} style={{
                         fontSize: '10px', color: 'var(--dim)', letterSpacing: '0.12em',
-                        padding: '10px 14px', textAlign: i >= 2 && i <= 3 ? 'right' : 'left' as 'left' | 'right',
+                        padding: '10px 14px',
+                        textAlign: (h === '現在の在庫' || h === '閾値') ? 'right' : 'left' as 'left' | 'right',
                         borderBottom: '1px solid var(--admin-border)',
                       }}>{h}</th>
                     ))}
                   </tr>
                 </thead>
                 <tbody>
-                  {inventory.map(item => {
+                  {filtered.map(item => {
                     const low = item.currentStock <= item.alertThreshold
                     const isEditing = editingStock?.beanId === item.beanId
+                    const u = unitLabel(item)
                     return (
                       <tr key={item.beanId}>
                         <td style={{ padding: '12px 14px', borderBottom: '1px solid var(--admin-border)' }}>
                           <span style={{ fontSize: '14px', color: 'var(--cream)' }}>{item.name}</span>
                         </td>
-                        <td style={{ padding: '12px 14px', fontSize: '13px', color: 'var(--dim)', borderBottom: '1px solid var(--admin-border)' }}>
-                          {item.origin || '—'}
-                        </td>
+                        {isCoffee && (
+                          <td style={{ padding: '12px 14px', fontSize: '13px', color: 'var(--dim)', borderBottom: '1px solid var(--admin-border)' }}>
+                            {item.origin || '—'}
+                          </td>
+                        )}
+                        {isCoffee && (
+                          <td style={{ padding: '12px 14px', fontSize: '12px', borderBottom: '1px solid var(--admin-border)' }}>
+                            <span style={{
+                              padding: '2px 8px', borderRadius: '4px', fontSize: '11px',
+                              background: item.stockType === 'roasted' ? 'rgba(154,104,68,0.2)' : 'rgba(139,195,74,0.15)',
+                              color: item.stockType === 'roasted' ? '#c49a6c' : '#9ccc65',
+                            }}>
+                              {STOCK_TYPE_LABEL[item.stockType ?? 'green']}
+                            </span>
+                          </td>
+                        )}
                         <td style={{ padding: '12px 14px', textAlign: 'right', borderBottom: '1px solid var(--admin-border)' }}>
                           {isEditing ? (
                             <input
@@ -226,12 +290,12 @@ export default function InventoryPage() {
                                   padding: '2px 6px', borderRadius: '3px',
                                 }}>残少</span>
                               )}
-                              {item.currentStock.toLocaleString()} g
+                              {item.currentStock.toLocaleString()} {u}
                             </span>
                           )}
                         </td>
                         <td style={{ padding: '12px 14px', fontSize: '13px', color: 'var(--dim)', textAlign: 'right', borderBottom: '1px solid var(--admin-border)' }}>
-                          {item.alertThreshold.toLocaleString()} g
+                          {item.alertThreshold.toLocaleString()} {u}
                         </td>
                         <td style={{ padding: '12px 14px', fontSize: '11px', color: 'var(--dim)', borderBottom: '1px solid var(--admin-border)' }}>
                           {item.updatedAt ? new Date(item.updatedAt).toLocaleDateString('ja-JP') : '—'}
@@ -246,7 +310,7 @@ export default function InventoryPage() {
                                 color: 'var(--admin-accent)', fontSize: '11px', cursor: 'pointer',
                               }}
                             >
-                              仕入れ
+                              {isCoffee ? '仕入れ' : '補充'}
                             </button>
                             <button
                               onClick={() => handleDelete(item.beanId, item.name)}
@@ -268,7 +332,7 @@ export default function InventoryPage() {
           )}
         </div>
 
-        {/* 仕入れフォーム */}
+        {/* 仕入れ / 登録フォーム */}
         {showForm && (
           <div style={{
             background: 'var(--admin-card-bg)', border: '1px solid var(--admin-border)',
@@ -276,7 +340,9 @@ export default function InventoryPage() {
           }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
               <p style={{ fontSize: '13px', color: 'var(--cream)' }}>
-                {form.beanId ? '仕入れ記録' : '新規豆を登録'}
+                {form.beanId
+                  ? (isCoffee ? '仕入れ記録' : '補充記録')
+                  : (isCoffee ? '新規豆を登録' : '新規資材を登録')}
               </p>
               <button
                 onClick={() => setShowForm(false)}
@@ -295,21 +361,41 @@ export default function InventoryPage() {
               {!form.beanId && (
                 <>
                   <div>
-                    <label style={labelStyle}>豆の名前 *</label>
+                    <label style={labelStyle}>{isCoffee ? '豆の名前' : '資材名'} *</label>
                     <input
-                      type="text" value={form.name} placeholder="例: エチオピア イルガチェフェ"
+                      type="text" value={form.name}
+                      placeholder={isCoffee ? '例: エチオピア イルガチェフェ' : '例: テイクアウトカップ 12oz'}
                       onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
                       style={inputStyle}
                     />
                   </div>
-                  <div>
-                    <label style={labelStyle}>産地</label>
-                    <input
-                      type="text" value={form.origin} placeholder="例: エチオピア"
-                      onChange={e => setForm(f => ({ ...f, origin: e.target.value }))}
-                      style={inputStyle}
-                    />
-                  </div>
+                  {isCoffee && (
+                    <div>
+                      <label style={labelStyle}>産地</label>
+                      <input
+                        type="text" value={form.origin} placeholder="例: エチオピア"
+                        onChange={e => setForm(f => ({ ...f, origin: e.target.value }))}
+                        style={inputStyle}
+                      />
+                    </div>
+                  )}
+                  {isCoffee && (
+                    <div>
+                      <label style={labelStyle}>種別</label>
+                      <select value={form.stockType} onChange={e => setForm(f => ({ ...f, stockType: e.target.value as CoffeeStockType }))}
+                        style={{ ...inputStyle, cursor: 'pointer' }}>
+                        <option value="green">生豆</option>
+                        <option value="roasted">焙煎豆</option>
+                      </select>
+                    </div>
+                  )}
+                  {!isCoffee && (
+                    <div>
+                      <label style={labelStyle}>単位</label>
+                      <input type="text" value={form.unit} placeholder="例: 個, 枚, パック"
+                        onChange={e => setForm(f => ({ ...f, unit: e.target.value }))} style={inputStyle} />
+                    </div>
+                  )}
                 </>
               )}
 
@@ -322,9 +408,9 @@ export default function InventoryPage() {
 
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
                 <div>
-                  <label style={labelStyle}>購入量（kg）*</label>
+                  <label style={labelStyle}>購入量{isCoffee ? '（kg）' : `（${form.unit}）`} *</label>
                   <input
-                    type="number" min="0" step="0.1" value={form.purchaseKg} placeholder="0.0"
+                    type="number" min="0" step={isCoffee ? '0.1' : '1'} value={form.purchaseKg} placeholder="0"
                     onChange={e => setForm(f => ({ ...f, purchaseKg: e.target.value }))}
                     style={inputStyle}
                   />
@@ -341,7 +427,7 @@ export default function InventoryPage() {
 
               {!form.beanId && (
                 <div>
-                  <label style={labelStyle}>警告閾値（g）</label>
+                  <label style={labelStyle}>警告閾値（{isCoffee ? 'g' : form.unit}）</label>
                   <input
                     type="number" min="0" value={form.alertThreshold}
                     onChange={e => setForm(f => ({ ...f, alertThreshold: e.target.value }))}
@@ -350,7 +436,7 @@ export default function InventoryPage() {
                 </div>
               )}
 
-              {form.purchaseKg && (
+              {form.purchaseKg && isCoffee && (
                 <div style={{ fontSize: '11px', color: 'var(--dim)', padding: '8px 0' }}>
                   {Number(form.purchaseKg)} kg = {(Number(form.purchaseKg) * 1000).toLocaleString()} g
                   {form.purchasePrice && ` / ¥${Number(form.purchasePrice).toLocaleString()}`}

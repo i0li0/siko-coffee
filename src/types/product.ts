@@ -1,3 +1,5 @@
+export type ProductStatus = 'active' | 'paused' | 'discontinued';
+
 export interface Product {
   id: string;
   name: string;
@@ -7,4 +9,8 @@ export interface Product {
   type: string;
   isPublic: boolean;
   canCustomize: boolean;
+  status: ProductStatus;
+  recipe?: string;
+  unit?: string;
+  sortOrder?: number;
 }

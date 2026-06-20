@@ -33,7 +33,7 @@ export async function POST(request: NextRequest) {
 
   try {
     const body = await request.json()
-    const { name, nameJp, price, description, type, isPublic, canCustomize } = body
+    const { name, nameJp, price, description, type, isPublic, canCustomize, status, recipe, unit, sortOrder } = body
 
     if (!name || price === undefined || !type) {
       return NextResponse.json({ error: 'name, price, type are required' }, { status: 400 })
@@ -48,6 +48,10 @@ export async function POST(request: NextRequest) {
       type: String(type),
       isPublic: Boolean(isPublic),
       canCustomize: Boolean(canCustomize),
+      status: (['active', 'paused', 'discontinued'].includes(status) ? status : 'active') as Product['status'],
+      ...(recipe ? { recipe: String(recipe) } : {}),
+      ...(unit ? { unit: String(unit) } : {}),
+      ...(sortOrder !== undefined ? { sortOrder: Number(sortOrder) } : {}),
     }
 
     await getDocClient().send(new PutCommand({

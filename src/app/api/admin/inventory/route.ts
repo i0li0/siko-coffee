@@ -32,7 +32,7 @@ export async function POST(request: NextRequest) {
 
   try {
     const body = await request.json()
-    const { beanId, name, origin, purchaseAmount, alertThreshold } = body
+    const { beanId, name, origin, purchaseAmount, alertThreshold, category, stockType, unit } = body
 
     if (!name || purchaseAmount === undefined) {
       return NextResponse.json({ error: 'name and purchaseAmount are required' }, { status: 400 })
@@ -69,6 +69,9 @@ export async function POST(request: NextRequest) {
       currentStock: Number(purchaseAmount),
       alertThreshold: alertThreshold ?? 500,
       updatedAt: new Date().toISOString(),
+      category: category === 'supply' ? 'supply' : 'coffee',
+      ...(category !== 'supply' && stockType ? { stockType } : {}),
+      ...(unit ? { unit } : {}),
     }
 
     await getDocClient().send(new PutCommand({

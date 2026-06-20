@@ -1,7 +1,7 @@
 'use client';
 
 import type { CSSProperties } from 'react';
-import { BEANS, AXES, tasteDots } from './data';
+import { BEANS, AXES, tasteDots, calcPrice } from './data';
 import type { Bean, Blend } from './data';
 
 export function RatioBar({ ratios, h = 8, style }: { ratios: number[]; h?: number; style?: CSSProperties }) {
@@ -69,7 +69,7 @@ export function Bag({ name, ratios, w = 92, hand = true }: { name?: string | nul
 export function BlendCardH({ blend, onBuy, onOpen }: { blend: Blend; onBuy: () => void; onOpen: () => void }) {
   const rot = (blend.id.charCodeAt(blend.id.length - 1) % 2 === 0 ? 1 : -1) * 0.8;
   return (
-    <div className="ss-card ss-card--hover" onClick={onOpen} role="button" tabIndex={0} aria-label={`${blend.name} — ¥1,480`} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpen(); } }}
+    <div className="ss-card ss-card--hover" onClick={onOpen} role="button" tabIndex={0} aria-label={`${blend.name} — ¥${calcPrice(200).toLocaleString()}`} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpen(); } }}
       style={{ '--hover-rot': `${rot}deg`, padding: 16, display: 'flex', flexDirection: 'column', gap: 11, minWidth: 0 } as CSSProperties}>
       <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
         <Bag name={blend.name} ratios={blend.ratios} w={62} />
@@ -84,7 +84,7 @@ export function BlendCardH({ blend, onBuy, onOpen }: { blend: Blend; onBuy: () =
       <RatioBar ratios={blend.ratios} h={6} />
       <TasteDots ratios={blend.ratios} size={7} gap={4} />
       <div style={{ display: 'flex', alignItems: 'center', marginTop: 2 }}>
-        <span className="ss-serif ss-price" style={{ fontSize: 14, color: 'rgba(200,169,110,0.8)' }}>¥ 1,480</span>
+        <span className="ss-serif ss-price" style={{ fontSize: 14, color: 'rgba(200,169,110,0.8)' }}>¥ {calcPrice(200).toLocaleString()}</span>
         <button className="ss-btn ss-btn--sm" style={{ marginLeft: 'auto' }} onClick={(e) => { e.stopPropagation(); onBuy(); }}>カートへ</button>
       </div>
     </div>
@@ -97,7 +97,7 @@ export function SingleCard({ bean, onBuy, onOpen }: { bean: Bean; onBuy: () => v
   ratios[idx] = 100;
   const rot = bean.key.charCodeAt(0) % 2 === 0 ? 0.8 : -0.8;
   return (
-    <div className="ss-card ss-card--hover" onClick={onOpen} role="button" tabIndex={0} aria-label={`${bean.name} シングルオリジン — ¥1,480`} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpen(); } }}
+    <div className="ss-card ss-card--hover" onClick={onOpen} role="button" tabIndex={0} aria-label={`${bean.name} シングルオリジン — ¥${calcPrice(200).toLocaleString()}`} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpen(); } }}
       style={{ '--hover-rot': `${rot}deg`, padding: 16, display: 'flex', flexDirection: 'column', gap: 11, minWidth: 0 } as CSSProperties}>
       <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
         <Bag name={bean.name} ratios={ratios} w={62} hand={false} />
@@ -111,7 +111,7 @@ export function SingleCard({ bean, onBuy, onOpen }: { bean: Bean; onBuy: () => v
       <RatioBar ratios={ratios} h={6} />
       <TasteDots ratios={ratios} size={7} gap={4} />
       <div style={{ display: 'flex', alignItems: 'center', marginTop: 2 }}>
-        <span className="ss-serif ss-price" style={{ fontSize: 14, color: 'rgba(200,169,110,0.8)' }}>¥ 1,480</span>
+        <span className="ss-serif ss-price" style={{ fontSize: 14, color: 'rgba(200,169,110,0.8)' }}>¥ {calcPrice(200).toLocaleString()}</span>
         <button className="ss-btn ss-btn--sm" style={{ marginLeft: 'auto' }} onClick={(e) => { e.stopPropagation(); onBuy(); }}>カートへ</button>
       </div>
     </div>

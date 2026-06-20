@@ -32,6 +32,10 @@ export async function PUT(
     type: (v) => String(v),
     isPublic: (v) => Boolean(v),
     canCustomize: (v) => Boolean(v),
+    status: (v) => (['active', 'paused', 'discontinued'].includes(String(v)) ? String(v) : 'active'),
+    recipe: (v) => String(v),
+    unit: (v) => String(v),
+    sortOrder: (v) => Number(v),
   }
 
   const names: Record<string, string> = {}
