@@ -72,7 +72,7 @@ export default function MonthlyChart({ labels, profits }: Props) {
     <div style={{
       background: 'var(--admin-card-bg)',
       border: '1px solid var(--admin-border)',
-      borderRadius: '8px',
+      borderRadius: '10px',
       padding: '20px 24px',
     }}>
       <p style={{ fontSize: '11px', color: 'var(--dim)', letterSpacing: '0.12em', marginBottom: '16px' }}>
