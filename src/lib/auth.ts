@@ -28,9 +28,10 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         password: { label: 'Password', type: 'password' },
       },
       async authorize(credentials) {
-        const email = credentials?.email as string | undefined
+        const rawEmail = credentials?.email as string | undefined
         const password = credentials?.password as string | undefined
-        if (!email || !password) return null
+        if (!rawEmail || !password) return null
+        const email = rawEmail.toLowerCase().trim()
 
         const user = await adapter.getUserByEmail!(email)
         if (!user) return null
@@ -46,10 +47,16 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
     }),
   ],
   callbacks: {
-    jwt({ token, user }) {
+    async jwt({ token, user, trigger }) {
       if (user) {
         token.id = user.id
         token.emailVerified = (user as typeof user & { emailVerified?: Date | null }).emailVerified ?? null
+      }
+      if (!token.emailVerified && token.id && trigger !== 'signIn') {
+        const dbUser = await adapter.getUser!(token.id as string)
+        if (dbUser?.emailVerified) {
+          token.emailVerified = dbUser.emailVerified
+        }
       }
       return token
     },

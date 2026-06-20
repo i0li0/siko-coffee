@@ -44,9 +44,13 @@ function VerifyEmailContent() {
           color: 'var(--dim)',
           marginBottom: '32px',
         }}>
-          {success
+          {status === 'success'
             ? 'メールアドレスが確認されました。ご利用ありがとうございます。'
-            : 'リンクが無効または期限切れです。マイページから再送できます。'}
+            : status === 'rate-limited'
+              ? 'リクエストが多すぎます。しばらくしてから再試行してください。'
+              : status === 'expired'
+                ? '確認リンクの有効期限が切れています。マイページから再送できます。'
+                : 'リンクが無効です。マイページから確認メールを再送してください。'}
         </p>
 
         <Link

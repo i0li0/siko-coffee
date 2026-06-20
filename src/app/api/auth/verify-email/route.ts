@@ -3,6 +3,7 @@ import { DynamoDBDocumentClient, QueryCommand, UpdateCommand } from '@aws-sdk/li
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb'
 import { TABLE } from '@/lib/db'
 import { consumeVerificationToken } from '@/lib/verification-token'
+import { checkGeneralRateLimit, getClientIp } from '@/lib/rateLimit'
 
 const client = DynamoDBDocumentClient.from(
   new DynamoDBClient({ region: 'ap-northeast-1' }),
@@ -10,14 +11,24 @@ const client = DynamoDBDocumentClient.from(
 )
 
 export async function GET(request: NextRequest) {
+  const ip = getClientIp(request.headers)
+  const { allowed } = await checkGeneralRateLimit(ip, {
+    prefix: 'verifyEmail',
+    maxAttempts: 10,
+    windowMs: 15 * 60 * 1000,
+  })
+  if (!allowed) {
+    return NextResponse.redirect(new URL('/verify-email?status=rate-limited', request.url))
+  }
+
   const token = request.nextUrl.searchParams.get('token')
-  if (!token) {
-    return NextResponse.json({ error: 'トークンが必要です' }, { status: 400 })
+  if (!token || !/^[a-f0-9]{64}$/.test(token)) {
+    return NextResponse.redirect(new URL('/verify-email?status=invalid', request.url))
   }
 
   const email = await consumeVerificationToken(token)
   if (!email) {
-    return NextResponse.json({ error: 'トークンが無効または期限切れです' }, { status: 400 })
+    return NextResponse.redirect(new URL('/verify-email?status=expired', request.url))
   }
 
   const userResult = await client.send(
@@ -35,7 +46,7 @@ export async function GET(request: NextRequest) {
 
   const user = userResult.Items?.[0]
   if (!user) {
-    return NextResponse.json({ error: 'ユーザーが見つかりません' }, { status: 404 })
+    return NextResponse.redirect(new URL('/verify-email?status=error', request.url))
   }
 
   await client.send(
