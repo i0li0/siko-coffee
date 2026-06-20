@@ -27,6 +27,7 @@ interface Props {
 
 export default function HomeClient({ instagramPosts, menuItems }: Props) {
   const [opened, setOpened] = useState<boolean | null>(null);
+  const [replay, setReplay] = useState(false);
 
   useEffect(() => {
     const shown = !!sessionStorage.getItem('loader_shown');
@@ -36,6 +37,17 @@ export default function HomeClient({ instagramPosts, menuItems }: Props) {
 
   useScrollAnimations(opened === true);
 
+  const handleReplay = () => {
+    setReplay(true);
+    setOpened(false);
+  };
+
+  const handleFinish = () => {
+    sessionStorage.setItem('loader_shown', '1');
+    setReplay(false);
+    setOpened(true);
+  };
+
   return (
     <>
       <StarsCanvas />
@@ -44,10 +56,10 @@ export default function HomeClient({ instagramPosts, menuItems }: Props) {
       {opened === true && <SmokeCanvas />}
 
       {opened === false && (
-        <TerminalLoader onFinish={() => { sessionStorage.setItem('loader_shown', '1'); setOpened(true); }} />
+        <TerminalLoader key={replay ? 'replay' : 'init'} onFinish={handleFinish} replay={replay} />
       )}
 
-      <Nav visible={opened === true} />
+      <Nav visible={opened === true} onReplay={handleReplay} />
       <DotNav visible={opened === true} />
 
       <main>
@@ -59,7 +71,7 @@ export default function HomeClient({ instagramPosts, menuItems }: Props) {
         <Contact />
       </main>
 
-      <Footer />
+      {opened === true && <Footer />}
     </>
   );
 }

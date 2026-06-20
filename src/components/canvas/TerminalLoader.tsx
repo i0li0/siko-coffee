@@ -12,7 +12,7 @@ type Line =
   | { t: 'amber'; text: string }
   | { t: 'div' };
 
-interface Props { onFinish: () => void }
+interface Props { onFinish: () => void; replay?: boolean }
 
 interface ConnectionInfo {
   effectiveType?: string;
@@ -160,14 +160,14 @@ function ProgressBar({ value, cols }: { value: number; cols: number }) {
     >
       <div className="relative flex items-center gap-2 sm:gap-4 max-w-full" aria-hidden="true">
         <span
-          className="font-mono text-[clamp(11px,1.3vw,15px)] tracking-[0.05em] leading-none"
+          className="font-mono text-[clamp(13px,1.5vw,17px)] tracking-[0.05em] leading-none"
           style={{ color: 'var(--amber)' }}
         >
           {'█'.repeat(filled)}
           <span style={{ color: 'var(--amber3)' }}>{'░'.repeat(cols - filled)}</span>
         </span>
         <span
-          className="font-mono text-[clamp(10px,1.1vw,13px)] tabular-nums w-[2.8em] text-right shrink-0"
+          className="font-mono text-[clamp(12px,1.3vw,15px)] tabular-nums w-[2.8em] text-right shrink-0"
           style={{ color: value === 100 ? 'var(--amber)' : 'var(--amber2)' }}
         >
           {pct}%
@@ -191,7 +191,7 @@ function ProgressBar({ value, cols }: { value: number; cols: number }) {
 
 // ── line renderer ──────────────────────────────────────────────────
 function TermLine({ line, cursor }: { line: Line; cursor?: boolean }) {
-  const base = 'font-mono whitespace-pre-wrap break-all text-[clamp(9px,1vw,11.5px)] leading-[1.85]';
+  const base = 'font-mono whitespace-pre-wrap break-all text-[clamp(11px,1.2vw,13px)] leading-[1.85]';
   const cur  = cursor ? (
     <span
       className="inline-block w-[0.5em] h-[1.1em] ml-[2px] align-text-bottom"
@@ -200,7 +200,7 @@ function TermLine({ line, cursor }: { line: Line; cursor?: boolean }) {
   ) : null;
 
   if (line.t === 'div') return (
-    <div className="my-[4px]" style={{ borderBottom: '1px solid rgba(212,160,23,0.18)' }} />
+    <div className="my-[4px]" style={{ borderBottom: '1px solid rgba(212,160,23,0.28)' }} />
   );
   if (line.t === 'cmd') return (
     <div className={base}>
@@ -211,15 +211,15 @@ function TermLine({ line, cursor }: { line: Line; cursor?: boolean }) {
   );
   if (line.t === 'ok') return (
     <div className={base}>
-      <span style={{ color: '#4f9a4f' }}>✓ </span>
-      <span style={{ color: 'rgba(232,224,208,0.62)' }}>{line.text}</span>
+      <span style={{ color: '#6abf6a' }}>✓ </span>
+      <span style={{ color: 'rgba(232,224,208,0.78)' }}>{line.text}</span>
       {cur}
     </div>
   );
   if (line.t === 'err') return (
     <div className={base}>
-      <span style={{ color: '#9a4f4f' }}>✗ </span>
-      <span style={{ color: 'rgba(232,224,208,0.52)' }}>{line.text}</span>
+      <span style={{ color: '#bf6a6a' }}>✗ </span>
+      <span style={{ color: 'rgba(232,224,208,0.68)' }}>{line.text}</span>
       {cur}
     </div>
   );
@@ -230,14 +230,14 @@ function TermLine({ line, cursor }: { line: Line; cursor?: boolean }) {
   );
   return (
     <div className={base}
-      style={{ color: line.dim ? 'rgba(212,160,23,0.3)' : 'rgba(232,224,208,0.44)' }}>
+      style={{ color: line.dim ? 'rgba(212,160,23,0.5)' : 'rgba(232,224,208,0.65)' }}>
       {'  '}{line.text}{cur}
     </div>
   );
 }
 
 // ── main ───────────────────────────────────────────────────────────
-export default function TerminalLoader({ onFinish }: Props) {
+export default function TerminalLoader({ onFinish, replay = false }: Props) {
   const [progress, setP] = useState(0);
   const [lines,    setL] = useState<Line[]>([]);
   const [exiting,  setE] = useState(false);
@@ -261,6 +261,7 @@ export default function TerminalLoader({ onFinish }: Props) {
 
   const finish = (myGen: number) => {
     if (genRef.current !== myGen || dismissedRef.current) return;
+    if (replay) return;
     dismissedRef.current = true;
     setE(true);
     setTimeout(() => {
@@ -293,8 +294,8 @@ export default function TerminalLoader({ onFinish }: Props) {
     const myGen = ++genRef.current;
     const alive = () => genRef.current === myGen;
 
-    // hard cap — content が長くなったぶん上限を引き上げ
-    const cap = setTimeout(() => finish(myGen), 5200);
+    // hard cap — content が長くなったぶん上限を引き上げ（リプレイ時は自動遷移しない）
+    const cap = replay ? undefined : setTimeout(() => finish(myGen), 5200);
 
     async function dump(cmd: string, data: Record<string, string> | null, okMsg: string, p: number) {
       push({ t: 'cmd', text: cmd });
@@ -390,7 +391,7 @@ export default function TerminalLoader({ onFinish }: Props) {
 
     run();
 
-    return () => clearTimeout(cap);
+    return () => { if (cap) clearTimeout(cap); };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -413,16 +414,16 @@ export default function TerminalLoader({ onFinish }: Props) {
       <div className="flex-1 flex flex-col items-center justify-center px-5 sm:px-6 min-h-0">
         <div className="text-center mb-5 sm:mb-6 w-full max-w-[580px]">
           <p
-            className="font-mono font-medium tracking-[0.32em] mb-1
-              text-[clamp(10px,1.05vw,12px)] select-none"
-            style={{ color: 'var(--amber3)' }}
+            className="font-mono font-medium tracking-[0.32em] mb-1.5
+              text-[clamp(12px,1.3vw,15px)] select-none"
+            style={{ color: 'var(--amber)' }}
           >
             SIKŌ COFFEE
           </p>
           <p
             className="font-serif font-light tracking-[0.14em]
-              text-[clamp(9px,0.9vw,11px)] select-none"
-            style={{ color: 'rgba(212,160,23,0.35)' }}
+              text-[clamp(10px,1vw,12px)] select-none"
+            style={{ color: 'rgba(212,160,23,0.55)' }}
           >
             ◂ SYSTEM TERMINAL ▸
           </p>
@@ -467,11 +468,11 @@ export default function TerminalLoader({ onFinish }: Props) {
         <button
           type="button"
           onClick={dismiss}
-          aria-label="読み込みをスキップしてサイトを表示"
+          aria-label={replay ? 'ターミナルを閉じる' : '読み込みをスキップしてサイトを表示'}
           className="loader-skip font-mono text-[11px] tracking-[0.2em]
             bg-transparent cursor-pointer select-none px-3 py-1.5 rounded"
         >
-          skip →
+          {replay ? 'close →' : 'skip →'}
         </button>
       </div>
     </div>
