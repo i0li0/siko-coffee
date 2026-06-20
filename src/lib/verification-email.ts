@@ -6,7 +6,7 @@ const BASE_URL = process.env.NEXTAUTH_URL || 'https://www.sikocoffee.com'
 export async function sendVerificationEmail(email: string): Promise<boolean> {
   await deleteTokensForEmail(email)
   const token = await createVerificationToken(email)
-  const url = `${BASE_URL}/verify-email?token=${token}`
+  const url = `${BASE_URL}/api/auth/verify-email?token=${token}`
 
   return sendEmail({
     to: email,
