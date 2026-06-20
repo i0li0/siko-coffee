@@ -3,6 +3,7 @@ import { hash } from 'bcryptjs'
 import { DynamoDBDocumentClient, PutCommand, QueryCommand } from '@aws-sdk/lib-dynamodb'
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb'
 import { TABLE } from '@/lib/db'
+import { sendVerificationEmail } from '@/lib/verification-email'
 
 const client = DynamoDBDocumentClient.from(
   new DynamoDBClient({ region: 'ap-northeast-1' }),
@@ -59,6 +60,8 @@ export async function POST(request: NextRequest) {
       },
     })
   )
+
+  sendVerificationEmail(email).catch(() => {})
 
   return NextResponse.json({ ok: true }, { status: 201 })
 }
