@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
-import type { Product } from '@/types/product'
+import type { Product, ProductStatus } from '@/types/product'
 
 const TYPE_OPTIONS = [
   { key: 'bean',  label: '珈琲豆' },
@@ -10,12 +10,22 @@ const TYPE_OPTIONS = [
   { key: 'menu',  label: 'メニュー' },
 ] as const
 
+const STATUS_OPTIONS: { key: ProductStatus; label: string; color: string }[] = [
+  { key: 'active',       label: '販売中',   color: 'var(--admin-success)' },
+  { key: 'paused',       label: '一時停止', color: 'var(--admin-warning, #e8a317)' },
+  { key: 'discontinued', label: '販売終了', color: 'var(--admin-danger)' },
+]
+
+const STATUS_LABEL: Record<string, { label: string; color: string }> = Object.fromEntries(
+  STATUS_OPTIONS.map(s => [s.key, { label: s.label, color: s.color }]),
+)
+
 const TYPE_LABEL: Record<string, string> = Object.fromEntries(
   TYPE_OPTIONS.map(t => [t.key, t.label]),
 )
 
 type ProductForm = {
-  id: string            // 空なら新規
+  id: string
   name: string
   nameJp: string
   price: string
@@ -23,10 +33,14 @@ type ProductForm = {
   type: string
   isPublic: boolean
   canCustomize: boolean
+  status: ProductStatus
+  recipe: string
+  unit: string
+  sortOrder: string
 }
 
 function emptyForm(): ProductForm {
-  return { id: '', name: '', nameJp: '', price: '', description: '', type: 'bean', isPublic: true, canCustomize: false }
+  return { id: '', name: '', nameJp: '', price: '', description: '', type: 'bean', isPublic: true, canCustomize: false, status: 'active', recipe: '', unit: '', sortOrder: '' }
 }
 
 export default function ProductsPage() {
@@ -68,6 +82,7 @@ export default function ProductsPage() {
     setForm({
       id: p.id, name: p.name, nameJp: p.nameJp ?? '', price: String(p.price),
       description: p.description ?? '', type: p.type, isPublic: p.isPublic, canCustomize: p.canCustomize,
+      status: p.status ?? 'active', recipe: p.recipe ?? '', unit: p.unit ?? '', sortOrder: p.sortOrder !== undefined ? String(p.sortOrder) : '',
     })
     setShowForm(true)
     setError('')
@@ -88,6 +103,10 @@ export default function ProductsPage() {
       type: form.type,
       isPublic: form.isPublic,
       canCustomize: form.canCustomize,
+      status: form.status,
+      recipe: form.recipe || undefined,
+      unit: form.unit || undefined,
+      sortOrder: form.sortOrder ? Number(form.sortOrder) : undefined,
     }
     try {
       const res = form.id
@@ -120,6 +139,17 @@ export default function ProductsPage() {
     if (!confirm(`「${p.nameJp || p.name}」を削除しますか？`)) return
     await fetch(`/api/admin/products/${p.id}`, { method: 'DELETE' })
     setProducts(prev => prev.filter(x => x.id !== p.id))
+  }
+
+  async function cycleStatus(p: Product) {
+    const order: ProductStatus[] = ['active', 'paused', 'discontinued']
+    const cur = p.status ?? 'active'
+    const next = order[(order.indexOf(cur) + 1) % order.length]
+    setProducts(prev => prev.map(x => x.id === p.id ? { ...x, status: next } : x))
+    const res = await fetch(`/api/admin/products/${p.id}`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: next }),
+    })
+    if (!res.ok) setProducts(prev => prev.map(x => x.id === p.id ? { ...x, status: cur } : x))
   }
 
   const inputStyle: React.CSSProperties = {
@@ -196,8 +226,8 @@ export default function ProductsPage() {
                     <th style={th}>商品名</th>
                     <th style={th}>タイプ</th>
                     <th style={{ ...th, textAlign: 'right' }}>価格</th>
+                    <th style={{ ...th, textAlign: 'center' }}>ステータス</th>
                     <th style={{ ...th, textAlign: 'center' }}>公開</th>
-                    <th style={{ ...th, textAlign: 'center' }}>カスタム</th>
                     <th style={{ ...th, textAlign: 'right' }}></th>
                   </tr>
                 </thead>
@@ -213,6 +243,25 @@ export default function ProductsPage() {
                       <td style={{ ...td, color: 'var(--dim)' }}>{TYPE_LABEL[p.type] ?? p.type}</td>
                       <td style={{ ...td, textAlign: 'right' }}>¥{p.price.toLocaleString()}</td>
                       <td style={{ ...td, textAlign: 'center' }}>
+                        {(() => {
+                          const s = STATUS_LABEL[p.status ?? 'active'] ?? STATUS_LABEL.active
+                          return (
+                            <button
+                              onClick={() => cycleStatus(p)}
+                              title="クリックで切替"
+                              style={{
+                                padding: '3px 10px', borderRadius: '4px', fontSize: '11px', cursor: 'pointer',
+                                background: 'transparent',
+                                border: `1px solid ${s.color}`,
+                                color: s.color,
+                              }}
+                            >
+                              {s.label}
+                            </button>
+                          )
+                        })()}
+                      </td>
+                      <td style={{ ...td, textAlign: 'center' }}>
                         <button
                           onClick={() => togglePublic(p)}
                           title="クリックで切替"
@@ -225,9 +274,6 @@ export default function ProductsPage() {
                         >
                           {p.isPublic ? '公開中' : '非公開'}
                         </button>
-                      </td>
-                      <td style={{ ...td, textAlign: 'center', color: 'var(--dim)', fontSize: '12px' }}>
-                        {p.canCustomize ? '✓' : '—'}
                       </td>
                       <td style={{ ...td, textAlign: 'right' }}>
                         <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
@@ -296,6 +342,30 @@ export default function ProductsPage() {
                   style={{ ...inputStyle, resize: 'vertical' }} />
               </div>
 
+              <div>
+                <label style={labelStyle}>ステータス *</label>
+                <select value={form.status} onChange={e => setForm(f => ({ ...f, status: e.target.value as ProductStatus }))}
+                  style={{ ...inputStyle, cursor: 'pointer' }}>
+                  {STATUS_OPTIONS.map(s => <option key={s.key} value={s.key}>{s.label}</option>)}
+                </select>
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                <div>
+                  <label style={labelStyle}>レシピ</label>
+                  <input type="text" value={form.recipe} placeholder="例: 豆20g → 200ml"
+                    onChange={e => setForm(f => ({ ...f, recipe: e.target.value }))} style={inputStyle} />
+                </div>
+                <div>
+                  <label style={labelStyle}>単位</label>
+                  <input type="text" value={form.unit} placeholder="例: 100g"
+                    onChange={e => setForm(f => ({ ...f, unit: e.target.value }))} style={inputStyle} />
+                </div>
+              </div>
+              <div>
+                <label style={labelStyle}>表示順（小さいほど上）</label>
+                <input type="number" value={form.sortOrder} placeholder="自動"
+                  onChange={e => setForm(f => ({ ...f, sortOrder: e.target.value }))} style={inputStyle} />
+              </div>
               <label style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer', fontSize: '13px', color: 'var(--cream)' }}>
                 <input type="checkbox" checked={form.isPublic} onChange={e => setForm(f => ({ ...f, isPublic: e.target.checked }))} />
                 ショップに公開する

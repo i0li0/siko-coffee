@@ -97,7 +97,7 @@ export function ScreenTop({ nav, addToCart, startMaker, addSingleToCart, communi
             </h1>
             <p style={{ fontSize: 13.5, lineHeight: 2, color: 'var(--ss-dim)', maxWidth: 400 }}>
               すきな豆をえらんで、すきな割合で。1種ならシングルオリジン、<br />
-              2〜3種ならあなただけのブレンドに。どれでも <span style={{ color: 'var(--ss-cream)' }}>¥1,480 / 200g</span>。
+              2〜3種ならあなただけのブレンドに。どれでも <span style={{ color: 'var(--ss-cream)' }}>¥{calcPrice(200).toLocaleString()} / 200g</span>。
             </p>
             <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
               <button className="ss-btn" onClick={() => nav('select')}>豆をえらんでつくる →</button>
@@ -304,7 +304,7 @@ export function ScreenSingle({ beanKey, nav, addSingleToCart }: {
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginTop: 6 }}>
             <span className="ss-serif ss-price" style={{ fontSize: 26, color: 'var(--ss-gold)' }}>
-              ¥ 1,480 <span style={{ fontSize: 13, color: 'var(--ss-dim)' }}>/ 200g</span>
+              ¥ {calcPrice(200).toLocaleString()} <span style={{ fontSize: 13, color: 'var(--ss-dim)' }}>/ 200g</span>
             </span>
           </div>
           <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
@@ -385,7 +385,7 @@ function NamingSheet({ ratios, base, onClose, onSave }: {
         </div>
         <button className="ss-btn" style={{ width: '100%', height: 52, marginTop: 10 }} disabled={!name.trim()}
           onClick={() => onSave(name.trim(), publish)}>
-          「{name.trim() || '…'}」を保存してカートへ — ¥1,480
+          「{name.trim() || '…'}」を保存してカートへ — ¥{calcPrice(200).toLocaleString()}
         </button>
       </div>
     </div>
@@ -451,7 +451,7 @@ export function ScreenMaker({ draft, nav, onSaveBlend }: {
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, margin: '20px 0 26px' }}>
         <span style={{ fontSize: 11, color: 'var(--ss-dim)' }}>合計</span>
         <span className="ss-serif" style={{ fontSize: 16, color: 'var(--ss-cream)' }}>100%</span>
-        <span style={{ fontSize: 11, color: 'var(--ss-dim)', marginLeft: 'auto' }}>¥1,480 / 200g(どの配合でも一律)</span>
+        <span style={{ fontSize: 11, color: 'var(--ss-dim)', marginLeft: 'auto' }}>¥{calcPrice(200).toLocaleString()} / 200g(どの配合でも一律)</span>
       </div>
       <button className="ss-btn" style={{ width: '100%', height: 54, fontSize: 14.5 }} onClick={() => setNaming(true)}>
         できあがり! 名前をつける →
@@ -533,7 +533,7 @@ export function ScreenQuiz({ nav, startMaker, addCustomToCart }: {
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 22 }}>
           <button className="ss-btn" style={{ height: 52 }} onClick={() => addCustomToCart({ ratios, name: arch, publish: false })}>
-            このまま買う — ¥1,480
+            このまま買う — ¥{calcPrice(200).toLocaleString()}
           </button>
           <button className="ss-btn ss-btn--ghost" onClick={() => startMaker(ratios, '診断結果')}>比率を微調整する(工房へ)</button>
           <button className="ss-nav-link" style={{ margin: '6px auto 0' }} onClick={() => { setAnswers([]); setStep(0); }}>もういちど診断する</button>
@@ -608,7 +608,7 @@ export function ScreenDetail({ id, nav, addToCart, startMaker }: {
             </div>
           </div>
           <span className="ss-serif ss-price" style={{ fontSize: 26, color: 'var(--ss-gold)' }}>
-            ¥ 1,480 <span style={{ fontSize: 13, color: 'var(--ss-dim)' }}>/ 200g</span>
+            ¥ {calcPrice(200).toLocaleString()} <span style={{ fontSize: 13, color: 'var(--ss-dim)' }}>/ 200g</span>
           </span>
           <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
             <button className="ss-btn" style={{ flex: 1, minWidth: 180 }} onClick={() => addToCart(b, grind)}>カートに入れる</button>

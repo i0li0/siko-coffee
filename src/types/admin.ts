@@ -21,6 +21,9 @@ export type ExpenseItem = {
   createdAt?: string
 }
 
+export type InventoryCategory = 'coffee' | 'supply'
+export type CoffeeStockType = 'green' | 'roasted'
+
 export type InventoryItem = {
   beanId: string
   name: string
@@ -28,6 +31,9 @@ export type InventoryItem = {
   currentStock: number
   alertThreshold: number
   updatedAt: string
+  category: InventoryCategory
+  stockType?: CoffeeStockType
+  unit?: string
 }
 
 // ───────────────────────────────────────── 注文管理

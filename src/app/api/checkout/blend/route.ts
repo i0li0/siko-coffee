@@ -9,7 +9,7 @@ import { buildShippingOptions } from '@/lib/shipping';
 export const dynamic = 'force-dynamic';
 export const preferredRegion = ['hnd1'];
 
-const PRICE_PER_100G = 1480;
+const PRICE_PER_100G = 1000;
 const GRAM_OPTIONS = new Set([100, 150, 200, 250, 300, 350, 400, 450, 500]);
 const ALLOWED_HOSTS = new Set(['sikocoffee.com', 'www.sikocoffee.com']);
 

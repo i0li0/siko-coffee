@@ -55,8 +55,8 @@ export const AXES = [
   { key: 'body' as const, label: 'コク', word: '飲みごたえ' },
 ];
 
-export const PRICE_PER_100G = 1480;
-export const PRICE = PRICE_PER_100G; // 後方互換：旧コードが参照している箇所用
+export const PRICE_PER_100G = 1000;
+export const PRICE = PRICE_PER_100G;
 
 export const GRAM_OPTIONS = [100, 150, 200, 250, 300, 350, 400, 450, 500] as const;
 export type GramOption = typeof GRAM_OPTIONS[number];
