@@ -8,6 +8,13 @@ export default async function AccountPage() {
   const session = await auth()
   if (!session?.user) redirect('/login')
 
-  const user = session.user as typeof session.user & { emailVerified?: string | null }
-  return <AccountClient user={user} emailVerified={!!user.emailVerified} />
+  const user = session.user as typeof session.user & { emailVerified?: string | null; avatarPreset?: string | null; avatarUrl?: string | null }
+  return (
+    <AccountClient
+      user={user}
+      emailVerified={!!user.emailVerified}
+      initialAvatarPreset={user.avatarPreset}
+      initialAvatarUrl={user.avatarUrl}
+    />
+  )
 }

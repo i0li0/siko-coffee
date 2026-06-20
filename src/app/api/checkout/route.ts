@@ -4,6 +4,7 @@ import * as Sentry from '@sentry/nextjs';
 import { getDocClient, TABLE } from '@/lib/db';
 import { stripe } from '@/lib/stripe';
 import { buildShippingOptions } from '@/lib/shipping';
+import { auth } from '@/lib/auth';
 import type { Product } from '@/types/product';
 
 export const dynamic = 'force-dynamic';
@@ -47,12 +48,15 @@ export async function POST(req: NextRequest) {
   }
 
   const origin = getOrigin(req);
+  const userSession = await auth();
 
   let session;
   try {
     session = await stripe.checkout.sessions.create({
       mode: 'payment',
       locale: 'ja',
+      ...(userSession?.user?.email ? { customer_email: userSession.user.email } : {}),
+      metadata: userSession?.user?.id ? { userId: userSession.user.id } : {},
       line_items: [
         {
           price_data: {
