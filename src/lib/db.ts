@@ -30,4 +30,5 @@ export const TABLE = {
   EXPENSES:  `${prefix}expenses`,
   INVENTORY: `${prefix}inventory`,
   CONFIG:    `${prefix}config`,
+  AUTH:      `${prefix}auth`,
 } as const;

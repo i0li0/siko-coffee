@@ -3,6 +3,7 @@
 import Image from 'next/image';
 import { usePathname } from 'next/navigation';
 import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
+import UserMenu from '@/components/auth/UserMenu';
 
 interface Props {
   visible: boolean;
@@ -163,24 +164,12 @@ export default function Nav({ visible, logoHref, onReplay }: Props) {
         />
       </a>
 
-      {/* ── shop / login テキスト（右端） ── */}
+      {/* ── shop / account（右端） ── */}
       <div className={`absolute top-1/2 -translate-y-1/2
-        right-5 min-[700px]:right-11
+        right-5 min-[700px]:right-11 flex items-center gap-5
         transition-opacity duration-[1200ms]
         ${visible ? 'opacity-100' : 'opacity-0'}`}>
-        {isShop ? (
-          <button aria-label="Login" className="group pointer-events-auto">
-            <span className="relative flex flex-col items-center gap-0 w-[52px]">
-              <span className="font-mono font-light text-[16px] tracking-[0.04em]
-                text-[rgba(255,252,245,0.92)] transition-colors duration-300
-                group-hover:text-[var(--amber)]">
-                login
-              </span>
-              <span className="block h-px w-0 group-hover:w-full transition-[width] duration-500 ease-out"
-                style={{ background: 'linear-gradient(90deg, transparent, var(--amber), transparent)' }} />
-            </span>
-          </button>
-        ) : (
+        {!isShop && (
           <a href="/shop" className="group pointer-events-auto no-underline">
             <span className="relative flex flex-col items-center gap-0 w-[52px]">
               <span className="font-mono font-light text-[16px] tracking-[0.04em]
@@ -194,6 +183,7 @@ export default function Nav({ visible, logoHref, onReplay }: Props) {
             </span>
           </a>
         )}
+        <UserMenu />
       </div>
     </nav>
   );
