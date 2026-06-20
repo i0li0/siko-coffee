@@ -5,6 +5,7 @@ import * as Sentry from '@sentry/nextjs';
 import { stripe } from '@/lib/stripe';
 import { getDocClient, TABLE } from '@/lib/db';
 import { buildShippingOptions } from '@/lib/shipping';
+import { auth } from '@/lib/auth';
 
 export const dynamic = 'force-dynamic';
 export const preferredRegion = ['hnd1'];
@@ -73,6 +74,7 @@ export async function POST(req: NextRequest) {
   }
 
   const origin = getOrigin(req);
+  const userSession = await auth();
   const orderId = randomUUID();
 
   let subtotal = 0;
@@ -109,6 +111,7 @@ export async function POST(req: NextRequest) {
         items,
         status: 'pending',
         createdAt: new Date().toISOString(),
+        ...(userSession?.user?.id ? { userId: userSession.user.id } : {}),
       },
     }));
   } catch (err) {
@@ -121,6 +124,8 @@ export async function POST(req: NextRequest) {
     session = await stripe.checkout.sessions.create({
       mode: 'payment',
       locale: 'ja',
+      ...(userSession?.user?.email ? { customer_email: userSession.user.email } : {}),
+      metadata: userSession?.user?.id ? { userId: userSession.user.id } : {},
       line_items: lineItems,
       shipping_address_collection: { allowed_countries: ['JP'] },
       shipping_options: buildShippingOptions(subtotal),

@@ -131,6 +131,8 @@ export async function POST(req: NextRequest) {
     const customerEmail = session.customer_details?.email ?? null;
     const customerName = session.customer_details?.name ?? shipping?.name ?? null;
 
+    const userId = session.metadata?.userId ?? null;
+
     const paymentValues = {
       ':status': 'paid',
       ':sid': session.id,
@@ -141,6 +143,7 @@ export async function POST(req: NextRequest) {
       ':addr': shipping?.address ?? null,
       ':sname': shipping?.name ?? null,
       ':paidAt': new Date(session.created * 1000).toISOString(),
+      ...(userId ? { ':uid': userId } : {}),
     };
 
     if (orderId) {
@@ -159,6 +162,7 @@ export async function POST(req: NextRequest) {
             'shippingAddress = :addr',
             'shippingName = :sname',
             'paidAt = :paidAt',
+            ...(userId ? ['userId = :uid'] : []),
           ].join(', '),
           ExpressionAttributeNames: { '#status': 'status' },
           ExpressionAttributeValues: paymentValues,
@@ -183,6 +187,7 @@ export async function POST(req: NextRequest) {
             shippingAddress: shipping?.address ?? null,
             shippingName: shipping?.name ?? null,
             paidAt: paymentValues[':paidAt'],
+            ...(userId ? { userId } : {}),
           },
         }));
       } catch (err) {
