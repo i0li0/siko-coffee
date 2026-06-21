@@ -5,6 +5,7 @@ import { DynamoDBClient } from '@aws-sdk/client-dynamodb'
 import { TABLE } from '@/lib/db'
 import { sendVerificationEmail } from '@/lib/verification-email'
 import { checkGeneralRateLimit, getClientIp } from '@/lib/rateLimit'
+import { notifySlack } from '@/lib/slackNotify'
 
 const client = DynamoDBDocumentClient.from(
   new DynamoDBClient({ region: 'ap-northeast-1' }),
@@ -86,6 +87,7 @@ export async function POST(request: NextRequest) {
   )
 
   sendVerificationEmail(normalizedEmail).catch(() => {})
+  notifySlack(`🆕 新規ユーザー登録: ${normalizedEmail}`)
 
   return NextResponse.json({ ok: true }, { status: 201 })
 }
