@@ -44,7 +44,7 @@ beforeEach(() => {
   vi.clearAllMocks()
   vi.mocked(getClientIp).mockReturnValue('1.2.3.4')
   vi.mocked(checkGeneralRateLimit).mockResolvedValue({ allowed: true })
-  vi.mocked(auth).mockResolvedValue(null)
+  vi.mocked(auth).mockResolvedValue(null as never)
 })
 
 describe('POST /api/checkout', () => {
