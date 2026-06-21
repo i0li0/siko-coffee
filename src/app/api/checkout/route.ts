@@ -1,10 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { ScanCommand } from '@aws-sdk/lib-dynamodb';
+import { GetCommand } from '@aws-sdk/lib-dynamodb';
 import * as Sentry from '@sentry/nextjs';
 import { getDocClient, TABLE } from '@/lib/db';
 import { stripe } from '@/lib/stripe';
 import { buildShippingOptions } from '@/lib/shipping';
 import { auth } from '@/lib/auth';
+import { checkGeneralRateLimit, getClientIp } from '@/lib/rateLimit';
 import type { Product } from '@/types/product';
 
 export const dynamic = 'force-dynamic';
@@ -20,6 +21,11 @@ function getOrigin(req: NextRequest): string {
 }
 
 export async function POST(req: NextRequest) {
+  const ip = getClientIp(req.headers);
+  const rl = await checkGeneralRateLimit(ip, { prefix: 'checkout', maxAttempts: 10, windowMs: 60_000 });
+  if (!rl.allowed) {
+    return NextResponse.json({ error: 'Too many requests' }, { status: 429, headers: { 'Retry-After': String(rl.retryAfter ?? 60) } });
+  }
   let formData: FormData;
   try {
     formData = await req.formData();
@@ -34,14 +40,13 @@ export async function POST(req: NextRequest) {
   }
 
   const result = await getDocClient().send(
-    new ScanCommand({
+    new GetCommand({
       TableName: TABLE.PRODUCTS,
-      FilterExpression: 'id = :id',
-      ExpressionAttributeValues: { ':id': productId },
+      Key: { id: productId },
     }),
   );
 
-  const product = (result.Items?.[0] ?? null) as Product | null;
+  const product = (result.Item ?? null) as Product | null;
 
   if (!product || !product.isPublic || product.type === 'menu' || product.canCustomize) {
     return NextResponse.json({ error: 'Product not available' }, { status: 404 });

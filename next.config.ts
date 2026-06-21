@@ -52,7 +52,7 @@ const securityHeaders = [
       scriptSrc,
       "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
       "font-src 'self' https://fonts.gstatic.com",
-      "img-src 'self' data: blob: https://*.cdninstagram.com https://cdninstagram.com https://www.google-analytics.com",
+      "img-src 'self' data: blob: https://*.cdninstagram.com https://cdninstagram.com https://www.google-analytics.com https://*.public.blob.vercel-storage.com",
       "connect-src 'self' https://www.google-analytics.com https://region1.google-analytics.com",
       "frame-ancestors 'none'",
       "base-uri 'self'",
@@ -71,6 +71,7 @@ const nextConfig: NextConfig = {
       { protocol: 'https', hostname: 'instagram.com' },
       { protocol: 'https', hostname: 'cdninstagram.com' },
       { protocol: 'https', hostname: '**.cdninstagram.com' },
+      { protocol: 'https', hostname: '**.public.blob.vercel-storage.com' },
     ],
   },
   async headers() {

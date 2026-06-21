@@ -1,6 +1,7 @@
 'use client'
 
 import Link from 'next/link'
+import Image from 'next/image'
 import { signOut } from 'next-auth/react'
 import { useState, useEffect, useRef } from 'react'
 import { PRESET_AVATARS, getPresetSvg } from '@/lib/avatars'
@@ -44,12 +45,12 @@ interface Props {
 function AvatarDisplay({ presetId, url, size = 64 }: { presetId?: string | null; url?: string | null; size?: number }) {
   if (url) {
     return (
-      <img
+      <Image
         src={url}
         alt="アバター"
         width={size}
         height={size}
-        style={{ width: size, height: size, borderRadius: '50%', objectFit: 'cover' }}
+        style={{ borderRadius: '50%', objectFit: 'cover' }}
       />
     )
   }
