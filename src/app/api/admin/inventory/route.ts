@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getDocClient, TABLE } from '@/lib/db'
 import { verifyAdminToken } from '@/lib/adminAuth'
 import { randomUUID } from 'crypto'
+import { createInventorySchema, updateInventorySchema } from '@/lib/validation'
 
 export const preferredRegion = ['hnd1']
 
@@ -31,13 +32,13 @@ export async function POST(request: NextRequest) {
   if (denied) return denied
 
   try {
-    const body = await request.json()
-    const { beanId, name, origin, purchaseAmount, alertThreshold, category, stockType, unit } = body
-
-    if (!name || purchaseAmount === undefined) {
-      return NextResponse.json({ error: 'name and purchaseAmount are required' }, { status: 400 })
+    const raw = await request.json()
+    const parsed = createInventorySchema.safeParse(raw)
+    if (!parsed.success) {
+      return NextResponse.json({ error: parsed.error.issues[0]?.message ?? 'Invalid request' }, { status: 400 })
     }
 
+    const { beanId, name, origin, purchaseAmount, alertThreshold, category, stockType, unit } = parsed.data
     const id = beanId ?? randomUUID()
 
     if (beanId) {
@@ -93,11 +94,13 @@ export async function PATCH(request: NextRequest) {
   if (denied) return denied
 
   try {
-    const { beanId, currentStock, name, origin, stockType } = await request.json()
-
-    if (!beanId) {
-      return NextResponse.json({ error: 'beanId is required' }, { status: 400 })
+    const raw = await request.json()
+    const parsed = updateInventorySchema.safeParse(raw)
+    if (!parsed.success) {
+      return NextResponse.json({ error: parsed.error.issues[0]?.message ?? 'Invalid request' }, { status: 400 })
     }
+
+    const { beanId, currentStock, name, origin, stockType } = parsed.data
 
     const parts: string[] = ['updatedAt = :now']
     const values: Record<string, unknown> = { ':now': new Date().toISOString() }
