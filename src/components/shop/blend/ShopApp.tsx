@@ -48,6 +48,9 @@ function ShopHeader({ route, nav, cartCount }: { route: Route; nav: NavFn; cartC
               {cartCount}
             </span>
           )}
+          <span className="sr-only" aria-live="polite" aria-atomic="true">
+            {cartCount > 0 ? `カートに${cartCount}点` : 'カートは空です'}
+          </span>
         </button>
       </div>
     </header>

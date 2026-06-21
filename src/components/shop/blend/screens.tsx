@@ -193,6 +193,8 @@ export function ScreenSelect({ nav, initial, onSelectDone }: {
           const order = sel.indexOf(i) + 1;
           return (
             <button key={b.key} className="ss-card ss-card--hover" onClick={() => toggle(i)}
+              aria-pressed={on}
+              aria-label={`${b.name}を${on ? '選択解除' : '選択'}`}
               style={{
                 position: 'relative', padding: 16, display: 'flex', flexDirection: 'column', gap: 11,
                 textAlign: 'left', cursor: 'pointer', color: 'var(--ss-cream)', fontFamily: 'var(--ss-sans)',
@@ -699,9 +701,12 @@ export function ScreenCart({ cart, nav, removeAt, updateGrams, startMaker, check
               ¥ {(total + ship).toLocaleString()}
             </span>
           </div>
-          <button className="ss-btn" style={{ height: 52, marginTop: 8 }} disabled={checkingOut} onClick={checkout}>
+          <button className="ss-btn" style={{ height: 52, marginTop: 8 }} disabled={checkingOut} onClick={checkout} aria-busy={checkingOut}>
             {checkingOut ? '処理中…' : '購入手続きへ(ゲストOK)'}
           </button>
+          <span aria-live="assertive" className="sr-only">
+            {checkingOut ? '決済処理中です。しばらくお待ちください。' : ''}
+          </span>
         </div>
       )}
     </div>
