@@ -7,12 +7,12 @@ import { getDocClient, TABLE } from '@/lib/db';
 import { buildShippingOptions } from '@/lib/shipping';
 import { auth } from '@/lib/auth';
 import { checkGeneralRateLimit, getClientIp } from '@/lib/rateLimit';
+import { blendCheckoutSchema } from '@/lib/validation';
 
 export const dynamic = 'force-dynamic';
 export const preferredRegion = ['hnd1'];
 
 const PRICE_PER_100G = 1000;
-const GRAM_OPTIONS = new Set([100, 150, 200, 250, 300, 350, 400, 450, 500]);
 const ALLOWED_HOSTS = new Set(['sikocoffee.com', 'www.sikocoffee.com']);
 
 function getOrigin(req: NextRequest): string {
@@ -22,16 +22,6 @@ function getOrigin(req: NextRequest): string {
   return 'https://www.sikocoffee.com';
 }
 
-interface CartItem {
-  name: string;
-  ratios: number[];
-  grind?: string;
-  grams?: number;
-  custom?: boolean;
-  single?: boolean;
-  publish?: boolean;
-}
-
 export async function POST(req: NextRequest) {
   const ip = getClientIp(req.headers);
   const rl = await checkGeneralRateLimit(ip, { prefix: 'checkout-blend', maxAttempts: 10, windowMs: 60_000 });
@@ -39,46 +29,19 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Too many requests' }, { status: 429, headers: { 'Retry-After': String(rl.retryAfter ?? 60) } });
   }
 
-  let body: { items: CartItem[] };
+  let raw: unknown;
   try {
-    body = await req.json() as { items: CartItem[] };
+    raw = await req.json();
   } catch {
     return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 });
   }
 
-  const { items } = body;
-  if (!Array.isArray(items) || items.length === 0) {
-    return NextResponse.json({ error: 'Cart is empty' }, { status: 400 });
+  const parsed = blendCheckoutSchema.safeParse(raw);
+  if (!parsed.success) {
+    return NextResponse.json({ error: parsed.error.issues[0]?.message ?? 'Invalid request' }, { status: 400 });
   }
 
-  // Basic validation
-  for (const item of items) {
-    if (typeof item.name !== 'string' || item.name.length > 40) {
-      return NextResponse.json({ error: 'Invalid item' }, { status: 400 });
-    }
-    if (!Array.isArray(item.ratios) || item.ratios.length !== 3) {
-      return NextResponse.json({ error: 'Invalid ratios' }, { status: 400 });
-    }
-    const total = item.ratios.reduce((a, b) => a + b, 0);
-    if (Math.abs(total - 100) > 1) {
-      return NextResponse.json({ error: 'Ratios must sum to 100' }, { status: 400 });
-    }
-    const grams = item.grams ?? 200;
-    if (!GRAM_OPTIONS.has(grams)) {
-      return NextResponse.json({ error: 'Invalid grams' }, { status: 400 });
-    }
-  }
-
-  if (items.length > 20) {
-    return NextResponse.json({ error: 'Too many items' }, { status: 400 });
-  }
-
-  // Validate individual ratio values
-  for (const item of items) {
-    if (!item.ratios.every((v) => typeof v === 'number' && Number.isFinite(v) && v >= 0 && v <= 100)) {
-      return NextResponse.json({ error: 'Invalid ratio values' }, { status: 400 });
-    }
-  }
+  const { items } = parsed.data;
 
   const origin = getOrigin(req);
   const userSession = await auth();

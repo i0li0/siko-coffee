@@ -1,8 +1,9 @@
 import { ScanCommand, PutCommand } from '@aws-sdk/lib-dynamodb'
-import { NextRequest, NextResponse } from 'next/server'
+import { NextResponse } from 'next/server'
 import { getDocClient, TABLE } from '@/lib/db'
 import { verifyAdminToken } from '@/lib/adminAuth'
 import { randomUUID } from 'crypto'
+import { createProductSchema } from '@/lib/validation'
 import type { Product } from '@/types/product'
 
 export const dynamic = 'force-dynamic'
@@ -27,31 +28,24 @@ export async function GET() {
 }
 
 // POST /api/admin/products — 新規商品
-export async function POST(request: NextRequest) {
+export async function POST(request: Request) {
   const denied = await verifyAdminToken()
   if (denied) return denied
 
   try {
-    const body = await request.json()
-    const { name, nameJp, price, description, type, isPublic, canCustomize, status, recipe, unit, sortOrder } = body
-
-    if (!name || price === undefined || !type) {
-      return NextResponse.json({ error: 'name, price, type are required' }, { status: 400 })
+    const raw = await request.json()
+    const parsed = createProductSchema.safeParse(raw)
+    if (!parsed.success) {
+      return NextResponse.json({ error: parsed.error.issues[0]?.message ?? 'Invalid request' }, { status: 400 })
     }
 
+    const { recipe, unit, sortOrder, ...rest } = parsed.data
     const item: Product = {
       id: randomUUID(),
-      name: String(name),
-      nameJp: nameJp ? String(nameJp) : '',
-      price: Number(price),
-      description: description ? String(description) : '',
-      type: String(type),
-      isPublic: Boolean(isPublic),
-      canCustomize: Boolean(canCustomize),
-      status: (['active', 'paused', 'discontinued'].includes(status) ? status : 'active') as Product['status'],
-      ...(recipe ? { recipe: String(recipe) } : {}),
-      ...(unit ? { unit: String(unit) } : {}),
-      ...(sortOrder !== undefined ? { sortOrder: Number(sortOrder) } : {}),
+      ...rest,
+      ...(recipe ? { recipe } : {}),
+      ...(unit ? { unit } : {}),
+      ...(sortOrder !== undefined ? { sortOrder } : {}),
     }
 
     await getDocClient().send(new PutCommand({
