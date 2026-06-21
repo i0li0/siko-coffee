@@ -65,6 +65,9 @@ export async function verifyOrderToken(orderId: string, token: string): Promise<
     }
 
     // 旧形式: 注文IDのみを署名した期限なしトークン（後方互換）。
+    // 2026-12-15 以降は廃止予定（180日 TTL 超過後）。
+    const LEGACY_CUTOFF = new Date('2026-12-15T00:00:00Z').getTime();
+    if (Date.now() > LEGACY_CUTOFF) return false;
     return await verify(orderId, token)
   } catch {
     return false

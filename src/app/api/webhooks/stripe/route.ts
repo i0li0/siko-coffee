@@ -87,12 +87,21 @@ async function applyInventory(orderId: string, items: OrderItem[]): Promise<void
         continue;
       }
       try {
-        await getDocClient().send(new UpdateCommand({
+        const updated = await getDocClient().send(new UpdateCommand({
           TableName: TABLE.INVENTORY,
           Key: { beanId },
           UpdateExpression: 'SET currentStock = currentStock - :g, updatedAt = :now',
           ExpressionAttributeValues: { ':g': Math.round(grams), ':now': new Date().toISOString() },
+          ReturnValues: 'ALL_NEW',
         }));
+        const item = updated.Attributes as { name?: string; currentStock?: number; alertThreshold?: number } | undefined;
+        if (item && typeof item.currentStock === 'number' && typeof item.alertThreshold === 'number' && item.currentStock <= item.alertThreshold) {
+          await sendEmail({
+            to: OWNER_EMAIL,
+            subject: `⚠ 在庫アラート: ${item.name ?? beanId}`,
+            text: `${item.name ?? beanId} の在庫が ${item.currentStock}g になりました（閾値: ${item.alertThreshold}g）。\n注文ID: ${orderId}`,
+          });
+        }
       } catch (err) {
         Sentry.captureException(err, { tags: { route: 'webhook/stripe', step: 'inventory-update', orderId } });
       }

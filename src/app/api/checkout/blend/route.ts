@@ -6,6 +6,7 @@ import { stripe } from '@/lib/stripe';
 import { getDocClient, TABLE } from '@/lib/db';
 import { buildShippingOptions } from '@/lib/shipping';
 import { auth } from '@/lib/auth';
+import { checkGeneralRateLimit, getClientIp } from '@/lib/rateLimit';
 
 export const dynamic = 'force-dynamic';
 export const preferredRegion = ['hnd1'];
@@ -32,6 +33,12 @@ interface CartItem {
 }
 
 export async function POST(req: NextRequest) {
+  const ip = getClientIp(req.headers);
+  const rl = await checkGeneralRateLimit(ip, { prefix: 'checkout-blend', maxAttempts: 10, windowMs: 60_000 });
+  if (!rl.allowed) {
+    return NextResponse.json({ error: 'Too many requests' }, { status: 429, headers: { 'Retry-After': String(rl.retryAfter ?? 60) } });
+  }
+
   let body: { items: CartItem[] };
   try {
     body = await req.json() as { items: CartItem[] };

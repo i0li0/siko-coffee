@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import type { CSSProperties } from 'react';
 import {
-  BEANS, PRESETS, PRICE_PER_100G, MAX_BEANS, GRAM_OPTIONS, DEFAULT_GRAMS, calcPrice,
+  BEANS, PRESETS, PRICE_PER_100G, MAX_BEANS, GRAM_OPTIONS, calcPrice,
   singleRatios, evenSplit, activeBeans,
   tasteWord, normalizeRatios, normalizeSubset,
   findBlend,

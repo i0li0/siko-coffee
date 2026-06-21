@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { ScanCommand } from '@aws-sdk/lib-dynamodb';
+import { QueryCommand } from '@aws-sdk/lib-dynamodb';
 import { auth } from '@/lib/auth';
 import { getDocClient, TABLE } from '@/lib/db';
 import type { OrderRecord } from '@/types/admin';
@@ -16,18 +16,38 @@ export async function GET() {
   const userId = session.user.id;
   const email = session.user.email.toLowerCase();
 
-  const result = await getDocClient().send(new ScanCommand({
-    TableName: TABLE.ORDERS,
-    FilterExpression: '(#s <> :pending) AND (userId = :uid OR customerEmail = :email)',
-    ExpressionAttributeNames: { '#s': 'status' },
-    ExpressionAttributeValues: {
-      ':pending': 'pending',
-      ':uid': userId,
-      ':email': email,
-    },
-  }));
+  const db = getDocClient();
+  const [byUser, byEmail] = await Promise.all([
+    userId
+      ? db.send(new QueryCommand({
+          TableName: TABLE.ORDERS,
+          IndexName: 'userId-index',
+          KeyConditionExpression: 'userId = :uid',
+          FilterExpression: '#s <> :pending',
+          ExpressionAttributeNames: { '#s': 'status' },
+          ExpressionAttributeValues: { ':uid': userId, ':pending': 'pending' },
+        }))
+      : Promise.resolve({ Items: [] }),
+    db.send(new QueryCommand({
+      TableName: TABLE.ORDERS,
+      IndexName: 'customerEmail-index',
+      KeyConditionExpression: 'customerEmail = :email',
+      FilterExpression: '#s <> :pending',
+      ExpressionAttributeNames: { '#s': 'status' },
+      ExpressionAttributeValues: { ':email': email, ':pending': 'pending' },
+    })),
+  ]);
 
-  const orders = ((result.Items ?? []) as OrderRecord[])
+  const seen = new Set<string>();
+  const merged: OrderRecord[] = [];
+  for (const item of [...(byUser.Items ?? []), ...(byEmail.Items ?? [])] as OrderRecord[]) {
+    if (!seen.has(item.id)) {
+      seen.add(item.id);
+      merged.push(item);
+    }
+  }
+
+  const orders = (merged as OrderRecord[])
     .sort((a, b) => (b.createdAt ?? '').localeCompare(a.createdAt ?? ''))
     .map(o => ({
       id: o.id,

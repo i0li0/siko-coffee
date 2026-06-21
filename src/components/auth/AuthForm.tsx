@@ -1,5 +1,6 @@
 'use client'
 
+import Link from 'next/link'
 import { signIn } from 'next-auth/react'
 import { useRouter } from 'next/navigation'
 import { useState } from 'react'
@@ -169,9 +170,9 @@ export default function AuthForm({ mode }: Props) {
           marginTop: '24px',
         }}>
           {mode === 'login' ? (
-            <>アカウントをお持ちでない方は <a href="/register" style={{ color: 'var(--amber)', textDecoration: 'none' }}>新規登録</a></>
+            <>アカウントをお持ちでない方は <Link href="/register" style={{ color: 'var(--amber)', textDecoration: 'none' }}>新規登録</Link></>
           ) : (
-            <>アカウントをお持ちの方は <a href="/login" style={{ color: 'var(--amber)', textDecoration: 'none' }}>ログイン</a></>
+            <>アカウントをお持ちの方は <Link href="/login" style={{ color: 'var(--amber)', textDecoration: 'none' }}>ログイン</Link></>
           )}
         </p>
       </div>
