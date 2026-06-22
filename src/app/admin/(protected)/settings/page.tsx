@@ -1,8 +1,16 @@
 'use client'
 
 import { useState, useEffect } from 'react'
+import { startRegistration } from '@simplewebauthn/browser'
 
 type SetupState = 'loading' | 'idle' | 'scan' | 'verifying' | 'done'
+
+interface Passkey {
+  id: string
+  label: string
+  createdAt: number
+  lastUsedAt: number | null
+}
 
 export default function AdminSettingsPage() {
   const [state, setState] = useState<SetupState>('loading')
@@ -13,6 +21,12 @@ export default function AdminSettingsPage() {
   const [error, setError] = useState('')
   const [disabling, setDisabling] = useState(false)
 
+  // ===== パスキー (WebAuthn) =====
+  const [passkeys, setPasskeys] = useState<Passkey[]>([])
+  const [passkeySupported, setPasskeySupported] = useState(false)
+  const [registering, setRegistering] = useState(false)
+  const [passkeyError, setPasskeyError] = useState('')
+
   useEffect(() => {
     fetch('/api/admin/totp')
       .then(r => r.json())
@@ -22,6 +36,64 @@ export default function AdminSettingsPage() {
       })
       .catch(() => setState('idle'))
   }, [])
+
+  useEffect(() => {
+    // ブラウザの WebAuthn 対応可否を一度だけ検出する（クライアント機能検出）
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setPasskeySupported(typeof window !== 'undefined' && !!window.PublicKeyCredential)
+    loadPasskeys()
+  }, [])
+
+  async function loadPasskeys() {
+    try {
+      const res = await fetch('/api/admin/passkey')
+      if (res.ok) {
+        const data = await res.json()
+        setPasskeys(data.passkeys ?? [])
+      }
+    } catch {
+      // 一覧取得失敗は致命的でないため無視
+    }
+  }
+
+  async function registerPasskey() {
+    setPasskeyError('')
+    setRegistering(true)
+    try {
+      const optRes = await fetch('/api/admin/passkey/register')
+      if (!optRes.ok) {
+        setRegistering(false)
+        setPasskeyError('登録の準備に失敗しました')
+        return
+      }
+      const options = await optRes.json()
+      const attResponse = await startRegistration(options)
+
+      const label = window.prompt('このパスキーの名前（端末名など）', 'パスキー') ?? 'パスキー'
+
+      const verifyRes = await fetch('/api/admin/passkey/register', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ response: attResponse, label }),
+      })
+      setRegistering(false)
+      if (!verifyRes.ok) {
+        const data = await verifyRes.json().catch(() => ({}))
+        setPasskeyError(data.error ?? 'パスキーの登録に失敗しました')
+        return
+      }
+      await loadPasskeys()
+    } catch {
+      setRegistering(false)
+      setPasskeyError('パスキーの登録がキャンセルされました')
+    }
+  }
+
+  async function deletePasskey(id: string) {
+    if (!confirm('このパスキーを削除しますか？')) return
+    const res = await fetch(`/api/admin/passkey?id=${encodeURIComponent(id)}`, { method: 'DELETE' })
+    if (res.ok) await loadPasskeys()
+  }
 
   async function startSetup() {
     setState('loading')
@@ -214,6 +286,73 @@ export default function AdminSettingsPage() {
               戻る
             </button>
           </>
+        )}
+      </div>
+
+      <div style={{ ...cardStyle, marginTop: '24px' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+          <h2 style={{ fontSize: '14px', color: 'var(--cream)', letterSpacing: '0.08em', margin: 0 }}>
+            パスキー (WebAuthn)
+          </h2>
+          {passkeys.length > 0 && (
+            <span style={{ fontSize: '11px', color: '#4caf50', letterSpacing: '0.08em' }}>
+              {passkeys.length}件 登録済み
+            </span>
+          )}
+        </div>
+
+        <p style={{ fontSize: '13px', color: 'var(--dim)', lineHeight: 1.7, marginBottom: '24px' }}>
+          指紋・顔認証・端末のロック解除でログインできます。フィッシング耐性が高く、パスワードや認証コードなしでログインできます。
+        </p>
+
+        {!passkeySupported && (
+          <p style={{ fontSize: '13px', color: 'var(--admin-danger)', marginBottom: '16px' }}>
+            このブラウザはパスキーに対応していません。
+          </p>
+        )}
+
+        {passkeys.length > 0 && (
+          <ul style={{ listStyle: 'none', padding: 0, margin: '0 0 24px' }}>
+            {passkeys.map(pk => (
+              <li
+                key={pk.id}
+                style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  padding: '12px 0',
+                  borderBottom: '1px solid var(--admin-border)',
+                }}
+              >
+                <div>
+                  <div style={{ fontSize: '13px', color: 'var(--cream)' }}>🔑 {pk.label}</div>
+                  <div style={{ fontSize: '11px', color: 'var(--dim)', marginTop: '2px' }}>
+                    {new Date(pk.createdAt).toLocaleDateString('ja-JP')} 登録
+                    {' ・ '}
+                    {pk.lastUsedAt
+                      ? `最終使用 ${new Date(pk.lastUsedAt).toLocaleDateString('ja-JP')}`
+                      : '未使用'}
+                  </div>
+                </div>
+                <button
+                  onClick={() => deletePasskey(pk.id)}
+                  style={{ ...dangerBtnStyle, padding: '6px 14px', fontSize: '12px' }}
+                >
+                  削除
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+
+        {passkeySupported && (
+          <button onClick={registerPasskey} disabled={registering} style={btnStyle}>
+            {registering ? '登録中...' : 'パスキーを登録'}
+          </button>
+        )}
+
+        {passkeyError && (
+          <p style={{ fontSize: '13px', color: 'var(--admin-danger)', marginTop: '12px' }}>{passkeyError}</p>
         )}
       </div>
     </div>

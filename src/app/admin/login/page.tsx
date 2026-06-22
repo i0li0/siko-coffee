@@ -1,7 +1,8 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
+import { startAuthentication } from '@simplewebauthn/browser'
 
 type Step = 'password' | 'totp'
 
@@ -12,6 +13,47 @@ export default function AdminLoginPage() {
   const [totpCode, setTotpCode] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
+  const [passkeySupported, setPasskeySupported] = useState(false)
+  const [passkeyLoading, setPasskeyLoading] = useState(false)
+
+  useEffect(() => {
+    // ブラウザの WebAuthn 対応可否を一度だけ検出する（クライアント機能検出）
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setPasskeySupported(typeof window !== 'undefined' && !!window.PublicKeyCredential)
+  }, [])
+
+  async function handlePasskeyLogin() {
+    setError('')
+    setPasskeyLoading(true)
+    try {
+      const optRes = await fetch('/api/admin/passkey/login')
+      if (!optRes.ok) {
+        setPasskeyLoading(false)
+        setError(optRes.status === 404 ? 'パスキーが登録されていません' : 'パスキーの取得に失敗しました')
+        return
+      }
+      const options = await optRes.json()
+      const authResponse = await startAuthentication(options)
+
+      const verifyRes = await fetch('/api/admin/passkey/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ response: authResponse }),
+      })
+      setPasskeyLoading(false)
+
+      if (verifyRes.ok) {
+        router.push('/admin/dashboard')
+        return
+      }
+      const data = await verifyRes.json().catch(() => ({}))
+      setError(data.error ?? 'パスキー認証に失敗しました')
+    } catch {
+      // ユーザーがキャンセルした場合など
+      setPasskeyLoading(false)
+      setError('パスキー認証がキャンセルされました')
+    }
+  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -179,6 +221,34 @@ export default function AdminLoginPage() {
           >
             {loading ? '確認中...' : step === 'totp' ? '認証' : 'ログイン'}
           </button>
+
+          {step === 'password' && passkeySupported && (
+            <>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px', margin: '4px 0' }}>
+                <span style={{ flex: 1, height: '1px', background: 'var(--admin-border)' }} />
+                <span style={{ fontSize: '11px', color: 'var(--dim)', letterSpacing: '0.08em' }}>または</span>
+                <span style={{ flex: 1, height: '1px', background: 'var(--admin-border)' }} />
+              </div>
+              <button
+                type="button"
+                onClick={handlePasskeyLogin}
+                disabled={passkeyLoading}
+                style={{
+                  background: 'transparent',
+                  border: '1px solid var(--admin-border)',
+                  borderRadius: '6px',
+                  padding: '12px',
+                  color: 'var(--cream)',
+                  fontSize: '13px',
+                  fontFamily: 'var(--font-sans)',
+                  letterSpacing: '0.10em',
+                  cursor: passkeyLoading ? 'not-allowed' : 'pointer',
+                }}
+              >
+                {passkeyLoading ? '認証中...' : '🔑 パスキーでログイン'}
+              </button>
+            </>
+          )}
         </form>
       </div>
     </div>

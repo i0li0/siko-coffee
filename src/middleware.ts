@@ -4,6 +4,8 @@ import { verifySessionToken } from '@/lib/adminSession'
 function needsAdminSession(pathname: string): boolean {
   if (pathname === '/admin/login') return false
   if (pathname.startsWith('/api/admin/auth')) return false
+  // パスキーログインは未ログインで叩く必要がある（認証成功時にセッションを発行する）。
+  if (pathname.startsWith('/api/admin/passkey/login')) return false
   return pathname.startsWith('/admin') || pathname.startsWith('/api/admin')
 }
 
