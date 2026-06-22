@@ -6,13 +6,13 @@ test.describe('Admin ログインフロー', () => {
 
     await expect(page.getByText('Sikō Coffee')).toBeVisible();
     await expect(page.getByPlaceholder('パスワード')).toBeVisible();
-    await expect(page.getByRole('button', { name: 'ログイン' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'ログイン', exact: true })).toBeVisible();
   });
 
   test('空パスワードでログインボタンが無効', async ({ page }) => {
     await page.goto('/admin/login');
 
-    const loginBtn = page.getByRole('button', { name: 'ログイン' });
+    const loginBtn = page.getByRole('button', { name: 'ログイン', exact: true });
     await expect(loginBtn).toBeDisabled();
   });
 
@@ -20,7 +20,7 @@ test.describe('Admin ログインフロー', () => {
     await page.goto('/admin/login');
 
     await page.getByPlaceholder('パスワード').fill('testpassword');
-    const loginBtn = page.getByRole('button', { name: 'ログイン' });
+    const loginBtn = page.getByRole('button', { name: 'ログイン', exact: true });
     await expect(loginBtn).toBeEnabled();
   });
 
@@ -28,7 +28,7 @@ test.describe('Admin ログインフロー', () => {
     await page.goto('/admin/login');
 
     await page.getByPlaceholder('パスワード').fill('wrongpassword');
-    await page.getByRole('button', { name: 'ログイン' }).click();
+    await page.getByRole('button', { name: 'ログイン', exact: true }).click();
 
     // エラーメッセージが表示される（レート制限 or 認証失敗）
     await expect(
