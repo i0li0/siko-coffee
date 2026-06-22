@@ -7,6 +7,8 @@ vi.mock('@/lib/adminRateLimit', () => ({
   checkRateLimit: vi.fn(),
   recordFailure: vi.fn(),
   resetFailures: vi.fn(),
+  checkGlobalRateLimit: vi.fn(),
+  recordGlobalFailure: vi.fn(),
 }))
 vi.mock('@/lib/adminSession', () => ({
   createSessionToken: vi.fn(),
@@ -14,6 +16,8 @@ vi.mock('@/lib/adminSession', () => ({
 }))
 vi.mock('@/lib/adminTotp', () => ({
   getTotpSecret: vi.fn(),
+  getLastUsedTotpStep: vi.fn(),
+  setLastUsedTotpStep: vi.fn(),
 }))
 vi.mock('otplib', () => ({
   verifySync: vi.fn(),
@@ -24,9 +28,15 @@ vi.mock('@sentry/nextjs', () => ({
 
 import { POST, DELETE } from '@/app/api/admin/auth/route'
 import { checkAdminPassword } from '@/lib/adminPassword'
-import { checkRateLimit, recordFailure, resetFailures } from '@/lib/adminRateLimit'
+import {
+  checkRateLimit,
+  recordFailure,
+  resetFailures,
+  checkGlobalRateLimit,
+  recordGlobalFailure,
+} from '@/lib/adminRateLimit'
 import { createSessionToken, revokeSession } from '@/lib/adminSession'
-import { getTotpSecret } from '@/lib/adminTotp'
+import { getTotpSecret, getLastUsedTotpStep, setLastUsedTotpStep } from '@/lib/adminTotp'
 import { verifySync } from 'otplib'
 import { NextRequest } from 'next/server'
 
@@ -50,8 +60,12 @@ function makeDeleteRequest(cookie?: string): NextRequest {
 beforeEach(() => {
   vi.clearAllMocks()
   vi.mocked(checkRateLimit).mockResolvedValue({ allowed: true })
+  vi.mocked(checkGlobalRateLimit).mockResolvedValue({ allowed: true })
   vi.mocked(getTotpSecret).mockResolvedValue(null)
+  vi.mocked(getLastUsedTotpStep).mockResolvedValue(null)
+  vi.mocked(setLastUsedTotpStep).mockResolvedValue(undefined)
   vi.mocked(recordFailure).mockResolvedValue(undefined)
+  vi.mocked(recordGlobalFailure).mockResolvedValue(undefined)
   vi.mocked(resetFailures).mockResolvedValue(undefined)
   vi.mocked(revokeSession).mockResolvedValue(undefined)
 })
@@ -110,6 +124,53 @@ describe('POST /api/admin/auth', () => {
     const res = await POST(makeRequest({ password: 'correct', totpCode: '123456' }))
     expect(res.status).toBe(200)
     expect(resetFailures).toHaveBeenCalled()
+  })
+
+  it('グローバルレート制限超過で 429（パスワード検証前に弾く）', async () => {
+    vi.mocked(checkGlobalRateLimit).mockResolvedValue({ allowed: false, retryAfter: 900 })
+    const res = await POST(makeRequest({ password: 'x' }))
+    expect(res.status).toBe(429)
+    expect(res.headers.get('Retry-After')).toBe('900')
+    expect(checkAdminPassword).not.toHaveBeenCalled()
+  })
+
+  it('パスワード失敗でグローバルカウンタも加算', async () => {
+    vi.mocked(checkAdminPassword).mockReturnValue(false)
+    const res = await POST(makeRequest({ password: 'wrong' }))
+    expect(res.status).toBe(401)
+    expect(recordGlobalFailure).toHaveBeenCalled()
+  })
+
+  it('ADMIN_TOTP_REQUIRED=true かつ TOTP 未設定で 503（パスワードのみ拒否）', async () => {
+    vi.stubEnv('ADMIN_TOTP_REQUIRED', 'true')
+    vi.mocked(checkAdminPassword).mockReturnValue(true)
+    vi.mocked(getTotpSecret).mockResolvedValue(null)
+    const res = await POST(makeRequest({ password: 'correct' }))
+    expect(res.status).toBe(503)
+    expect(createSessionToken).not.toHaveBeenCalled()
+    vi.unstubAllEnvs()
+  })
+
+  it('TOTP リプレイ（同一 step 再利用）で 401', async () => {
+    vi.mocked(checkAdminPassword).mockReturnValue(true)
+    vi.mocked(getTotpSecret).mockResolvedValue('JBSWY3DPEHPK3PXP')
+    vi.mocked(verifySync).mockReturnValue({ valid: true, timeStep: 100 } as ReturnType<typeof verifySync>)
+    vi.mocked(getLastUsedTotpStep).mockResolvedValue(100)
+    const res = await POST(makeRequest({ password: 'correct', totpCode: '123456' }))
+    expect(res.status).toBe(401)
+    expect(recordFailure).toHaveBeenCalled()
+    expect(createSessionToken).not.toHaveBeenCalled()
+  })
+
+  it('TOTP 正解（新しい step）で受理し step を保存', async () => {
+    vi.mocked(checkAdminPassword).mockReturnValue(true)
+    vi.mocked(getTotpSecret).mockResolvedValue('JBSWY3DPEHPK3PXP')
+    vi.mocked(verifySync).mockReturnValue({ valid: true, timeStep: 101 } as ReturnType<typeof verifySync>)
+    vi.mocked(getLastUsedTotpStep).mockResolvedValue(100)
+    vi.mocked(createSessionToken).mockResolvedValue('tok')
+    const res = await POST(makeRequest({ password: 'correct', totpCode: '123456' }))
+    expect(res.status).toBe(200)
+    expect(setLastUsedTotpStep).toHaveBeenCalledWith(101)
   })
 })
 
