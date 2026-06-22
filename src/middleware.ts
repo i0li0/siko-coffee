@@ -12,11 +12,17 @@ export async function middleware(request: NextRequest) {
 
   if (pathname.startsWith('/api/admin')) {
     const origin = request.headers.get('origin')
-    if (origin) {
-      const allowed = new URL(request.url).origin
-      if (origin !== allowed) {
+    const allowed = new URL(request.url).origin
+    // 状態変更系メソッドは origin 必須・一致を強制（CSRF 対策）。
+    // モダンブラウザは同一オリジンの fetch でも unsafe メソッドに Origin を付与するため、
+    // origin 欠落＝非ブラウザ/詐称とみなして拒否する。
+    const isMutation = !['GET', 'HEAD', 'OPTIONS'].includes(request.method)
+    if (isMutation) {
+      if (!origin || origin !== allowed) {
         return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
       }
+    } else if (origin && origin !== allowed) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
   }
 
