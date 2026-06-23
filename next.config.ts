@@ -23,6 +23,11 @@ function repoRoot(): string {
 // 'unsafe-inline' は静的プリレンダ済みページのインラインスクリプト用に維持する。
 // （nonce で完全排除するには全ページを動的レンダリングする必要があり、トレードオフが大きい）
 // 開発時のみ HMR / React Refresh のため eval とインラインを許可する。
+//
+// 【意思決定: 2026-06-23】script-src の 'unsafe-inline' は意識的に維持する（追認）。
+// 公開ページは静的配信でユーザー生成HTMLの描画箇所が無く実務XSSリスクが低い一方、
+// nonce化は動的レンダリング必須でCDN配信の速度・コスト・運用を失うため不採用。
+// 調査と将来nonce化する場合の手順は docs/csp-nonce-migration-plan.md を参照。
 const isProd = process.env.NODE_ENV === 'production';
 const scriptSrc = isProd
   ? "script-src 'self' 'unsafe-inline' https://www.googletagmanager.com https://www.google-analytics.com"

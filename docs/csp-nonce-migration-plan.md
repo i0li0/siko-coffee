@@ -2,6 +2,13 @@
 
 作成日: 2026-06-23 / 対象: `script-src` の `'unsafe-inline'` 排除（セキュリティ監査 #4）
 
+## 決定（2026-06-23・オーナー承認）
+**Option C を採用＝`script-src 'unsafe-inline'` は意識的に維持する（追認）。**
+公開ページは静的配信で XSS 注入点が現状無く実務リスクが低い一方、nonce 化（Option A）は
+全公開ページの動的化を伴い、CDN 配信の速度・Hobby プランの Function コスト・継続運用を失うため。
+本ドキュメントは「将来 nonce 化が必要になった場合の実装プラン」として保管する。
+再検討のトリガー: 公開面でユーザー入力を HTML として描画する機能が増えたとき。
+
 ## 背景・目的
 - MDN HTTP Observatory で唯一の減点源（−20, B+）が CSP の `script-src 'unsafe-inline'`。Snyk も同点を警告。
 - `'unsafe-inline'` があると XSS 時にインラインスクリプト注入を CSP で防げず、CSP の XSS 防御効果がほぼ無効。
