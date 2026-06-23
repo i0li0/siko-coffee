@@ -86,6 +86,20 @@ const nextConfig: NextConfig = {
       },
     ];
   },
+  // apex(sikocoffee.com) → www への正規化リダイレクト。
+  // Vercel のエッジ「リダイレクトドメイン」は HSTS に includeSubDomains/preload を付けず、
+  // headers() も通らないため HSTS preload 登録ができない。apex を「配信ドメイン」に変更し
+  // ここでリダイレクトすることで、上の securityHeaders（完全な HSTS）がリダイレクト応答にも適用される。
+  async redirects() {
+    return [
+      {
+        source: '/:path*',
+        has: [{ type: 'host', value: 'sikocoffee.com' }],
+        destination: 'https://www.sikocoffee.com/:path*',
+        permanent: true,
+      },
+    ];
+  },
 };
 
 export default withSentryConfig(nextConfig, {
