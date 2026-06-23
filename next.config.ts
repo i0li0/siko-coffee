@@ -86,15 +86,25 @@ const nextConfig: NextConfig = {
       },
     ];
   },
-  // apex(sikocoffee.com) → www への正規化リダイレクト。
+  // www(canonical) 以外のホストを www へ正規化するリダイレクト。
   // Vercel のエッジ「リダイレクトドメイン」は HSTS に includeSubDomains/preload を付けず、
-  // headers() も通らないため HSTS preload 登録ができない。apex を「配信ドメイン」に変更し
-  // ここでリダイレクトすることで、上の securityHeaders（完全な HSTS）がリダイレクト応答にも適用される。
+  // headers() も通らない。各ホストを「配信ドメイン」に変更しここでリダイレクトすることで、
+  // 上の securityHeaders（完全な HSTS）がリダイレクト応答にも適用され、
+  // かつドメイン正規化の設定をコード一箇所に集約できる。
+  // - apex(sikocoffee.com): HSTS preload 要件を満たすため必須。
+  // - siko-coffee.vercel.app: 検索エンジンへの重複インデックスを防止。
+  // host は完全一致のため、デプロイ毎の一意URL(<hash>.vercel.app)には影響しない。
   async redirects() {
     return [
       {
         source: '/:path*',
         has: [{ type: 'host', value: 'sikocoffee.com' }],
+        destination: 'https://www.sikocoffee.com/:path*',
+        permanent: true,
+      },
+      {
+        source: '/:path*',
+        has: [{ type: 'host', value: 'siko-coffee.vercel.app' }],
         destination: 'https://www.sikocoffee.com/:path*',
         permanent: true,
       },
