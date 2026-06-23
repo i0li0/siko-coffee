@@ -5,6 +5,7 @@ import { DynamoDBClient } from '@aws-sdk/client-dynamodb'
 import { TABLE } from '@/lib/db'
 import { sendVerificationEmail } from '@/lib/verification-email'
 import { checkGeneralRateLimit, getClientIp } from '@/lib/rateLimit'
+import { checkPassword } from '@/lib/passwordPolicy'
 import { notifySlack } from '@/lib/slackNotify'
 
 const client = DynamoDBDocumentClient.from(
@@ -38,11 +39,17 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: '有効なメールアドレスを入力してください' }, { status: 400 })
   }
 
-  if (typeof password !== 'string' || password.length < 8 || password.length > 72) {
+  if (typeof password !== 'string') {
     return NextResponse.json({ error: 'パスワードは8〜72文字で入力してください' }, { status: 400 })
   }
 
   const normalizedEmail = email.toLowerCase().trim()
+
+  // 強度＋流出チェック（共通ポリシー）。メール・名前との類似も拒否する。
+  const pw = await checkPassword(password, { email: normalizedEmail, name: typeof name === 'string' ? name : null })
+  if (!pw.ok) {
+    return NextResponse.json({ error: pw.error }, { status: 400 })
+  }
 
   const existing = await client.send(
     new QueryCommand({
