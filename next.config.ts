@@ -67,6 +67,8 @@ const securityHeaders = [
 ];
 
 const nextConfig: NextConfig = {
+  // X-Powered-By: Next.js の情報開示を抑止する（フレームワーク露出を避ける）。
+  poweredByHeader: false,
   turbopack: {
     root: repoRoot(),
   },
