@@ -153,12 +153,16 @@ export function deliveredNotice(ctx: {
     `注文番号: ${shortId(ctx.orderId)}`,
     ctx.orderUrl ? `\nご注文内容の確認: ${ctx.orderUrl}` : '',
     '',
+    'よろしければ、ご感想をお聞かせください（匿名・お名前やメールアドレスは収集しません）:',
+    'https://www.sikocoffee.com/feedback?from=order',
+    '',
     `${SITE_NAME}`,
   ].filter((l) => l !== undefined).join('\n')
 
   const bodyHtml = `<p>${name} 様</p>
 <p>ご注文の商品をお届けしました。お楽しみいただけましたら幸いです。<br/>またのご利用を、心よりお待ちしております。</p>
-<p style="color:#888;font-size:13px">注文番号 ${shortId(ctx.orderId)}</p>`
+<p style="color:#888;font-size:13px">注文番号 ${shortId(ctx.orderId)}</p>
+<p style="margin-top:20px;font-size:13px;color:#555">よろしければ、ご感想をお聞かせください。<br/><a href="https://www.sikocoffee.com/feedback?from=order" style="color:#222">ご意見・ご感想を送る（匿名）</a></p>`
 
   return { subject, text, html: wrapHtml('商品をお届けしました', bodyHtml, ctx.orderUrl) }
 }
