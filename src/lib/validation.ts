@@ -1,4 +1,16 @@
 import { z } from 'zod';
+import { FEEDBACK_CATEGORIES, FEEDBACK_CONTENT_MAX } from '@/lib/feedback';
+
+// --- Feedback (public, anonymous) ---
+
+export const feedbackSchema = z.object({
+  content: z.string().trim().min(1).max(FEEDBACK_CONTENT_MAX),
+  category: z.enum(FEEDBACK_CATEGORIES).optional().default('opinion'),
+  from: z.string().max(40).optional(),
+  // ハニーポット: bot が埋めがちな隠しフィールド。値の有無はルート側で判定し、
+  // bot には成功を装って静かに破棄する（検出を悟らせない）。
+  website: z.string().max(200).optional(),
+});
 
 // --- Checkout (blend) ---
 

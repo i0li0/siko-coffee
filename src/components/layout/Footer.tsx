@@ -32,6 +32,11 @@ export default function Footer() {
         </span>
       </div>
       <div className="flex justify-center gap-6 pb-6 min-[700px]:pb-8">
+        <Link href="/feedback?from=footer"
+          className="text-[10px] tracking-[0.14em] hover:opacity-70 transition-opacity"
+          style={{ color: 'var(--dim)' }}>
+          ご意見・ご感想
+        </Link>
         <Link href="/legal/tokushoho"
           className="text-[10px] tracking-[0.14em] hover:opacity-70 transition-opacity"
           style={{ color: 'var(--dim)' }}>
