@@ -1,4 +1,6 @@
 import type { Product } from '@/types/product';
+import DecryptedText from '@/components/reactbits/DecryptedText';
+import CountUp from '@/components/reactbits/CountUp';
 
 interface Props {
   items: Product[];
@@ -33,7 +35,16 @@ export default function Menu({ items }: Props) {
           data-reveal
         >
           <span style={{ color: 'var(--amber)' }}>{'>'}</span>
-          {' '}ls -la drinks/
+          {' '}
+          <DecryptedText
+            text="ls -la drinks/"
+            animateOn="view"
+            sequential
+            revealDirection="start"
+            speed={32}
+            useOriginalCharsOnly
+            parentClassName="inline-block"
+          />
         </div>
 
         {items.map((item, i) => (
@@ -75,7 +86,7 @@ export default function Menu({ items }: Props) {
                 text-right whitespace-nowrap"
               style={{ color: 'var(--amber2)' }}
             >
-              ¥{item.price.toLocaleString()}
+              ¥<CountUp to={item.price} separator="," duration={1.2} />
             </span>
           </div>
         ))}

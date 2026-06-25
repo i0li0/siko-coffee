@@ -15,10 +15,8 @@ import { useScrollAnimations } from '@/lib/useScrollAnimations';
 import type { InstagramPost } from '@/lib/instagram';
 import type { Product } from '@/types/product';
 
-const StarsCanvas    = dynamic(() => import('@/components/canvas/StarsCanvas'),     { ssr: false });
-const SmokeField     = dynamic(() => import('@/components/SmokeField'),              { ssr: false });
-const SmokeCanvas    = dynamic(() => import('@/components/canvas/SmokeCanvas'),     { ssr: false });
-const TerminalLoader = dynamic(() => import('@/components/canvas/TerminalLoader'),  { ssr: false });
+const FaultyTerminalBg = dynamic(() => import('@/components/canvas/FaultyTerminalBg'), { ssr: false });
+const TerminalLoader   = dynamic(() => import('@/components/canvas/TerminalLoader'),   { ssr: false });
 
 interface Props {
   instagramPosts: InstagramPost[];
@@ -50,10 +48,8 @@ export default function HomeClient({ instagramPosts, menuItems }: Props) {
 
   return (
     <>
-      <StarsCanvas />
-      {/* SmokeCanvas/SmokeField はローダー完了後にレンダー — ローダー中の並走JS評価を抑制 */}
-      {opened === true && <SmokeField />}
-      {opened === true && <SmokeCanvas />}
+      {/* ReactBits Faulty Terminal 背景 — ローダー完了後にマウント（pageLoadAnimation がフェードイン演出） */}
+      {opened === true && <FaultyTerminalBg />}
 
       {opened === false && (
         <TerminalLoader key={replay ? 'replay' : 'init'} onFinish={handleFinish} replay={replay} />
