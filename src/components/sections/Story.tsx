@@ -1,3 +1,5 @@
+import DecryptedText from '@/components/reactbits/DecryptedText';
+
 export default function Story() {
   const words = [
     { kanji: '思考', size: 'clamp(50px,8.5vw,82px)', opacity: 1,    kana: 'しこう', en: 'Thinking'  },
@@ -22,7 +24,16 @@ export default function Story() {
         data-reveal
       >
         <span style={{ color: 'var(--amber)' }}>{'>'}</span>
-        {' '}cat philosophy.md
+        {' '}
+        <DecryptedText
+          text="cat philosophy.md"
+          animateOn="view"
+          sequential
+          revealDirection="start"
+          speed={32}
+          useOriginalCharsOnly
+          parentClassName="inline-block"
+        />
       </div>
 
       <div className="story-words flex gap-[52px] flex-wrap justify-center items-end

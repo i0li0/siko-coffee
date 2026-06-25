@@ -1,3 +1,5 @@
+import DecryptedText from '@/components/reactbits/DecryptedText';
+
 export default function Hero() {
   return (
     <section
@@ -23,7 +25,15 @@ export default function Hero() {
           lang="en"
           data-reveal
         >
-          Somewhere beyond the darkness, there is light.
+          <DecryptedText
+            text="Somewhere beyond the darkness, there is light."
+            animateOn="view"
+            sequential
+            revealDirection="start"
+            speed={28}
+            useOriginalCharsOnly
+            parentClassName="inline-block"
+          />
         </span>
 
         <a
