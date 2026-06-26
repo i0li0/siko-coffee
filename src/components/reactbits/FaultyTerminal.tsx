@@ -25,6 +25,12 @@ export interface FaultyTerminalProps extends React.HTMLAttributes<HTMLDivElement
   dpr?: number;
   pageLoadAnimation?: boolean;
   brightness?: number;
+  /** 描画FPSの上限。0=制限なし（モニタのリフレッシュレート）。背景は低速なので30で十分軽い */
+  targetFps?: number;
+  /** フレームタイム監視で重い端末は自動的にdprを段階的に下げる */
+  adaptiveQuality?: boolean;
+  /** 自動降格時のdpr下限 */
+  minDpr?: number;
 }
 
 const vertexShader = `
@@ -263,6 +269,9 @@ export default function FaultyTerminal({
   dpr = Math.min(window.devicePixelRatio || 1, 2),
   pageLoadAnimation = true,
   brightness = 1,
+  targetFps = 0,
+  adaptiveQuality = true,
+  minDpr = 1,
   className,
   style,
   ...rest
@@ -276,6 +285,13 @@ export default function FaultyTerminal({
   const rafRef = useRef<number>(0);
   const loadAnimationStartRef = useRef<number>(0);
   const timeOffsetRef = useRef<number>(0);
+  // 描画スロットル / 可視性 / 自動降格 用
+  const lastRenderRef = useRef<number>(0);
+  const hiddenRef = useRef<boolean>(false);
+  const pausedDrawnRef = useRef<boolean>(false);
+  const wdStepRef = useRef<number>(0);
+  const wdSamplesRef = useRef<number>(0);
+  const wdAccumRef = useRef<number>(0);
 
   const tintVec = useMemo(() => hexToRgb(tint), [tint]);
 
@@ -297,7 +313,18 @@ export default function FaultyTerminal({
     // 乱数初期化は描画純粋性のため effect 内で（render 中の Math.random を回避）
     if (timeOffsetRef.current === 0) timeOffsetRef.current = Math.random() * 100;
 
-    const renderer = new Renderer({ dpr });
+    // 自動降格の状態をリセット
+    lastRenderRef.current = 0;
+    pausedDrawnRef.current = false;
+    wdStepRef.current = 0;
+    wdSamplesRef.current = 0;
+    wdAccumRef.current = 0;
+
+    const baseDpr = dpr;
+    // 段階的に下げる dpr 係数（1.0 → … → minDpr/baseDpr）
+    const dprSteps = [1, 0.8, 0.65, Math.max(minDpr / baseDpr, 0.4)];
+
+    const renderer = new Renderer({ dpr: baseDpr });
     rendererRef.current = renderer;
     const gl = renderer.gl;
     gl.clearColor(0, 0, 0, 1);
@@ -352,12 +379,50 @@ export default function FaultyTerminal({
     resizeObserver.observe(ctn);
     resize();
 
+    // 重い端末向け: フレームタイムが予算を超え続けたら dpr を一段下げる
+    function downgradeDpr() {
+      if (wdStepRef.current >= dprSteps.length - 1) return;
+      wdStepRef.current += 1;
+      renderer.dpr = baseDpr * dprSteps[wdStepRef.current];
+      resize();
+    }
+
+    const frameInterval = targetFps > 0 ? 1000 / targetFps : 0;
+
     const update = (t: number) => {
       rafRef.current = requestAnimationFrame(update);
+
+      // タブ非表示中はGPU描画を止める（RAF自体もブラウザが間引く）
+      if (hiddenRef.current) return;
 
       if (pageLoadAnimation && loadAnimationStartRef.current === 0) {
         loadAnimationStartRef.current = t;
       }
+
+      // pause(reduced-motion)時は静止フレームを1回だけ描いて以降スキップ
+      const pageLoadDone =
+        !pageLoadAnimation ||
+        (loadAnimationStartRef.current > 0 && t - loadAnimationStartRef.current >= 2000);
+      if (pause && pausedDrawnRef.current && pageLoadDone) return;
+
+      // FPSスロットル（アニメ中のみ。pause/初回は即描画）
+      if (!pause && frameInterval > 0 && lastRenderRef.current > 0) {
+        if (t - lastRenderRef.current < frameInterval) return;
+      }
+
+      // 自動降格: 実際の描画間隔を監視
+      if (adaptiveQuality && !pause && lastRenderRef.current > 0) {
+        wdAccumRef.current += t - lastRenderRef.current;
+        wdSamplesRef.current += 1;
+        if (wdSamplesRef.current >= 90) {
+          const avg = wdAccumRef.current / wdSamplesRef.current;
+          const budget = frameInterval > 0 ? frameInterval * 1.35 : 22;
+          if (avg > budget) downgradeDpr();
+          wdSamplesRef.current = 0;
+          wdAccumRef.current = 0;
+        }
+      }
+      lastRenderRef.current = t;
 
       if (!pause) {
         const elapsed = (t * 0.001 + timeOffsetRef.current) * timeScale;
@@ -365,6 +430,7 @@ export default function FaultyTerminal({
         frozenTimeRef.current = elapsed;
       } else {
         program.uniforms.iTime.value = frozenTimeRef.current;
+        pausedDrawnRef.current = true;
       }
 
       if (pageLoadAnimation && loadAnimationStartRef.current > 0) {
@@ -391,11 +457,22 @@ export default function FaultyTerminal({
     rafRef.current = requestAnimationFrame(update);
     ctn.appendChild(gl.canvas);
 
+    const onVisibility = () => {
+      hiddenRef.current = document.hidden;
+      // 復帰時はスロットル基準とpause描画フラグをリセットして即時1フレーム描く
+      if (!document.hidden) {
+        lastRenderRef.current = 0;
+        pausedDrawnRef.current = false;
+      }
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+
     if (mouseReact) ctn.addEventListener('mousemove', handleMouseMove);
 
     return () => {
       cancelAnimationFrame(rafRef.current);
       resizeObserver.disconnect();
+      document.removeEventListener('visibilitychange', onVisibility);
       if (mouseReact) ctn.removeEventListener('mousemove', handleMouseMove);
       if (gl.canvas.parentElement === ctn) ctn.removeChild(gl.canvas);
       gl.getExtension('WEBGL_lose_context')?.loseContext();
@@ -421,6 +498,9 @@ export default function FaultyTerminal({
     mouseStrength,
     pageLoadAnimation,
     brightness,
+    targetFps,
+    adaptiveQuality,
+    minDpr,
     handleMouseMove
   ]);
 

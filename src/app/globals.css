@@ -115,6 +115,28 @@ main {
   z-index: 1;
 }
 
+/* ── 可読性スクリム ──
+   背景演出(FaultyTerminal)は維持しつつ、各セクションのテキスト裏にだけ
+   柔らかい暗幕を敷いて文字のコントラストを確保する。
+   ::before は z-index:-1 でセクション内コンテンツの背後・固定背景の手前に入る。
+   Hero は専用ビネット(FaultyTerminalBg)で処理済みのため除外。 */
+main > section:not(#hero) {
+  isolation: isolate;
+}
+main > section:not(#hero)::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background: radial-gradient(
+    ellipse 78% 62% at 50% 50%,
+    rgba(8, 6, 1, 0.55) 0%,
+    rgba(8, 6, 1, 0.34) 46%,
+    transparent 82%
+  );
+}
+
 footer { background: linear-gradient(to bottom, #080600, #050400); }
 
 /* ── Scroll reveals ── */
