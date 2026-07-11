@@ -5,6 +5,8 @@ import Image from 'next/image'
 import { signOut } from 'next-auth/react'
 import { useState, useEffect, useRef } from 'react'
 import { PRESET_AVATARS, getPresetSvg } from '@/lib/avatars'
+import Nav from '@/components/layout/Nav'
+import Footer from '@/components/layout/Footer'
 
 interface OrderItem {
   name: string
@@ -188,6 +190,8 @@ export default function AccountClient({ user, emailVerified, initialAvatarPreset
   }
 
   return (
+    <>
+    <Nav visible logoHref="/" />
     <div style={{
       minHeight: '100vh',
       background: 'var(--bg)',
@@ -195,7 +199,7 @@ export default function AccountClient({ user, emailVerified, initialAvatarPreset
       flexDirection: 'column' as const,
       alignItems: 'center',
       padding: '24px',
-      paddingTop: '80px',
+      paddingTop: '140px',
     }}>
       {/* プロフィールカード */}
       <div style={{ ...cardStyle, padding: '48px 40px' }}>
@@ -397,15 +401,6 @@ export default function AccountClient({ user, emailVerified, initialAvatarPreset
         >
           ログアウト
         </button>
-
-        <p style={{
-          fontSize: '12px',
-          color: 'var(--dim)',
-          textAlign: 'center',
-          marginTop: '24px',
-        }}>
-          <Link href="/" style={{ color: 'var(--amber)', textDecoration: 'none' }}>← トップに戻る</Link>
-        </p>
       </div>
 
       {/* 注文履歴 */}
@@ -523,6 +518,8 @@ export default function AccountClient({ user, emailVerified, initialAvatarPreset
         )}
       </div>
     </div>
+    <Footer />
+    </>
   )
 }
 

@@ -4,6 +4,8 @@ import Link from 'next/link'
 import { signIn } from 'next-auth/react'
 import { useRouter } from 'next/navigation'
 import { useState } from 'react'
+import Nav from '@/components/layout/Nav'
+import Footer from '@/components/layout/Footer'
 
 interface Props {
   mode: 'login' | 'register'
@@ -128,6 +130,8 @@ export default function AuthForm({ mode, oauthError }: Props) {
   }
 
   return (
+    <>
+    <Nav visible logoHref="/" />
     <div style={{
       minHeight: '100vh',
       background: 'var(--bg)',
@@ -135,6 +139,7 @@ export default function AuthForm({ mode, oauthError }: Props) {
       alignItems: 'center',
       justifyContent: 'center',
       padding: '24px',
+      paddingTop: '140px',
     }}>
       <div style={{
         width: '100%',
@@ -369,5 +374,7 @@ export default function AuthForm({ mode, oauthError }: Props) {
         )}
       </div>
     </div>
+    <Footer />
+    </>
   )
 }

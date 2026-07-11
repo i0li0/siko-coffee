@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
+import UserMenu from '@/components/auth/UserMenu';
 import {
   BEANS, COMMUNITY, evenSplit, activeBeans, singleRatios, DEFAULT_GRAMS,
 } from './data';
@@ -32,6 +33,9 @@ function ShopHeader({ route, nav, cartCount }: { route: Route; nav: NavFn; cartC
     <header className="ss-header">
       <a href="#ss-main" className="ss-skip-link">メインコンテンツへ</a>
       <div className="ss-header-in">
+        <Link href="/" aria-label="Sikō Coffee サイトトップへ" style={{ display: 'flex', alignItems: 'center', color: 'var(--ss-dim)', textDecoration: 'none', fontSize: 15, marginRight: 2 }}>
+          ←
+        </Link>
         <button style={{ display: 'flex', alignItems: 'baseline', gap: 9, cursor: 'pointer', background: 'none', border: 'none', padding: 0 }} onClick={() => nav('top')} aria-label="Sikō Coffee ショップトップへ">
           <span className="ss-serif" style={{ fontSize: 21, letterSpacing: '0.16em', color: 'var(--ss-cream)' }}>Sikō</span>
           <span className="ss-eyebrow" style={{ fontSize: 9 }}>shop</span>
@@ -41,17 +45,20 @@ function ShopHeader({ route, nav, cartCount }: { route: Route; nav: NavFn; cartC
           <button className={`ss-nav-link${route.name === 'quiz' ? ' is-on' : ''}`} onClick={() => nav('quiz')} aria-current={route.name === 'quiz' ? 'page' : undefined}>好み診断</button>
           <button className={`ss-nav-link${route.name === 'mypage' ? ' is-on' : ''}`} onClick={() => nav('mypage')} aria-current={route.name === 'mypage' ? 'page' : undefined}>マイページ</button>
         </nav>
-        <button onClick={() => nav('cart')} aria-label={`カート${cartCount > 0 ? ` (${cartCount}点)` : ''}`} style={{ marginLeft: 'auto', position: 'relative', width: 44, height: 44, borderRadius: 10, border: '1px solid rgba(200,169,110,0.35)', background: 'transparent', cursor: 'pointer', color: 'var(--ss-gold)', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'background 0.2s' }}>
-          <CartIcon />
-          {cartCount > 0 && (
-            <span aria-hidden="true" style={{ position: 'absolute', top: -7, right: -7, minWidth: 18, height: 18, borderRadius: 9, background: 'var(--ss-gold)', color: '#14100a', fontSize: 10.5, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 4px' }}>
-              {cartCount}
+        <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 16, ['--amber' as string]: 'var(--ss-gold)' }}>
+          <UserMenu />
+          <button onClick={() => nav('cart')} aria-label={`カート${cartCount > 0 ? ` (${cartCount}点)` : ''}`} style={{ position: 'relative', width: 44, height: 44, borderRadius: 10, border: '1px solid rgba(200,169,110,0.35)', background: 'transparent', cursor: 'pointer', color: 'var(--ss-gold)', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'background 0.2s' }}>
+            <CartIcon />
+            {cartCount > 0 && (
+              <span aria-hidden="true" style={{ position: 'absolute', top: -7, right: -7, minWidth: 18, height: 18, borderRadius: 9, background: 'var(--ss-gold)', color: '#14100a', fontSize: 10.5, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 4px' }}>
+                {cartCount}
+              </span>
+            )}
+            <span className="sr-only" aria-live="polite" aria-atomic="true">
+              {cartCount > 0 ? `カートに${cartCount}点` : 'カートは空です'}
             </span>
-          )}
-          <span className="sr-only" aria-live="polite" aria-atomic="true">
-            {cartCount > 0 ? `カートに${cartCount}点` : 'カートは空です'}
-          </span>
-        </button>
+          </button>
+        </div>
       </div>
     </header>
   );
@@ -218,6 +225,7 @@ export default function ShopApp() {
       </main>
       <footer style={{ borderTop: '1px solid var(--ss-hair)', padding: '26px 22px', textAlign: 'center', display: 'flex', gap: 18, justifyContent: 'center', alignItems: 'center', flexWrap: 'wrap' }}>
         <span className="ss-eyebrow" style={{ fontSize: 9 }}>Sikō Coffee — Online Shop</span>
+        <Link href="/feedback?from=shop" style={{ fontSize: 9, letterSpacing: '0.2em', color: 'var(--ss-dim)', textDecoration: 'none', textTransform: 'uppercase' }}>ご意見・ご感想</Link>
         <Link href="/legal/tokushoho" style={{ fontSize: 9, letterSpacing: '0.2em', color: 'var(--ss-dim)', textDecoration: 'none', textTransform: 'uppercase' }}>特定商取引法</Link>
         <Link href="/legal/privacy" style={{ fontSize: 9, letterSpacing: '0.2em', color: 'var(--ss-dim)', textDecoration: 'none', textTransform: 'uppercase' }}>プライバシー</Link>
       </footer>

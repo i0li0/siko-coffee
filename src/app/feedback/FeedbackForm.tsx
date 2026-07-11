@@ -1,8 +1,9 @@
 'use client'
 
-import Link from 'next/link'
 import { useState } from 'react'
 import { FEEDBACK_CATEGORIES, FEEDBACK_CATEGORY_LABELS, FEEDBACK_CONTENT_MAX } from '@/lib/feedback'
+import Nav from '@/components/layout/Nav'
+import Footer from '@/components/layout/Footer'
 
 const card: React.CSSProperties = {
   width: '100%',
@@ -56,7 +57,9 @@ export default function FeedbackForm({ from }: { from: string }) {
   }
 
   return (
-    <div style={{ minHeight: '100vh', background: 'var(--bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '24px' }}>
+    <>
+    <Nav visible logoHref="/" />
+    <div style={{ minHeight: '100vh', background: 'var(--bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '24px', paddingTop: '140px' }}>
       <div style={card}>
         <h1 style={{ fontFamily: 'var(--font-serif)', fontSize: '24px', fontWeight: 300, color: 'var(--cream)', letterSpacing: '0.14em', textAlign: 'center', marginBottom: '8px' }}>
           Sikō Coffee
@@ -69,9 +72,6 @@ export default function FeedbackForm({ from }: { from: string }) {
           <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
             <p style={{ fontSize: '14px', lineHeight: 1.8, color: 'var(--dim)', textAlign: 'center', margin: 0 }}>
               お寄せいただきありがとうございます。<br />今後の改善に役立てさせていただきます。
-            </p>
-            <p style={{ fontSize: '12px', color: 'var(--dim)', textAlign: 'center', margin: 0 }}>
-              <Link href="/" style={{ color: 'var(--amber)', textDecoration: 'none' }}>トップへ戻る</Link>
             </p>
           </div>
         ) : (
@@ -144,13 +144,11 @@ export default function FeedbackForm({ from }: { from: string }) {
             >
               {loading ? '送信中...' : '送信する'}
             </button>
-
-            <p style={{ fontSize: '12px', color: 'var(--dim)', textAlign: 'center', margin: 0 }}>
-              <Link href="/" style={{ color: 'var(--amber)', textDecoration: 'none' }}>トップへ戻る</Link>
-            </p>
           </form>
         )}
       </div>
     </div>
+    <Footer />
+    </>
   )
 }
