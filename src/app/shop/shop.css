@@ -59,7 +59,10 @@
 /* responsive */
 @media (max-width: 840px) { .ss-hero-grid { grid-template-columns: 1fr !important; } }
 @media (max-width: 700px) { .ss-main { padding: 0 16px 80px; } .ss-header-in { padding: 0 16px; gap: 16px; } }
-@media (max-width: 560px) { .ss-header-nav { gap: 12px !important; } }
+@media (max-width: 560px) {
+  .ss-header-in { flex-wrap: wrap; height: auto; min-height: 62px; padding-top: 10px; padding-bottom: 10px; }
+  .ss-header-nav { gap: 12px; order: 3; width: 100%; }
+}
 
 /* ── typography ── */
 .ss-serif  { font-family: var(--ss-serif); font-weight: 400; letter-spacing: 0.05em; }
