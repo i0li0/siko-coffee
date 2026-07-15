@@ -116,10 +116,9 @@ main {
 }
 
 /* ── 可読性スクリム ──
-   背景演出(FaultyTerminal)は維持しつつ、各セクションのテキスト裏にだけ
-   柔らかい暗幕を敷いて文字のコントラストを確保する。
-   ::before は z-index:-1 でセクション内コンテンツの背後・固定背景の手前に入る。
-   Hero は専用ビネット(FaultyTerminalBg)で処理済みのため除外。 */
+   各セクションのテキスト裏にだけ柔らかい暗幕を敷いて文字のコントラストを確保する。
+   ::before は z-index:-1 でセクション内コンテンツの背後に入る。
+   Hero は専用の hero-glow で処理済みのため除外。 */
 main > section:not(#hero) {
   isolation: isolate;
 }
