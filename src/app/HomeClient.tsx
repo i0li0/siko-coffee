@@ -15,8 +15,7 @@ import { useScrollAnimations } from '@/lib/useScrollAnimations';
 import type { InstagramPost } from '@/lib/instagram';
 import type { Product } from '@/types/product';
 
-const FaultyTerminalBg = dynamic(() => import('@/components/canvas/FaultyTerminalBg'), { ssr: false });
-const TerminalLoader   = dynamic(() => import('@/components/canvas/TerminalLoader'),   { ssr: false });
+const TerminalLoader = dynamic(() => import('@/components/canvas/TerminalLoader'), { ssr: false });
 
 interface Props {
   instagramPosts: InstagramPost[];
@@ -48,9 +47,6 @@ export default function HomeClient({ instagramPosts, menuItems }: Props) {
 
   return (
     <>
-      {/* ReactBits Faulty Terminal 背景 — ローダー完了後にマウント（pageLoadAnimation がフェードイン演出） */}
-      {opened === true && <FaultyTerminalBg />}
-
       {opened === false && (
         <TerminalLoader key={replay ? 'replay' : 'init'} onFinish={handleFinish} replay={replay} />
       )}
