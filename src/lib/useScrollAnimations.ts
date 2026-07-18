@@ -61,12 +61,59 @@ export function useScrollAnimations(ready: boolean) {
           { opacity: 1, y: 0, duration: 1.3, ease: 'power3.out' }, 0.1)
       }
 
-      heroTl.fromTo('.hero-tagline-en',
+      heroTl.fromTo('.hero-tagline-sub',
         { opacity: 0, y: 14 },
         { opacity: 1, y: 0, duration: 1.2, ease: 'power2.out' }, '-=0.55')
         .fromTo('.hero-scroll',
           { opacity: 0 },
           { opacity: 1, duration: 0.9, ease: 'power2.out' }, '-=0.5')
+
+      /* ── 署名マークのスクロールモーフ（Hero スロット → ヘッダー中央スロット） ── */
+      // 単一の fixed 要素(#siko-morph)を Hero の "sikō" 位置からヘッダー中央へ
+      // 座標・スケール補間で飛ばす（FLIP 的）。Hero は overflow-hidden なので
+      // クローンは Hero 外(HomeClient)に置いてある。
+      const morph = document.getElementById('siko-morph')
+      const heroSlot = document.getElementById('hero-siko-slot')
+      const navSlot = document.getElementById('nav-siko-slot')
+      if (morph && heroSlot && navSlot) {
+        // 開始(Hero)矩形・終了(Nav)矩形を保持
+        const box = { sx: 0, sy: 0, ex: 0, ey: 0, ratio: 1 }
+        const measure = () => {
+          const hr = heroSlot.getBoundingClientRect()
+          const nr = navSlot.getBoundingClientRect()
+          // Hero スロットは progress 0（scrollY=0）時点のビューポート座標に正規化
+          box.sx = hr.left
+          box.sy = hr.top + window.scrollY
+          box.ex = nr.left
+          box.ey = nr.top // Nav は position:fixed なのでスクロール非依存で安定
+          box.ratio = hr.width > 0 ? nr.width / hr.width : 1
+          gsap.set(morph, { width: hr.width, height: hr.height, transformOrigin: '0 0' })
+        }
+        const render = (p: number) => {
+          const scale = 1 + (box.ratio - 1) * p
+          gsap.set(morph, {
+            x: box.sx + (box.ex - box.sx) * p,
+            y: box.sy + (box.ey - box.sy) * p,
+            scale,
+          })
+        }
+        measure()
+        render(0)
+        // モーフを可視化し、手書き(SMIL)を先頭から再生し直す
+        document.documentElement.dataset.sikoMorph = 'on'
+        const osvg = morph.querySelector('svg') as SVGSVGElement | null
+        osvg?.setCurrentTime?.(0)
+        ScrollTrigger.create({
+          trigger: '#hero',
+          start: 'top top',
+          end: 'bottom top',
+          scrub: 0.3,
+          onUpdate: (self: { progress: number }) => render(self.progress),
+          onRefresh: (self: { progress: number }) => { measure(); render(self.progress) },
+        })
+        // Hero スロットの水平位置は先行テキスト幅に依存するため、Web フォント確定後に再計測
+        document.fonts?.ready?.then(() => ScrollTrigger.refresh())
+      }
 
       /* ── Story kanji ── */
       const storyTl = gsap.timeline({
@@ -136,6 +183,7 @@ export function useScrollAnimations(ready: boolean) {
     return () => {
       window._lenis?.destroy()
       ST?.getAll().forEach((t: { kill: () => void }) => t.kill())
+      delete document.documentElement.dataset.sikoMorph
     }
   }, [ready])
 }

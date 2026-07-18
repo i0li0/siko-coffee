@@ -145,6 +145,32 @@ footer { background: linear-gradient(to bottom, #080600, #050400); }
   [data-reveal] { opacity: 1; }
 }
 
+/* ── 署名マーク「sikō」（インライン SVG）とスクロールモーフ ── */
+/* インライン展開した SVG を親スロットいっぱいに収める */
+.siko-wordmark { display: inline-block; line-height: 0; }
+.siko-wordmark svg { display: block; width: 100%; height: 100%; }
+.siko-slot { position: relative; }
+
+/* Hero → ヘッダー中央へ収束する単一 fixed 要素。既定は非表示で、
+   useScrollAnimations がモーフを初期化したとき（data-siko-morph="on"）だけ可視。 */
+.siko-morph-layer {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 110;
+  pointer-events: none;
+  visibility: hidden;
+  will-change: transform;
+}
+[data-siko-morph='on'] .siko-morph-layer { visibility: visible; }
+
+/* 静止版フォールバックは既定で隠す。JS + モーフ経路では overlay が描画を担うため、
+   静止版を先に見せると「静止版→空白→手書き再描画」のフラッシュになる。
+   no-JS / reduced-motion のときだけ静止ロゴを表示する（アニメなしの確定表示）。 */
+.siko-static { visibility: hidden; }
+@media (scripting: none) { .siko-static { visibility: visible; } }
+@media (prefers-reduced-motion: reduce) { .siko-static { visibility: visible; } }
+
 /* ── Hero: 「光がある」ハロー ── */
 .hero-glow {
   position: absolute;

@@ -61,7 +61,7 @@ export const metadata: Metadata = {
   }),
   openGraph: {
     title: 'Sikō Coffee',
-    description: '暗闇の向こうに、光がある。',
+    description: '私たちは、Sikōする。',
     locale: 'ja_JP',
     images: ['/images/og.jpg'],
     type: 'website',
@@ -70,7 +70,7 @@ export const metadata: Metadata = {
   twitter: {
     card: 'summary_large_image',
     title: 'Sikō Coffee',
-    description: '暗闇の向こうに、光がある。',
+    description: '私たちは、Sikōする。',
     images: ['/images/og.jpg'],
   },
 };
