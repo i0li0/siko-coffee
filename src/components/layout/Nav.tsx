@@ -10,6 +10,8 @@ interface Props {
   visible: boolean;
   logoHref?: string;
   onReplay?: () => void;
+  /** ホームのみ true。中央ロゴを署名マークのモーフ用スロットに切り替える。 */
+  useMorphIcon?: boolean;
 }
 
 const SECTIONS: { id: string; label: string }[] = [
@@ -21,7 +23,7 @@ const SECTIONS: { id: string; label: string }[] = [
   { id: 'contact', label: 'Contact' },
 ];
 
-export default function Nav({ visible, logoHref, onReplay }: Props) {
+export default function Nav({ visible, logoHref, onReplay, useMorphIcon }: Props) {
   const pathname = usePathname();
   const isShop = pathname?.startsWith('/shop');
   const isHome = pathname === '/';
@@ -154,15 +156,36 @@ export default function Nav({ visible, logoHref, onReplay }: Props) {
         className={`flex items-center no-underline pointer-events-auto
           transition-opacity duration-[1200ms] ${visible ? 'opacity-100' : 'opacity-0'}`}
       >
-        <Image
-          src="/images/logo/logo_siko8.png"
-          alt="Sikō Coffee"
-          width={96}
-          height={96}
-          priority
-          className="h-20 w-auto brightness-[0.88] transition-[filter] duration-300
-            hover:brightness-110 hover:sepia hover:hue-rotate-[-10deg] hover:saturate-[1.6]"
-        />
+        {useMorphIcon ? (
+          // 署名マークのモーフ着地スロット。視覚は静止版 <img>（フォールバック）。
+          // JS モーフ起動時は data-siko-morph="on" で静止版を隠し、fixed 手書きマークが重なる。
+          <span
+            id="nav-siko-slot"
+            className="siko-slot block"
+            style={{ height: '2.5rem', aspectRatio: '822 / 840' }}
+          >
+            {/* 静止版 SVG は next/image で最適化しない（SVGは対象外）。フォールバック用途。 */}
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              className="siko-static"
+              src="/images/logo/logo-siko.svg"
+              alt=""
+              aria-hidden="true"
+              style={{ height: '100%', width: '100%', display: 'block' }}
+            />
+            <span className="sr-only">Sikō Coffee</span>
+          </span>
+        ) : (
+          <Image
+            src="/images/logo/logo_siko8.png"
+            alt="Sikō Coffee"
+            width={96}
+            height={96}
+            priority
+            className="h-20 w-auto brightness-[0.88] transition-[filter] duration-300
+              hover:brightness-110 hover:sepia hover:hue-rotate-[-10deg] hover:saturate-[1.6]"
+          />
+        )}
       </a>
 
       {/* ── shop / account（右端） ── */}

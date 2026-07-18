@@ -14,9 +14,16 @@ test.describe('ホームページ', () => {
     await expect(page.getByRole('link', { name: /shop/i })).toBeVisible();
   });
 
-  test('ヒーローテキストが表示される', async ({ page }) => {
+  test('ヒーローの見出し（ロゴ）が表示される', async ({ page }) => {
     await page.goto('/');
-    await expect(page.getByText('暗闇の向こうに、光がある。')).toBeVisible({ timeout: 15_000 });
+    // 見出しは署名マーク（ロゴ）のみ。アクセシブルネーム「Sikō」は sr-only で提供。
+    await expect(
+      page.getByRole('heading', { name: 'Sikō' })
+    ).toBeVisible({ timeout: 15_000 });
+    // タグライン（サブライン）の全文は sr-only で担保。
+    await expect(
+      page.getByText('私たちは、思考する、試行する、至高する、嗜好する。')
+    ).toBeAttached();
   });
 
   test('shop ページへのリンクが機能する', async ({ page }) => {
