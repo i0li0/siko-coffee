@@ -1,7 +1,7 @@
 # ブレンド共創プラットフォーム構想 — 計画書（正本）
 
 > 現行の Sikō Coffee ショップを、ユーザーがコーヒー豆のブレンドを共創し、複数の焙煎者をコラボさせて購入できるプラットフォームへ拡張する構想の、全体設計をまとめた正本。
-> 最終更新: 2026-07-20 ／ ブランチ: `claude/shop-platform-marketplace`
+> 最終更新: 2026-07-21 ／ ブランチ: `claude/shop-platform-marketplace`
 > 対になる記憶: `memory/blend-platform-plan.md`（ポインタ）。詳細はこのファイルが正本。
 
 ---
@@ -115,6 +115,45 @@
 - 課金は**購入時に即課金 ＋ 発注失敗時に返金**。焙煎開始後はキャンセル不可を購入者規約に明記。前払いを原資に発注するため Sikō の資金持ち出しがない。
 - 承認は**事前設定＋自動承認（例外のみ手動）**。「承認ボトルネック」と「販売者の生豆不足」を、販売者の**豆ごとのステータス面**に集約して同一機構で吸収する。
 
+### 6.3 コラボ依存の解決（確定・2026-07-21）
+
+**問題の本質**：ブレンドは複数焙煎者の豆の **AND 結合**。購入者から見れば1商品・1価格・1発送だが、構成豆が1つでも欠けると商品全体が不成立になる。可用性は**最も弱い供給者に律速**され、コラボ相手が増えるほど脆い。この「1つ欠ける」は §6.2-4/-5 の**④受注時**（週上限超過／休止／生豆不足）と §7 の**⑦退会**（恒久離脱）で別々に現れるが、**「構成豆の1つが手に入らない」という一点で同根**として同一機構で扱う。
+
+**設計の2軸**：軸1＝回復見込み（一時／不定／恒久）、軸2＝購入者が金を預けているか（課金前／即課金後）。恒久欠け(T3)は極力**課金前に倒す**（購入導線で退会・在庫消化中を先に潰す）のが最重要。
+
+| 欠け方 | 課金前（レシピ閲覧・購入確定ボタン前） | 即課金後（reserve失敗→発注で例外化・焙煎前） |
+|---|---|---|
+| **T1 一時**（週上限超過・復帰日あり＝ETA算出可） | ETAに+N日を織り込み**購入可**。選択を出さない | **自動で待つ**＋ETA再計算を通知。遅延が閾値超のときのみ選択肢提示 |
+| **T2 不定**（休止・復帰未定／生豆不足で目処なし） | バッジ「一部の豆が停止中」→ **待つ(ウォッチ)／差替** を選ばないと確定不可 | 発注タイムアウト（48h）→ 復帰しなければ **差替／全額返金** |
+| **T3 恒久**（退会・在庫消化中） | レシピは「要・再構成」表示、そのままは注文不可。**差替**で新版として注文（在庫が残れば残数限り注文可） | **待つは出さない**。即 **差替／全額返金** |
+
+**確定した主要決定：**
+- **「抜く」は v1 で禁止 ＝ 差替／返金の2択**。理由（重い順）：①ブレンドは購入者が比率設定・命名・ストーリー付与した"作品"。豆を抜いて再配分すると意図した味・比率でなくなり**同一性が崩れる**（差替なら"その比率・3社コラボ"の意図を保てる）。②比率で香味が決まるコーヒーで再配分は**予測不能な味**が届き、販売者＝Sikō の再販責任で受けるクレーム源。③「1商品1価格」に**部分返金**の概念を持ち込み実装が重い（差替は商品が成立したまま1価格を保てる）。④購入者の意図と違う原材料構成の出荷で**法定ラベルの正しさ**がぶれる。
+- **「抜く」の逃げ道**：既定は差替/返金だが、**作成時に購入者が「欠けたら抜いてOK」に明示オプトイン**した場合のみ将来解禁。v1では実装せず、**フラグの置き場所だけデータモデルに確保**（§11）。
+- **差替の候補選定 ＝ Sikō推薦＋購入者承認**：Sikō が同系統（生豆生産国・焙煎度が近い）の代替候補を1〜2件推薦 → 購入者が承認。全部購入者任せは味がブレ、全部Sikō任せは同一性の帰属が揺らぐ。推薦＋承認が中間。
+- **「待つ」は回復ETAが出せるときだけ提示**（T3では出さない＝待っても無駄で購入者を欺くため）。
+
+**差替に伴う副作用（実装要件）：**
+1. **法定ラベル再生成**：比率・生豆生産国が変わるため §3.4 の一括表示ラベルを作り直す。
+2. **価格差調整**：各焙煎者が価格決定権（§6.1.2）＝代替豆は別価格。差額は購入者承認を挟んで追加課金／返金（即課金 §6.2-3 との整合）。
+3. **同一性の記録**：差替は元レシピの**新バージョン**として扱い、命名・ストーリーの帰属は購入者に残す。
+4. **巻き添え・在庫の後始末**：欠けた1社以外（A・C）は健全なのに出荷不能になる巻き添えが起きる。買取済み在庫は §5 の売り切り同意で単品消化に回す（ブレンド部品としては出せなくても単品では売れる）。
+
+**運用パラメータ（暫定既定・要再調整・2026-07-21）**
+数値はハードコードせず**設定値として外出し**する。ローンチ前で実データがないため、下記を launch default として置き、**ローンチ後に実測（差替頻度・失注率・鮮度廃棄）で再調整**する（サブスク料¥3,000スタートと同じ扱い）。
+
+- **① T1課金後の遅延閾値**（測定＝購入確定時に約束したETAからの追加遅延 Δ。§6.2-3のETAが基準）：
+  - `Δ ≤ 3日` … サイレント（ETA更新を通知のみ、選択肢を出さず待つ）。焙煎・発送の通常変動幅。
+  - `3日 < Δ ≤ 7日` … 選択肢を提示するが注文は継続（待つ=既定／差替／全額返金、無操作でも進む）。
+  - `Δ > 7日、または A/C 同時確保ロットが鮮度切れになる待ち` … サイレントの「待つ」を出さず**購入者の能動選択（差替 or 返金）を必須**。実質 T2 として扱う。
+  - **7日の根拠＝鮮度天井**：待てる上限 = min（購入者の我慢, 同時確保した他ロットの鮮度 §7）。Bを長く待つと A/C が老化し仕上がりが2〜4週窓を割る。再プロンプトはしない（Tier Bで通知済みなら Tier C 突入時のみ1回エスカレーション）。
+- **② 差替の価格差承認ライン**（原則＝購入者の支払額は §6.1.2 スナップショットで固定、Δ はSikō側の問題）：
+  - **推薦バンド**：Sikō は元豆と同系統かつ**±¥100/100g 圏**の代替のみ推薦（味の方向性＋Δの上限を設計で有界化）。
+  - **吸収バンド `|Δ| ≤ ¥100/100g`（≒ブレンド価格の3〜5%）**：Sikōが飲む＝購入者に聞かず価格据え置き（値上がりはSikO負担、値下がり僅少はSikO側に残す）。摩擦ゼロの主経路。
+  - **吸収バンド超**：必ず明示承認。値上がりは新価格を提示し承認（未承認なら差替せず返金/キャンセル）、値下がり超は軽い部分返金承認を挟む。
+  - **絶対ルール**：吸収バンドを超える増額を購入者の同意なしに請求しない。
+- **再調整トリガー**：差替頻度／失注率／鮮度廃棄の実測。値はコード改修なしに設定変更でチューニング可能に保つ。
+
 ---
 
 ## 7. 在庫・鮮度ポリシー（確定）
@@ -162,15 +201,92 @@
 
 ---
 
-## 11. データモデルの方向性（次段階）
+## 11. データモデル設計（確定・2026-07-21）
 
-次に設計する 5 テーブル群：
-1. **ブレンド**：比率・命名・ストーリー ＋ 各豆の**生豆生産国・重量比**（ラベル自動生成用）。
-2. **販売者**：状態遷移（有効／一時停止／退会／在庫消化中）＋ **許可・届出台帳**（許可＝期限監視要／届出＝期限なし、を別カラム）＋ インボイス番号 ＋ 規約バージョン。
-3. **在庫ロット**：販売者×焙煎日／`onHand`・`reserved`・**parランク**・鮮度期限。
-4. **注文＋発注**：ETA・課金/返金状態・上り/下り配送・追跡。
-5. **サブスク**。
-- 参加焙煎者の許可管理台帳は、既存の xlsm の列構成をそのまま流用可能。
+### 11.0 全体方針
+- **既存慣習に完全準拠**（`src/lib/db.ts`）：1エンティティ1テーブルの**複数テーブル方式**。GSI は `list-index`（`gsiPk`＝固定/カテゴリ値 ＋ `gsiSk`＝`createdAt` で新着降順 Query）。`PAY_PER_REQUEST`・region `ap-northeast-1`・prefix `siko-coffee-`（preview は `siko-coffee-preview-`）。
+- **`ScanCommand` 禁止**（[[feedback-dynamodb-scan]]）：全アクセスパターンを `GetCommand` か GSI `QueryCommand` で満たすようキー設計する（§11.3 で検証）。
+- 元の5テーブル素案を、この慣習に合わせ **8テーブル**に精緻化（対応は §11.1）。既存の `blends`/`orders` は**拡張（GSI追加＝非破壊）**、`roasters`/`beans`/`lots`/`reservations`/`roaster_metrics`/`subscriptions` を**新設**。
+- **AWS実機照合済み（ap-northeast-1・2026-07-21）**：新設6テーブルは未存在（衝突なし）。`blends`/`orders` は PK `id` で設計と一致。**既存 `inventory` は PK `beanId`(HASH)のみ＝現行ショップの単一SKU在庫（currentStock/alertThreshold）**で、ロット（beanId×焙煎日の複合キー）へは主キー変更不可のため**触らず温存**し、プラットフォームのロットは新テーブル `lots` に作る。
+
+### 11.1 テーブル一覧（素案5 → 実装8）
+| # | テーブル | 素案の対応 | 新設/拡張 |
+|---|---|---|---|
+| 1 | `blends` | ①ブレンド | 拡張 |
+| 2 | `roasters` | ②販売者 | 新設 |
+| 3 | `beans` | ②に内包していた掲載豆（§6.2.1の申告5項目）を独立 | 新設 |
+| 4 | `lots` | ③在庫ロット | 新設（既存`inventory`はPK`beanId`のみで複合キーに拡張不可＝現行ショップ在庫として温存） |
+| 5 | `reservations` | ③の§9予約（TTL失効） | 新設 |
+| 6 | `orders` | ④注文＋発注 | 拡張 |
+| 7 | `roaster_metrics` | 計測ロールアップ（実廃棄率/GMV/失注率） | 新設 |
+| 8 | `subscriptions` | ⑤サブスク | 新設 |
+
+> **なぜ `beans` を独立させたか**：価格決定権（§6.1.2）・受注上限・リードタイム・受注ON/OFF は**豆ごと**の属性で、`blends` は `beanId` を参照する。焙煎者に内包すると豆単位のGSI/更新ができないため独立テーブルにする。
+
+### 11.2 各テーブルの PK / SK / GSI / 主要属性
+
+**1. `blends`（拡張）** — レシピ定義（購入者作成 or Sikōキュレーション、再利用可）
+- PK `id`（blendId）※実機一致
+- 属性：`name`・`story`・`createdBy`(userId|"siko")・`visibility`("public"|"private")・`version`(N)・`parentBlendId`(差替派生の親)・`allowDrop`(BOOL 既定false・§6.3逃げ道)・`status`("active"|"archived")・`components`=[{`roasterId`,`beanId`,`ratioPct`,`greenOrigin`,`roastLevel`}]・`createdAt`
+- GSI `list-index`（**新規追加**：現状GSIなし。公開ブレンド一覧の既存Scanを置換）：`gsiPk`=`"BLEND#PUBLIC"`（公開カタログ）or `"BLEND#USER#<uid>"`（自分のブレンド）、`gsiSk`=`createdAt`
+
+**2. `roasters`（新設）** — 販売者昇格レコード（アカウント統一のため `roasterId` = `userId`）
+- PK `roasterId`
+- 属性：`displayName`・`status`("active"|"paused"|"withdrawn"|"selling_out")・`pausedUntil`(nullable ISO ← **有ればT1/無ければT2**の判定源)・`license`{no,expiry}・`notification`{no}（許可＝期限監視要／届出＝期限なし、別カラム）・`invoiceRegNo`(T番号・保持のみ)・`termsVersion`・`termsAgreedAt`・`optIns`{allowBlend,allowNameStory,allowSelloutAfterExit}・`createdAt`・`updatedAt`
+- GSI `by-status`：`gsiPk`=`status`、`gsiSk`=`updatedAt`（運用：休止/退会一覧）
+- GSI `license-expiry`：`gsiPk`=`"LICENSE"`、`gsiSk`=`license.expiry`（許可の期限監視）
+
+**3. `beans`（新設）** — 掲載豆＝§6.2.1 の焙煎者申告5項目
+- PK `beanId`
+- 属性：`roasterId`・`name`・`greenOrigin`・`roastLevel`・`pricePer100g`(N ← 価格決定権)・`weeklyCapKg`(N ← 受注上限＝自動承認の入力源)・`leadTimeDays`(N)・`orderStatus`("on"|"off"|"paused")・`createdAt`・`updatedAt`
+- GSI `by-roaster`：`gsiPk`=`roasterId`、`gsiSk`=`createdAt`（焙煎者の豆一覧・状態波及）
+- GSI `list-index`：`gsiPk`=`"BEAN#PUBLIC"`、`gsiSk`=`createdAt`（豆カタログ）
+
+**4. `lots`（新設）** — 在庫ロット＝販売者×焙煎日（既存 `inventory` は現行ショップ単一SKU在庫として別に温存）
+- PK `beanId`・SK `roastDate`（yyyy-mm-dd）＝ロット
+- 属性：`onHandG`・`reservedG`（`available = onHandG − reservedG`）・`parRankG`(100g刻み)・`freshBy`(ISO 鮮度期限)・`status`("fresh"|"discount"|"expired")・**計測**`purchasedG`・`soldG`・`wastedG`
+- GSI `by-freshBy`：`gsiPk`=`"LOT"`、`gsiSk`=`freshBy`（鮮度切れ間近ロットを Query＝廃棄/値引き判定。Scanを使わない）
+
+**5. `reservations`（新設）** — 決済中の在庫確保（§9・TTL失効）
+- PK `orderId`・SK `beanId#roastDate`（確保したロット）
+- 属性：`qtyG`・`state`("held"|"committed"|"released")・`expireAt`(N epoch ← **DynamoDB ネイティブTTL**)
+- GSI `by-expire`：`gsiPk`=`"RSV"`、`gsiSk`=`expireAt`（cron が失効ぶんを Query して `reservedG` を戻す。TTLはバックストップ、確実な戻しはこのGSI）
+- 確保＝`inventory` を `UpdateItem` の `ConditionExpression`（`reservedG + qty <= onHandG`）で原子加算。ブレンドは複数ロットを `TransactWriteItems` で一括確保（1つでも不成立なら全体失敗→失敗豆を発注へ）。
+
+**6. `orders`（拡張）** — 注文＋発注＋差替（既存 PK `id` 維持）
+- 既存：`items`・`status`・`createdAt`・`userId`
+- 追加：`blendId`・`blendVersion`・`etaPromised`(ISO ← 遅延Δの基準 §6.3)・`etaCurrent`・`charge`{paymentIntentId,amount,state("authorized"|"paid"|"refunded"|"partial_refund")}・`procurement`=[{roasterId,beanId,mode("stock"|"po"),poStatus("auto_approved"|"pending"|"declined"|"timeout"),timeoutAt(48h),uplinkTracking}]・`exception`{type("T1"|"T2"|"T3"|null),phase("pre_charge"|"post_charge")}・`substitution`=[{fromBeanId,toBeanId,deltaYen,absorbedBySiko(BOOL),approvedByBuyerAt}]・`downlinkTracking`・`labelSnapshot`(生豆生産国/重量比を発注時固定＝法定ラベル §3.4)
+- GSI（**実機に既存**）：`userId-index`(HASH `userId`)・`customerEmail-index`(HASH `customerEmail`)。購入者の注文履歴はこれで足りる。**createdAt降順が要るなら** range key 付き GSI（`userId`+`createdAt`）を新規追加、当面は `userId-index` Query＋クライアント側ソートで可。
+
+**7. `roaster_metrics`（新設）** — 計測ロールアップ（n再調整の根拠・Scan回避）
+- PK `roasterId`・SK `yyyy-mm`（月次）
+- 属性：`gmvYen`・`orderCount`・`lostCount`（失注＝差替辞退/返金）・`purchasedG`・`soldG`・`wastedG` → **実廃棄率**=wasted/purchased・**失注率**=lost/(orders+lost)・**月次GMV**=gmvYen
+- 更新：注文paid/ロット廃棄/返金の各イベントで原子 `ADD`（集計Scan不要）。§6.3の運用パラメータ再調整もこの表を見る。
+
+**8. `subscriptions`（新設）** — 焙煎者サブスク
+- PK `roasterId`・SK `"sub"`（1焙煎者1サブスク）
+- 属性：`stripeSubId`・`plan`("founding"|"standard")・`priceYen`(3000)・`status`("active"|"past_due"|"canceled")・`currentPeriodEnd`・`createdAt`
+- GSI `by-status`：`gsiPk`=`status`、`gsiSk`=`currentPeriodEnd`（延滞/失効の運用）
+
+### 11.3 主要アクセスパターン → キーの対応（Scanゼロの検証）
+| アクセスパターン | 方法 |
+|---|---|
+| ブレンド表示・注文時に構成豆の可否判定 | `components` の各 `roasterId`→`roasters` Get、各 `beanId`→`beans` Get（**forward・Getのみ**） |
+| 在庫確保（原子・複数ロット） | `lots` の `ConditionExpression` ＋ `TransactWriteItems`（§9） |
+| 失効予約の戻し | `reservations` GSI `by-expire` Query（＋ネイティブTTL） |
+| 鮮度切れロット抽出 | `lots` GSI `by-freshBy` Query |
+| 焙煎者の豆一覧・状態波及 | `beans` GSI `by-roaster` Query |
+| 休止/退会/許可期限の運用一覧 | `roasters` GSI `by-status` / `license-expiry` Query |
+| 購入者の注文履歴 | `orders` GSI `userId-index` Query（既存） |
+| n再調整の実廃棄率/GMV/失注率 | `roaster_metrics` Get（月次PK/SK直引き） |
+
+### 11.4 参照整合性（§6.3 の実装根拠）
+- ブレンドは `roasterId`/`beanId` を**前方参照**するだけ。可否判定は**注文時・レシピ閲覧時**に各参照先を Get して評価する（`blends` 側に状態を持たせない＝常に最新の焙煎者/豆状態を反映）。
+- 焙煎者が `withdrawn`/`paused`（`beans.orderStatus`≠"on"）に落ちた瞬間、その豆を含む注文/閲覧は §6.3 の T2/T3 判定に入る。**"どのブレンドが影響するか"を先に列挙する逆引き（roaster→blends）は v1 では作らない**（forward Get で足りる）。将来「退会で壊れた保存ブレンドを購入者へ一斉通知」が必要になったら、`blend_components` エッジテーブル（PK `roasterId`・SK `blendId`）を後付けする（Scan回避のため）。
+
+### 11.5 メモ
+- 参加焙煎者の許可管理台帳（`roasters.license`/`notification`）は、既存の xlsm の列構成をそのまま流用可能。個人連絡先は本DB外（§10）。
+- テーブル作成は既存の `scripts/create-*-table.sh` と同じ AWS CLI パターンで用意する。
 
 ---
 
@@ -180,7 +296,10 @@
 - [ ] **保健所へ確認**：複数焙煎者の豆をブレンド小分け・通販する場合も、現行の焙煎（コーヒー製造・加工業）届出でカバーされるか。
 - [ ] **税理士へ確認**：自己サブスクの会計処理・免税仕入れの消費税影響（方針は確定済み、処理の裏取り）。
 - [ ] **サブスク価格**：想定廃棄率の試算に基づき決定（現状未定）。
-- [ ] 次工程：**データモデル設計**（§11 の 5 テーブルのキー設計 PK/SK/GSI）。
+- [x] **コラボ依存の解決**（§6.3）：欠け方×課金前後の決定表、抜く禁止（差替/返金2択）＋オプトイン逃げ道、差替=Sikō推薦＋購入者承認、**運用パラメータ（遅延閾値3/7日＋鮮度天井・価格吸収バンド±¥100/100g）を暫定既定として確定**、まで確定（2026-07-21）。数値は設定値外出し・ローンチ後に実測で再調整。
+- [x] **データモデル設計**（§11）：8テーブルの PK/SK/GSI 確定（2026-07-21）。参照整合性=forward Get・差替バージョニング・計測ロールアップ・Scanゼロ検証まで反映。
+- [x] **AWS実機照合**（§11.0）：ap-northeast-1 のテーブル現状を確認（2026-07-21）。新設6は未存在、`blends`/`orders` はPK一致、`inventory` は複合キー拡張不可のためロットは新テーブル `lots` に分離、と設計へ反映済み。
+- [ ] 次工程：**実装着手**。テーブル作成スクリプト（`scripts/create-*-table.sh` に倣い `lots`/`roasters`/`beans`/`reservations`/`roaster_metrics`/`subscriptions`）→ 焙煎者昇格オンボーディング（§6.1.1）or ブレンド作成UI（§6.2.1 プレビュー）から。逆引き（roaster→blends）は必要になってから後付け（§11.4）。
 
 ---
 
