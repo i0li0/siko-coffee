@@ -1,5 +1,12 @@
 // Bean data, blend presets, community blends, and pure helper functions.
 // No React imports — usable in server and client contexts.
+//
+// ⚠ この下の BEANS / PRESETS / COMMUNITY は**すべてテストデータ**（オーナー確認済み・2026-07-23）。
+//   産地・味の数値・`bought`（購入数）・`by`（作者名）はいずれも架空で、実績ではない。
+//   将来これらを削除し、SikŌ Coffee 自身の豆3種を実物として掲載する予定。
+//   差し替え時に連動して直す箇所：/shop/product/[key]・src/app/sitemap.ts・
+//   Stripe webhook の在庫減算（豆名マッチ）・比率配列が長さ3固定である前提。
+//   ※ DynamoDB の blends テーブルは本番/preview とも0件＝消すべきDBレコードは無い（コードのみ）。
 
 export const MAX_BEANS = 3;
 
