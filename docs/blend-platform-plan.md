@@ -134,7 +134,7 @@
 - 税込/税抜：SikO免税＋総額表示義務 → 焙煎者は**税込の消費者価格/100g を入力**し、それを棚価格とする（叩き台）。
 - SikO運用コストの回収：無マージンのため、ブレンド小分け・廃棄・上り送料は**サブスク**、下り送料は**購入者負担**で回収。
 - **決済手数料の帰属（2026-07-21確定・B方式）**：**通常注文のStripe手数料（3.6%）は購入者が負担**（棚価格にグロスアップ内包＝焙煎者は満額・SikO無傷でGMVに自動追従）。ただし**「即課金→発注失敗→全額返金」の失注ぶんの手数料はStripeが返さない**ため**SikOがサブスクで負担**（自社都合の失敗を購入者に転嫁しない）。失注頻度は自動承認＋受注上限＋コールドスタート受注生産で抑制。補助レバー＝銀行振込(1.5%)等の低料率手段。※手数料は税込等で実効3.6〜4%で見込む（SikO免税ゆえ控除不可）。サブスク課金自体はStripe Billingで+0.7%（実効4.3%）。
-- 価格変更のガバナンス：変更は**将来注文のみ反映／注文時点で価格スナップショット固定**。掲載中ブレンドは再計算（叩き台）。退会・停止時のブレンド再計算はコラボ依存論点（§6.2）と同根。
+- 価格変更のガバナンス（**2026-07-21確定**）：**掲載中ブレンドの表示価格は常に最新へ自動再計算**（`blends` は価格を保持せず、閲覧時に各構成豆の現行 `pricePer100g` から Σ で導出＝§11.4 の forward Get・blend無状態と整合）。ただし**注文が成立した時点で価格スナップショットを固定**（`orders` に確定額を保存＝発注後の価格変動は当該注文に影響しない）。つまり「閲覧＝常に最新／確定注文＝固定」の二段構え。退会・停止時のブレンド再計算はコラボ依存論点（§6.2/§6.3）と同根。
 
 ### 6.2 履行フロー（分岐込み）
 1. **ブレンド作成**：比率を数値設定・命名・ストーリー付与／複数販売者をコラボ。
@@ -344,6 +344,24 @@
 - 参加焙煎者の許可管理台帳（`roasters.license`/`notification`）は、既存の xlsm の列構成をそのまま流用可能。個人連絡先は本DB外（§10）。
 - テーブル作成は既存の `scripts/create-*-table.sh` と同じ AWS CLI パターンで用意する。
 
+### 11.6 テーブル作成スクリプトとGSIキー属性名の確定（2026-07-21）
+§11.2 は設計スケッチのため、実 create-table に落とす際に **DynamoDB制約** で以下を調整した（正本＝スクリプトは `scripts/create-*-table.sh`）。
+- **制約1：GSIキーはトップレベルのスカラー属性のみ**。§11.2② の `license-expiry` GSI キー `license.expiry`（ネスト）は使えないため、GSI用に **`licenseExpiry`（トップレベル）** を非正規化して持つ（表示用 `license{no,expiry}` とは別属性）。**許可の item だけ** `licenseGsiPk="LICENSE"`＋`licenseExpiry` を書く＝**sparse index**（届出は載らない＝監視対象外で正しい）。
+- **制約2：1テーブル内で複数GSIが別キーなら別属性名**。同一 `gsiPk`/`gsiSk` は共用できない。汎用「新着降順」用途にだけ `gsiPk`/`gsiSk` を使い、その他は用途別の実属性を直接キーにする。
+- 確定した各テーブルのキー/GSI属性名（スクリプト実体）：
+  | テーブル | PK / SK | GSI（IndexName：HASH属性 + RANGE属性） |
+  |---|---|---|
+  | `roasters` | `roasterId` | `by-status`：`status`+`updatedAt` ／ `license-expiry`：`licenseGsiPk`+`licenseExpiry`（sparse） |
+  | `beans` | `beanId` | `by-roaster`：`roasterId`+`createdAt` ／ `list-index`：`gsiPk`+`gsiSk` |
+  | `lots` | `beanId` + `roastDate` | `by-freshBy`：`gsiPk`(定数"LOT")+`gsiSk`(=freshBy) |
+  | `reservations` | `orderId` + `lotKey`(=`beanId#roastDate`) | `by-expire`：`gsiPk`(定数"RSV")+`expireAt`(N,epoch秒)。TTL=`expireAt` |
+  | `roaster_metrics` | `roasterId` + `month`(yyyy-mm) | なし |
+  | `subscriptions` | `roasterId` + `sk`(定数"sub") | `by-status`：`status`+`currentPeriodEnd` |
+- `reservations` の TTL は `update-time-to-live`（`expireAt`＝**epoch秒**）を create 後に有効化する（スクリプトが `wait table-exists` 後に実行）。
+- 既存 `blends` は `add-blends-list-index.sh` で GSI `list-index`（`gsiPk`/`gsiSk`）を**非破壊追加**。ただし既存アイテムは両属性が無いため**バックフィル（公開ブレンドに `gsiPk="BLEND#PUBLIC"`・`gsiSk=createdAt` を書く）が別途必要**、済むまで旧 Scan 経路を残す（§13.6）。
+- 既存 `orders` の range key 付き GSI（`userId`+`createdAt`）は当面不要（§11.2⑥）＝スクリプト化せず、既存 `userId-index`＋クライアントソートで運用。
+- 一括実行は `scripts/create-platform-tables.sh [preview]`（新設6＋blends GSI）。冪等ではない（既存テーブルは `ResourceInUseException`）。
+
 ---
 
 ## 12. 残タスク・確認事項
@@ -356,7 +374,121 @@
 - [x] **コラボ依存の解決**（§6.3）：欠け方×課金前後の決定表、抜く禁止（差替/返金2択）＋オプトイン逃げ道、差替=Sikō推薦＋購入者承認、**運用パラメータ（遅延閾値3/7日＋鮮度天井・価格吸収バンド±¥100/100g）を暫定既定として確定**、まで確定（2026-07-21）。数値は設定値外出し・ローンチ後に実測で再調整。
 - [x] **データモデル設計**（§11）：8テーブルの PK/SK/GSI 確定（2026-07-21）。参照整合性=forward Get・差替バージョニング・計測ロールアップ・Scanゼロ検証まで反映。
 - [x] **AWS実機照合**（§11.0）：ap-northeast-1 のテーブル現状を確認（2026-07-21）。新設6は未存在、`blends`/`orders` はPK一致、`inventory` は複合キー拡張不可のためロットは新テーブル `lots` に分離、と設計へ反映済み。
-- [ ] 次工程：**実装着手**。テーブル作成スクリプト（`scripts/create-*-table.sh` に倣い `lots`/`roasters`/`beans`/`reservations`/`roaster_metrics`/`subscriptions`）→ 焙煎者昇格オンボーディング（§6.1.1）or ブレンド作成UI（§6.2.1 プレビュー）から。逆引き（roaster→blends）は必要になってから後付け（§11.4）。
+- [x] **API/ルート設計**（§13）：アクター別エンドポイント・認可レイヤ・主要フローのシーケンス・冪等/トランザクション・追加Zodスキーマまで確定（2026-07-21）。既存Route Handler慣習に準拠。
+- [x] **テーブル作成スクリプト**（§11.6）：新設6テーブル（`create-{roasters,beans,lots,reservations,roaster-metrics,subscriptions}-table.sh`）＋既存 `blends` への GSI 追加（`add-blends-list-index.sh`）＋一括実行（`create-platform-tables.sh`）を作成（2026-07-21・構文/JSON検証済み）。GSIキー属性名を実装制約に合わせ確定（§11.6）。
+- [x] **preview 環境へ適用**（2026-07-21）：`create-platform-tables.sh preview` を実行。新設6テーブルは全 ACTIVE（各GSIも ACTIVE、`reservations` の TTL=`expireAt` ENABLED）。`blends` の GSI `list-index` 追加も実行済み（構築完了後にバックフィル）。
+- [x] **`src/lib/db.ts` の `TABLE` に6テーブル追加**（2026-07-21）：`ROASTERS`/`BEANS`/`LOTS`/`RESERVATIONS`/`ROASTER_METRICS`/`SUBSCRIPTIONS`。tsc/eslint クリーン。
+- [x] **本番環境へ適用**（2026-07-21）：`create-platform-tables.sh`（prefix無し）を実行。新設6テーブルは全 ACTIVE（各GSIも ACTIVE、`reservations` の TTL=`expireAt` ENABLED）。`blends` の GSI `list-index` は非同期構築中（本番実データのバックフィルに時間を要するが非破壊・未使用のため非ブロッキング）。
+- [x] **API実装①：焙煎者昇格オンボーディング**（§13.7・2026-07-21）：型/バリデーション/認可基盤（`requireRoaster` 都度Get）＋4ルート（`roaster/apply`・`account/roaster`・`admin/roasters` GET/PATCH）。tsc/eslintクリーン、401/403/CSRF検証済み。status enum に `pending` 追加。
+- [x] **API実装②：掲載豆 CRUD**（§13.7・2026-07-21）：`BeanRecord` 型＋`bean{Create,Update}Schema`＋3ルート（`roaster/beans` GET/POST・`[beanId]` PATCH 所有者チェック）。公開カタログ GSI `list-index` は sparse（off で外す）。tsc/eslint クリーン、preview 実テーブル結合テスト 5/5。
+- [ ] 次工程：**API実装③** = `lots` 在庫ロット CRUD（§11.2④）→ `checkout/blend` 拡張（`reservations`＋`TransactWriteItems`・§13.3）。公開カタログ読取（`GET /api/beans`）＋焙煎者 active 絞り込みも後続。UI（焙煎者昇格フォーム／`account/roaster` 出し分け／豆管理）は API と並行。`blends` GSI は構築完了＋バックフィル後に旧 Scan を Query へ置換。逆引き（roaster→blends）は必要になってから後付け（§11.4）。
+
+---
+
+## 13. API/ルート設計（確定・2026-07-21）
+
+### 13.0 全体方針
+- **既存慣習に完全準拠**（`src/app/api/**/route.ts`）：**Route Handlers 一本**（Server Actions は現状不使用のため導入しない）。各ファイル冒頭に `export const dynamic = 'force-dynamic'` と `export const preferredRegion = ['hnd1']`。
+- **DBは §11 のキー設計どおり Get/GSI Query のみ**（[[feedback-dynamodb-scan]]）。在庫確保は `TransactWriteItems`＋`ConditionExpression`（§9・§11.2⑤）。
+- **検証は Zod**（`@/lib/validation` にスキーマ追加、§13.5）。エラーは既存様式 `NextResponse.json({ error }, { status })`、例外は `Sentry.captureException(err, { tags: { route } })`。
+- **レート制限**：状態変更系（POST/PATCH/DELETE）は `checkGeneralRateLimit(ip, { prefix, maxAttempts, windowMs })`（既存 `checkout/blend` に倣う）。
+- **決済は既存パターン踏襲**：注文は Stripe Checkout で作成、`pending` で事前保存 → **Stripe webhook で `paid` 化＆在庫コミット**（§13.3）。クライアントから在庫を確定させない。
+
+### 13.1 認可レイヤ（4層）
+| 層 | 判定 | 用途 | 実装 |
+|---|---|---|---|
+| **buyer** | `auth()` のセッション | 購入者（ログイン必須の操作） | 既存 `@/lib/auth` |
+| **roaster** | `auth()` ＋ `roasters` Get で `status==="active"` | 販売者専用操作 | **新設 `verifyRoaster()`**（`@/lib/roasterAuth`）。`roasterId = userId`（§11.2②）で自レコードGet |
+| **admin** | `verifyAdminToken()` | 昇格承認・発注ダッシュボード等 | 既存 `@/lib/adminAuth` |
+| **cron/webhook** | `verifyBearer(CRON_SECRET)` / Stripe署名検証 | 定期・非同期 | 既存 `@/lib/safeCompare` / `webhooks/stripe` |
+
+> **セッション拡張が必要**：現行セッションに role/roaster 情報は無い（`src/lib/auth.ts` 未保持）。`verifyRoaster()` は**都度 `roasters` を Get**して判定する（セッションに焼き込むと昇格取消/休止が即時反映されない）。UIの出し分け用に軽量な `GET /api/account/roaster`（自分の焙煎者状態）を別途用意。
+
+### 13.2 エンドポイント一覧（アクター別）
+
+**購入者（buyer）**
+| Method・Path | 認可 | 用途 | 主なテーブル操作 | 参照 |
+|---|---|---|---|---|
+| `GET /api/blends` | public | 公開ブレンド一覧 | `blends` GSI `list-index`(`BLEND#PUBLIC`) Query ※既存Scanを置換 | §11.2① |
+| `GET /api/blends/[id]` | public | ブレンド詳細＋**構成豆の可否判定** | `blends` Get →各 `roasterId`/`beanId` を forward Get | §11.4 |
+| `POST /api/blends` | buyer | 自作ブレンド保存 | `blends` Put（`createdBy=userId`,`visibility`,`allowDrop`,`components`） | §6.2.1 |
+| `PATCH /api/blends/[id]` | buyer(所有者) | 自作ブレンド編集＝**新versionを派生**（`parentBlendId`） | `blends` Put（version++） | §11.2① |
+| `POST /api/checkout/blend` | public/buyer | 決済セッション作成（**拡張**：`blendId`/`blendVersion`/`labelSnapshot` を注文へ、`reservations` で在庫確保） | `orders` Put(pending)＋`reservations` TransactWrite＋Stripe | §13.3 |
+| `GET /api/account/orders` | buyer | 注文履歴（既存） | `orders` GSI `userId-index`/`customerEmail-index` | §11.3 |
+| `POST /api/account/orders/[id]/substitution` | buyer | **差替提案の承認/辞退**（§6.3・購入者承認必須） | `orders` `substitution[].approvedByBuyerAt` Update／辞退時は返金トリガ | §6.3 |
+
+**販売者（roaster）**
+| Method・Path | 認可 | 用途 | 主なテーブル操作 | 参照 |
+|---|---|---|---|---|
+| `POST /api/roaster/apply` | buyer | 昇格申請（許可/届出・オプトイン・規約同意） | `roasters` Put（`status="paused"`起点→admin承認で`active`） | §6.1.1 |
+| `GET /api/account/roaster` | buyer | 自分の焙煎者状態（UI出し分け） | `roasters` Get | §13.1 |
+| `PATCH /api/roaster/status` | roaster | 休止/再開/退会（`pausedUntil` 設定＝T1/T2の判定源） | `roasters` Update＋波及で `beans.orderStatus` 一括 | §6.2.1・§6.3 |
+| `GET/POST /api/roaster/beans` | roaster | 掲載豆の一覧/追加（§6.2.1 申告5項目＝価格・上限・LT等） | `beans` GSI `by-roaster` Query／Put | §11.2③ |
+| `PATCH /api/roaster/beans/[beanId]` | roaster(所有者) | 価格・`weeklyCapKg`・`leadTimeDays`・`orderStatus`(on/off/paused) | `beans` Update | §6.1.2 |
+| `POST /api/roaster/lots` | roaster | ロット登録（焙煎日×`onHandG`・`parRankG`・`freshBy`） | `lots` Put（PK`beanId`/SK`roastDate`） | §11.2④ |
+| `PATCH /api/roaster/lots/[beanId]/[roastDate]` | roaster(所有者) | 在庫調整・値引き/廃棄マーク | `lots` Update（`onHandG`/`status`/計測） | §7 |
+| `GET /api/roaster/pos` | roaster | 自分宛の発注一覧（自動承認/要応答） | `orders` の `procurement` を対象抽出（後付け逆引き要否は§11.4） | §6.2 |
+| `POST /api/roaster/pos/[orderId]/respond` | roaster | 発注応答（accept/decline・48hタイムアウト前） | `orders.procurement[].poStatus` Update | §6.2 |
+| `GET /api/roaster/metrics` | roaster | 実廃棄率/GMV/失注率（自分の月次） | `roaster_metrics` Get（PK`roasterId`/SK`yyyy-mm`） | §11.2⑦ |
+| `POST /api/roaster/subscription` | roaster | サブスク開始/管理（Stripe） | `subscriptions` Put＋Stripe Subscription | §11.2⑧ |
+
+**管理（admin）**
+| Method・Path | 認可 | 用途 | 主なテーブル操作 | 参照 |
+|---|---|---|---|---|
+| `GET /api/admin/roasters` | admin | 昇格申請/休止/退会の運用一覧 | `roasters` GSI `by-status` Query | §11.2② |
+| `PATCH /api/admin/roasters/[roasterId]` | admin | 承認（`paused`→`active`）/停止 | `roasters` Update | §6.1.1 |
+| `GET /api/admin/pos` | admin | 全発注ダッシュボード（例外T1/T2/T3の監視） | `orders` 例外抽出 | §6.3 |
+| `POST /api/admin/orders/[id]/substitution` | admin | **Sikō差替推薦の作成**（価格吸収バンド判定含む）→購入者承認へ | `orders.substitution[]` Put | §6.3 |
+| `GET /api/admin/blends` | admin | 全ブレンド（未公開含む・**既存Scanを`list-index` Queryへ置換**） | `blends` GSI Query | §13.6 |
+
+**cron / webhook（非対話）**
+| Method・Path | 認可 | 用途 | 主なテーブル操作 | 参照 |
+|---|---|---|---|---|
+| `GET /api/cron/release-reservations` | cron | 失効予約の在庫戻し（TTLのバックストップ） | `reservations` GSI `by-expire` Query→`lots.reservedG` 戻し | §11.2⑤ |
+| `GET /api/cron/fresh-lots` | cron | 鮮度切れ間近ロットの値引き/廃棄判定 | `lots` GSI `by-freshBy` Query→`status` 更新＋`roaster_metrics` ADD | §7・§11.2④ |
+| `GET /api/cron/po-timeouts` | cron | 48h無応答の発注をT2/T3例外へ昇格 | `orders.procurement[].poStatus="timeout"` | §6.3 |
+| `GET /api/cron/subscription-dunning` | cron | サブスク延滞/失効の運用 | `subscriptions` GSI `by-status` Query | §11.2⑧ |
+| `POST /api/webhooks/stripe` | 署名検証 | 決済完了→在庫コミット・返金・サブスク（**拡張**） | §13.3 | §13.4 |
+
+### 13.3 主要フロー：注文→確保→発注→例外（endpoint連携）
+1. `POST /api/checkout/blend`：`orders` を `pending` Put → 構成豆ごとに `reservations`＋`lots.reservedG` を **`TransactWriteItems`** で一括確保（`ConditionExpression: reservedG + qty <= onHandG`）。**1つでも不成立の豆**は在庫確保せず `procurement.mode="po"`（発注）としてマーク。全ロット確保できた豆は `mode="stock"`。→ Stripe Checkout URL を返す。
+2. **Stripe webhook `checkout.session.completed`**：`orders.status="paid"`。`reservations.state="committed"`＝`lots` から `onHandG-=qty`・`soldG+=qty`。在庫豆はここで履行確定。
+3. **発注豆（`mode="po"`）**：`weeklyCapKg` 内なら `poStatus="auto_approved"`、超過は `pending`（`timeoutAt=+48h`）→ 焙煎者が `POST /api/roaster/pos/[orderId]/respond`。
+4. **例外（§6.3）**：`declined`／48h `timeout`（`cron/po-timeouts`）で `orders.exception`（T1/T2/T3・課金前後phase）を確定 → **抜く禁止＝差替 or 返金の2択**。差替は `admin/orders/[id]/substitution`（Sikō推薦＋価格吸収バンド±¥100/100g）→ `account/orders/[id]/substitution`（購入者承認）で確定、辞退は返金。
+5. **計測**：paid/廃棄/返金の各イベントで `roaster_metrics` を原子 `ADD`（§11.2⑦）。
+
+### 13.4 冪等性・トランザクション・状態機械
+- **在庫確保**：`reservations` は state machine `held → committed | released`。ブレンド複数ロットは `TransactWriteItems` で **all-or-nothing**（部分確保を作らない）。
+- **予約失効**：DynamoDB ネイティブTTL（`expireAt`）＋ `cron/release-reservations` の二重化（TTLは最大48h遅延しうるためcronが主・TTLは保険）。戻し時は `reservations.state` を条件に**二重戻し防止**（`ConditionExpression: state = "held"`）。
+- **webhook冪等**：`checkout.session.completed` は `orders.status` を条件付き更新（`status = "pending"` のときのみ `paid`）で再送耐性（既存 `webhooks/stripe` の様式に一致）。`reservations.state="held"` 条件でコミットの二重適用も防止。
+- **発注応答**：`poStatus` 遷移は `pending` からのみ許可（`ConditionExpression`）。承認済/timeout後の遅延応答を弾く。
+- **差替**：`substitution[].approvedByBuyerAt` 未セット条件でのみ確定。二重承認・承認後の再提案を防止。
+
+### 13.5 追加する Zod スキーマ（`@/lib/validation`）
+- `roasterApplySchema`（許可/届出区分・番号・期限・オプトイン・規約version）
+- `beanUpsertSchema`（§6.2.1 の5項目：`name`/`greenOrigin`/`roastLevel`/`pricePer100g`/`weeklyCapKg`＋`leadTimeDays`/`orderStatus`）
+- `lotUpsertSchema`（`roastDate`(yyyy-mm-dd)・`onHandG`・`parRankG`・`freshBy`）
+- `poRespondSchema`（`accept`|`decline`＋任意コメント）
+- `substitutionDecisionSchema`（`approve`|`decline`）
+- `blendCheckoutSchema` **拡張**（`blendId`・`blendVersion` を任意追加）／`blendUpsertSchema`（自作ブレンド保存の `components`・`visibility`・`allowDrop`）
+
+### 13.6 実装時の注意
+- **既存 `GET /api/admin/blends` は `ScanCommand`**（`src/app/api/admin/blends/route.ts`）。§11.2① の `list-index` GSI 追加後、GSI Query（`BLEND#PUBLIC` ＋ 未公開は別`gsiPk`か管理用GSI）へ置換する（[[feedback-dynamodb-scan]]）。
+- **焙煎者ガードは都度 `roasters` Get**（セッション非依存）＝実装は `requireRoaster()`（§13.7）。所有者チェック（`beans`/`lots`/自作`blends`）は `roasterId`/`createdBy` とセッション `userId` の一致で行う。
+- 内部リンクは `<Link>`、コミット前に eslint（[[feedback-lint-nextjs]]）。cron 追加時は `vercel.json`（または `vercel.ts`）の `crons` に登録。
+
+### 13.7 実装状況（2026-07-21）
+- **焙煎者昇格オンボーディングの縦スライスを実装**（申請→admin承認→active の一巡）：
+  - `src/types/platform.ts`（`RoasterRecord` ほか）／`src/lib/validation.ts`（`roasterApplySchema`・`adminRoasterUpdateSchema`）／`src/lib/roasterAuth.ts`（`getSessionRoaster()`＋`requireRoaster()`＝§13.1 の「都度Get」ガード。名称は `verifyRoaster` を `requireRoaster` に具体化）。
+  - ルート：`POST /api/roaster/apply`（buyer→`pending` で作成・`attribute_not_exists` で二重申請を409）／`GET /api/account/roaster`（自状態）／`GET /api/admin/roasters?status=`（GSI `by-status` Query・既定 pending）／`PATCH /api/admin/roasters/[roasterId]`（遷移表つき・`ConditionExpression` で競合防止）。
+  - **ステータス enum 精緻化**：申請待ちを表す `pending` を §11.2② の enum に追加（`pending|active|paused|withdrawn|selling_out`）。「休止(paused)」と「承認待ち」を別状態に分離（§13.2 の "paused起点" を改め、pending 起点に）。
+  - 検証：tsc/eslint クリーン。dev server で未認証=401・admin CSRF(origin不一致)=403・origin一致→admin未認証=401 を確認。**認証済みハッピーパスは本 worktree に `AUTH_SECRET` 未設定のため未通し**（要 env）。
+- **②掲載豆 CRUD（§6.2.1 申告5項目）を実装**：
+  - `src/types/platform.ts`（`BeanRecord`・`RoastLevel`(8段階)・`BeanOrderStatus`）／`src/lib/validation.ts`（`beanCreateSchema`・`beanUpdateSchema`・`ROAST_LEVELS`）。価格は税込・円/100g（§6.1.2）。
+  - ルート：`GET/POST /api/roaster/beans`（自分の豆一覧＝GSI `by-roaster` Query／作成）・`PATCH /api/roaster/beans/[beanId]`（価格・週上限・LT・ON/OFF の部分更新。**所有者チェック**＝`roasterId` 一致・read-modify-write＋`ConditionExpression`）。
+  - **公開カタログ GSI `list-index` は sparse**：`orderStatus!=="off"` のとき `gsiPk="BEAN#PUBLIC"`/`gsiSk=createdAt` を書き、`off` で外す（作成/更新の両方で維持）。
+  - 検証：tsc/eslint クリーン、dev server で未認証=401。**preview 実テーブルへの直接結合テスト 5/5 パス**（by-roaster 新着降順／カタログが on を含み off を除外＝sparse／on→off でカタログ脱落）。公開カタログの読取エンドポイント（`GET /api/beans`）と焙煎者 active 判定の絞り込みは後続。
+- 次スライス候補：`lots`（在庫ロット CRUD・§11.2④）→ `checkout/blend` 拡張（`reservations`＋`TransactWriteItems`・§13.3）。
 
 ---
 
