@@ -67,3 +67,49 @@ export interface BeanRecord {
   gsiPk?: 'BEAN#PUBLIC'
   gsiSk?: string              // = createdAt
 }
+
+// ───────────────────────────────────────── 在庫ロット（§11.2④ / §7）
+
+export type LotStatus = 'fresh' | 'discount' | 'expired'
+
+export interface LotRecord {
+  beanId: string              // PK（= BeanRecord.beanId）
+  roastDate: string           // SK（yyyy-mm-dd）＝焙煎日でロットを分ける
+  roasterId: string           // 所有者。豆の owner を非正規化（ロット単体で所有者判定するため）
+  onHandG: number             // 実在庫(g)
+  reservedG: number           // 決済中の確保ぶん(g)・§11.2⑤
+  availableG: number          // = onHandG − reservedG を**実体として保持**（下の注記参照）
+  parRankG: number            // 在庫ランク上限(100g刻み・§7)
+  freshBy: string             // 鮮度期限（ISO）
+  status: LotStatus
+  // 計測（§11.2⑦ のロールアップ元）
+  purchasedG: number
+  soldG: number
+  wastedG: number
+  createdAt: string
+  updatedAt: string
+  // GSI by-freshBy（鮮度切れ間近ロットの抽出）
+  gsiPk: 'LOT'
+  gsiSk: string               // = freshBy
+}
+
+// なぜ availableG を持つか（§13.3 の在庫確保に効く実装制約）:
+// DynamoDB の ConditionExpression は**算術式を書けない**ため、計画書の
+// `reservedG + qty <= onHandG` はそのままでは表現できない。
+// 派生値を属性として保持すれば `availableG >= :qty` という単純比較で条件付き更新でき、
+// TransactWriteItems での all-or-nothing 確保もそのまま実装できる。
+// → lots への書き込みでは常に availableG = onHandG − reservedG を維持すること。
+
+// ───────────────────────────────────────── 計測ロールアップ（§11.2⑦）
+
+export interface RoasterMetricsRecord {
+  roasterId: string           // PK
+  month: string               // SK（yyyy-mm）
+  gmvYen?: number
+  orderCount?: number
+  lostCount?: number
+  purchasedG?: number
+  soldG?: number
+  wastedG?: number
+  updatedAt?: string
+}

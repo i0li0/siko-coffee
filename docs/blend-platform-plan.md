@@ -300,14 +300,15 @@
 
 **4. `lots`（新設）** — 在庫ロット＝販売者×焙煎日（既存 `inventory` は現行ショップ単一SKU在庫として別に温存）
 - PK `beanId`・SK `roastDate`（yyyy-mm-dd）＝ロット
-- 属性：`onHandG`・`reservedG`（`available = onHandG − reservedG`）・`parRankG`(100g刻み)・`freshBy`(ISO 鮮度期限)・`status`("fresh"|"discount"|"expired")・**計測**`purchasedG`・`soldG`・`wastedG`
+- 属性：`onHandG`・`reservedG`・**`availableG`**（`= onHandG − reservedG` を**実体として保持**・下記）・`roasterId`（豆のownerを非正規化＝ロット単体で所有者判定）・`parRankG`(100g刻み)・`freshBy`(ISO 鮮度期限)・`status`("fresh"|"discount"|"expired")・**計測**`purchasedG`・`soldG`・`wastedG`
+- **なぜ `availableG` を実体で持つか（実装制約・2026-07-23 に判明）**：DynamoDB の `ConditionExpression` は**算術式を書けない**ため、本書が §11.2⑤/§13.3 で書いていた `reservedG + qty <= onHandG` は**そのままでは表現できない**。派生値を属性化すれば `availableG >= :qty` の単純比較で条件付き更新でき、`TransactWriteItems` の all-or-nothing 確保もそのまま実装できる。→ **lots へのあらゆる書き込みで `availableG = onHandG − reservedG` を維持する**（実装③で導入済み。§13.3 の確保条件は `availableG >= :qty` ＋ `ADD availableG :-qty, reservedG :qty` に読み替える）。
 - GSI `by-freshBy`：`gsiPk`=`"LOT"`、`gsiSk`=`freshBy`（鮮度切れ間近ロットを Query＝廃棄/値引き判定。Scanを使わない）
 
 **5. `reservations`（新設）** — 決済中の在庫確保（§9・TTL失効）
 - PK `orderId`・SK `beanId#roastDate`（確保したロット）
 - 属性：`qtyG`・`state`("held"|"committed"|"released")・`expireAt`(N epoch ← **DynamoDB ネイティブTTL**)
 - GSI `by-expire`：`gsiPk`=`"RSV"`、`gsiSk`=`expireAt`（cron が失効ぶんを Query して `reservedG` を戻す。TTLはバックストップ、確実な戻しはこのGSI）
-- 確保＝`inventory` を `UpdateItem` の `ConditionExpression`（`reservedG + qty <= onHandG`）で原子加算。ブレンドは複数ロットを `TransactWriteItems` で一括確保（1つでも不成立なら全体失敗→失敗豆を発注へ）。
+- 確保＝`lots` を `UpdateItem` の `ConditionExpression`（**`availableG >= :qty`** ※算術式は書けないため §11.2④ の派生属性を使う）で原子加算（`ADD reservedG :qty, availableG :-qty`）。ブレンドは複数ロットを `TransactWriteItems` で一括確保（1つでも不成立なら全体失敗→失敗豆を発注へ）。
 
 **6. `orders`（拡張）** — 注文＋発注＋差替（既存 PK `id` 維持）
 - 既存：`items`・`status`・`createdAt`・`userId`
@@ -381,7 +382,8 @@
 - [x] **本番環境へ適用**（2026-07-21）：`create-platform-tables.sh`（prefix無し）を実行。新設6テーブルは全 ACTIVE（各GSIも ACTIVE、`reservations` の TTL=`expireAt` ENABLED）。`blends` の GSI `list-index` は非同期構築中（本番実データのバックフィルに時間を要するが非破壊・未使用のため非ブロッキング）。
 - [x] **API実装①：焙煎者昇格オンボーディング**（§13.7・2026-07-21）：型/バリデーション/認可基盤（`requireRoaster` 都度Get）＋4ルート（`roaster/apply`・`account/roaster`・`admin/roasters` GET/PATCH）。tsc/eslintクリーン、401/403/CSRF検証済み。status enum に `pending` 追加。
 - [x] **API実装②：掲載豆 CRUD**（§13.7・2026-07-21）：`BeanRecord` 型＋`bean{Create,Update}Schema`＋3ルート（`roaster/beans` GET/POST・`[beanId]` PATCH 所有者チェック）。公開カタログ GSI `list-index` は sparse（off で外す）。tsc/eslint クリーン、preview 実テーブル結合テスト 5/5。
-- [ ] 次工程：**API実装③** = `lots` 在庫ロット CRUD（§11.2④）→ `checkout/blend` 拡張（`reservations`＋`TransactWriteItems`・§13.3）。公開カタログ読取（`GET /api/beans`）＋焙煎者 active 絞り込みも後続。UI（焙煎者昇格フォーム／`account/roaster` 出し分け／豆管理）は API と並行。`blends` GSI は構築完了＋バックフィル後に旧 Scan を Query へ置換。逆引き（roaster→blends）は必要になってから後付け（§11.4）。
+- [x] **API実装③：在庫ロット CRUD**（§13.7・2026-07-23）：`LotRecord` 型＋`lot{Create,Update}Schema`＋3ルート（`roaster/lots` GET/POST・`[beanId]/[roastDate]` PATCH）。数量操作は receivedG/wasteG/onHandG の排他3通り、`reservedG` との競合は **CAS＋409**。計測ロールアップ（`roaster_metrics` 原子 ADD）も接続。**`ConditionExpression` に算術式が書けないため派生属性 `availableG` を導入**（§11.2④・§13.3 の確保条件を読み替え）。tsc/eslint クリーン、vitest 15ケース追加（全139 passed）。preview 実テーブル検証は AWS 資格情報失効のため未実施。
+- [ ] 次工程：**API実装④** = `checkout/blend` 拡張（`reservations`＋`TransactWriteItems`・§13.3）。公開カタログ読取（`GET /api/beans`）＋焙煎者 active 絞り込みも後続。UI（焙煎者昇格フォーム／`account/roaster` 出し分け／豆管理）は API と並行。`blends` GSI は構築完了＋バックフィル後に旧 Scan を Query へ置換。逆引き（roaster→blends）は必要になってから後付け（§11.4）。
 
 ---
 
@@ -488,7 +490,14 @@
   - ルート：`GET/POST /api/roaster/beans`（自分の豆一覧＝GSI `by-roaster` Query／作成）・`PATCH /api/roaster/beans/[beanId]`（価格・週上限・LT・ON/OFF の部分更新。**所有者チェック**＝`roasterId` 一致・read-modify-write＋`ConditionExpression`）。
   - **公開カタログ GSI `list-index` は sparse**：`orderStatus!=="off"` のとき `gsiPk="BEAN#PUBLIC"`/`gsiSk=createdAt` を書き、`off` で外す（作成/更新の両方で維持）。
   - 検証：tsc/eslint クリーン、dev server で未認証=401。**preview 実テーブルへの直接結合テスト 5/5 パス**（by-roaster 新着降順／カタログが on を含み off を除外＝sparse／on→off でカタログ脱落）。公開カタログの読取エンドポイント（`GET /api/beans`）と焙煎者 active 判定の絞り込みは後続。
-- 次スライス候補：`lots`（在庫ロット CRUD・§11.2④）→ `checkout/blend` 拡張（`reservations`＋`TransactWriteItems`・§13.3）。
+- **③在庫ロット CRUD（§11.2④・§7）を実装**（2026-07-23）：
+  - `src/types/platform.ts`（`LotRecord`・`LotStatus`・`RoasterMetricsRecord`）／`src/lib/validation.ts`（`lotCreateSchema`・`lotUpdateSchema`）／`src/lib/roasterAuth.ts` に `getOwnedBean()` 追加／`src/lib/roasterMetrics.ts`（`addRoasterMetrics()`＝§11.2⑦ の原子 ADD・月キーは **JST** 基準）。
+  - ルート：`GET /api/roaster/lots?beanId=`（PK Query・焙煎日降順）・`POST /api/roaster/lots`（`attribute_not_exists` で豆×焙煎日の二重登録を409）・`PATCH /api/roaster/lots/[beanId]/[roastDate]`。所有者判定は `lots.roasterId`（豆の owner を非正規化）＝ロット単体で完結。
+  - **数量の動かし方を3通りに限定（排他）**：`receivedG`（追加入荷＝`onHandG`/`purchasedG` 加算）／`wasteG`（廃棄＝`onHandG` 減・`wastedG` 加算）／`onHandG`（棚卸しの絶対上書き・計測に載せない）。廃棄・入荷は `roaster_metrics` へ原子 ADD（実廃棄率の分子/分母）。
+  - **同時実行**：`reservedG` は決済フロー（§13.3）が並行更新するため、素の read-modify-write は禁止。**読んだ `onHandG`/`reservedG`/`roasterId` を条件にした CAS**（`ConditionExpression`）＋割り込み時 409 とした。確保済みを下回る調整も 409。
+  - **設計修正**：`ConditionExpression` に算術式が書けない件を受け、派生属性 `availableG` を導入（§11.2④ の注記）。
+  - 検証：tsc/eslint クリーン、**vitest 15ケース新規（全体 139 passed）**。AWS 資格情報が本 worktree で失効しており、**preview 実テーブルの結合テストは未実施**（②と同様の直接検証は要再ログイン）。
+- 次スライス候補：`checkout/blend` 拡張（`reservations`＋`TransactWriteItems`・§13.3）／公開カタログ読取 `GET /api/beans`。
 
 ---
 

@@ -6,9 +6,10 @@
 #   ※ 既存 inventory テーブル（PK beanId のみ＝現行ショップ単一SKU在庫）とは別物。
 #      複合キーに主キー変更できないため、プラットフォームのロットはこの新テーブルに分離（§11.0）。
 # GSI by-freshBy: gsiPk(HASH,定数 "LOT") + gsiSk(RANGE,=freshBy) … 鮮度切れ間近ロットを Query（Scan回避）。
-#   ※ 主要属性（キー外・定義不要）: onHandG / reservedG / parRankG / freshBy / status("fresh"|"discount"|"expired") /
-#      計測 purchasedG / soldG / wastedG。available = onHandG − reservedG。
-#      在庫確保は reservedG への ConditionExpression 原子加算＋ブレンドは TransactWriteItems（§9・§13.3）。
+#   ※ 主要属性（キー外・定義不要）: roasterId / onHandG / reservedG / availableG / parRankG / freshBy /
+#      status("fresh"|"discount"|"expired") / 計測 purchasedG / soldG / wastedG。
+#      availableG = onHandG − reservedG を**実体で保持**する（ConditionExpression に算術式を書けないため。§11.2④）。
+#      在庫確保は `availableG >= :qty` 条件での原子加算＋ブレンドは TransactWriteItems（§9・§13.3）。
 
 set -euo pipefail
 
