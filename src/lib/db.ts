@@ -32,4 +32,11 @@ export const TABLE = {
   CONFIG:    `${prefix}config`,
   AUTH:      `${prefix}auth`,
   FEEDBACK:  `${prefix}feedback`,
+  // ブレンド共創プラットフォーム（docs/blend-platform-plan.md §11）
+  ROASTERS:        `${prefix}roasters`,
+  BEANS:           `${prefix}beans`,
+  LOTS:            `${prefix}lots`,
+  RESERVATIONS:    `${prefix}reservations`,
+  ROASTER_METRICS: `${prefix}roaster-metrics`,
+  SUBSCRIPTIONS:   `${prefix}subscriptions`,
 } as const;

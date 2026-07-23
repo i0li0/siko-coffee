@@ -71,3 +71,62 @@ export const updateInventorySchema = z.object({
   origin: z.string().max(100).optional(),
   stockType: z.string().max(50).optional(),
 });
+
+// --- ブレンド共創プラットフォーム: 焙煎者昇格（§6.1.1 / §13.5） ---
+
+// 昇格申請。資格＝製造・加工の許可(permit)/届出(notification)を持つこと。
+// permit は期限監視のため licenseExpiry 必須（notification は期限なし）。
+export const roasterApplySchema = z
+  .object({
+    displayName: z.string().trim().min(1).max(60),
+    licenseType: z.enum(['permit', 'notification']),
+    licenseNo: z.string().trim().min(1).max(60),
+    licenseExpiry: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'yyyy-mm-dd 形式で入力してください').optional(),
+    invoiceRegNo: z.string().trim().regex(/^T\d{13}$/, 'T+13桁で入力してください').optional(),
+    termsVersion: z.string().trim().min(1).max(20),
+    optIns: z.object({
+      allowBlend: z.boolean(),
+      allowNameStory: z.boolean(),
+      allowSelloutAfterExit: z.boolean(),
+    }),
+  })
+  .refine((d) => d.licenseType !== 'permit' || !!d.licenseExpiry, {
+    message: '許可（permit）には有効期限（licenseExpiry）が必要です',
+    path: ['licenseExpiry'],
+  });
+
+// admin による焙煎者ステータス遷移（承認＝active / 停止・退会など）
+export const adminRoasterUpdateSchema = z.object({
+  status: z.enum(['active', 'paused', 'withdrawn', 'selling_out']),
+});
+
+// --- ブレンド共創プラットフォーム: 掲載豆（§6.2.1 申告5項目 / §13.5） ---
+
+// 焙煎度（8段階）。src/types/platform.ts の RoastLevel と同期させること。
+export const ROAST_LEVELS = ['light', 'cinnamon', 'medium', 'high', 'city', 'full_city', 'french', 'italian'] as const;
+
+const orderStatusSchema = z.enum(['on', 'off', 'paused']);
+
+// 掲載豆の作成＝§6.2.1 の5項目（+ leadTime / orderStatus）。価格は税込・円/100g（§6.1.2）。
+export const beanCreateSchema = z.object({
+  name: z.string().trim().min(1).max(60),
+  greenOrigin: z.string().trim().min(1).max(100),
+  roastLevel: z.enum(ROAST_LEVELS),
+  pricePer100g: z.number().int().min(1).max(1_000_000),
+  weeklyCapKg: z.number().min(0).max(1000),
+  leadTimeDays: z.number().int().min(0).max(365),
+  orderStatus: orderStatusSchema.optional().default('on'),
+});
+
+// 部分更新（価格・週上限・リードタイム・ON/OFF の変更を含む）
+export const beanUpdateSchema = z
+  .object({
+    name: z.string().trim().min(1).max(60).optional(),
+    greenOrigin: z.string().trim().min(1).max(100).optional(),
+    roastLevel: z.enum(ROAST_LEVELS).optional(),
+    pricePer100g: z.number().int().min(1).max(1_000_000).optional(),
+    weeklyCapKg: z.number().min(0).max(1000).optional(),
+    leadTimeDays: z.number().int().min(0).max(365).optional(),
+    orderStatus: orderStatusSchema.optional(),
+  })
+  .refine((o) => Object.keys(o).length > 0, { message: '更新項目がありません' });
