@@ -529,6 +529,66 @@
 
 ---
 
+## 14. 実装ハンドオフ（次セッション再開用・2026-07-23 更新）
+
+> このセクションだけ読めば、冷えた状態から実装を再開できることを意図した自己完結の引き継ぎ。詳細は各§を参照。
+> **経緯**：初版は 2026-07-21 に `claude/blend-platform-plan-docs-7dd63f`（commit `3de981e`）で書かれたが、**PR #68 のマージ時に main へ入らなかった**（当該ブランチは未マージのまま残っている）。本節はその後継として現状に合わせて書き直したもの。
+
+### 14.1 現在地
+- **設計（§1〜§13）完了。実装①〜⑤まで完了**（昇格オンボーディング／掲載豆CRUD／在庫ロットCRUD／注文→確保→発注／発注応答・タイムアウト・差替/返金）。
+- ブランチ：`claude/section-14-implementation-3-82d2cc`（worktree 運用）。テストは全 179 passed、`next build` 通過。
+
+### 14.2 完了済み（DONE）
+1. **設計 §1〜§13**。
+2. **DynamoDB**：新設6＋`blends` GSI（2026-07-21）に加え、**`pos`（§11.2⑨）を追加**（2026-07-23・preview／本番とも ACTIVE）。作成は `scripts/create-*-table.sh`・一括 `create-platform-tables.sh`。
+3. **API①** 焙煎者オンボーディング（`roaster/apply`・`account/roaster`・`admin/roasters`）。
+4. **API②** 掲載豆CRUD（`roaster/beans`・`[beanId]`）。公開カタログ GSI は sparse。
+5. **API③** 在庫ロットCRUD（`roaster/lots`・`[beanId]/[roastDate]`）。数量操作は receivedG/wasteG/onHandG の排他3通り、競合は CAS＋409。
+6. **API④** 注文→確保→発注（`checkout/blend` 拡張・Stripe webhook で commit・`cron/release-reservations`）。
+7. **API⑤** 発注応答（`roaster/pos`・`respond`）・`cron/po-timeouts`・差替/返金（`admin`／`account` の substitution）。
+8. **結合テスト基盤**：`scripts/integration/platform-flow.test.ts`＋`vitest.integration.config.ts`（preview 実テーブル・15/15 パス）。
+
+### 14.3 環境の状態（要注意）
+- **AWS**：`user/shun`（acct 654512230021）・`ap-northeast-1`。プラットフォーム7テーブルが preview／本番の両環境で稼働。
+- **`blends` GSI `list-index`**：追加済みだが**バックフィル未**。それまで `GET /api/blends` は旧 `ScanCommand` 経路（§13.6）。
+- **ローカル dev の `AUTH_SECRET` 未設定**：`auth()` が動かず**HTTP経由の認証済みE2Eは未検証**。データ層は preview 実テーブルの結合テストで代替確認している。
+- **cron**：`vercel.json` に `release-reservations`（10分毎）と `po-timeouts`（毎時5分）を登録済み。いずれも既存 `CRON_SECRET` を使う（新規 env 不要）。
+- **§6.3 の運用パラメータ**は `src/lib/platformParams.ts` で env 外出し（`PLATFORM_PO_TIMEOUT_HOURS` / `PLATFORM_DELAY_SILENT_DAYS` / `PLATFORM_DELAY_CHOICE_DAYS` / `PLATFORM_SUBSTITUTION_BAND_YEN`）。未設定なら既定値（48/3/7/100）。
+
+### 14.4 残タスク（実装・優先順）
+- [ ] **公開カタログ読取**：`GET /api/beans`（GSI `list-index`）＋**焙煎者 active 絞り込み**（read時 forward Get）。`GET /api/blends` の Scan→Query 置換（要バックフィル）。
+- [ ] **UI**：焙煎者昇格フォーム／`account/roaster` 出し分け／豆・ロット管理／**発注応答画面**（要対応件数のベル表示・§6.2.1）／カタログからのブレンド作成。API はすべて揃っている。
+- [ ] **サブスク**：`roaster/subscription`(POST) ＋ Stripe Billing。`subscriptions` テーブルは作成済み・未使用。
+- [ ] **cron 残り**：`fresh-lots`（鮮度切れの値引き/廃棄・GSI `by-freshBy` は実機確認済み）・`subscription-dunning`。
+- [ ] **T1「待つ」の導線**（§6.3 ①）：遅延Δの閾値パラメータは用意済みだが、**ETA 再計算と通知が未実装**。
+- [ ] **週上限の実績ベース判定**：現状は「注文単体 vs `weeklyCapKg`」の近似。`roaster_metrics` の週次化か受注ログが要る。
+- [ ] **認証済みE2E検証**：preview デプロイ後に「申請→admin承認→active→豆/ロット登録→注文→発注応答→差替/返金」を通しで確認。
+- [ ] **`/shop` のテストデータ差し替え**：`data.ts` の豆3種・定番/みんなのブレンドは全て架空（§12）。SikŌ 自身の3種へ差し替える。
+
+### 14.5 残タスク（外部確認・実装と並行可）
+- [ ] 焙煎届出の住所訂正（北新田町→潮新町）の完了確認（§10）。
+- [ ] 保健所：複数焙煎者ブレンド小分け・通販が現行届出でカバーされるか（§3.3）。
+- [ ] 税理士：免税前提の会計裏取り（§4/§3.5）。
+- [ ] オープンデータ取込の実装調査（昇格の自動一次判定・§6.1.1）。※初期は手動ゲートで回避可。
+
+### 14.6 次の一手（推奨開始点）
+**UI か 公開カタログ読取（`GET /api/beans`）**。API は注文の一巡（掲載→在庫→注文→確保→発注→応答→例外→差替/返金）まで揃ったので、**次のボトルネックは触れる画面が無いこと**。UI を作るなら発注応答画面（焙煎者の必須動線）→豆/ロット管理→昇格フォームの順が実利が高い。
+
+### 14.7 実装上の注意（gotchas・既確認）
+- **`ConditionExpression` に算術式は書けない**（`reservedG + qty <= onHandG` は不可）。→ `lots` は派生属性 `availableG` を実体で持ち、`availableG >= :qty` の単純比較で確保する。**lots へのあらゆる書き込みで `availableG = onHandG − reservedG` を維持すること**（§11.2④）。
+- **`lots` の read-modify-write は禁止**（`reservedG` を決済フローが並行更新する）。更新は**読んだ値を条件にした CAS**＋競合時 409。
+- **`status`・`state`・`comment` は DynamoDB 予約語** → `ExpressionAttributeNames` 必須。
+- **計測（`roaster_metrics`）の ADD は冪等でない** → webhook からの計上は `claim()` で1回だけに絞る。
+- **焙煎者ガードは都度 `roasters` Get**（`requireRoaster`）。`pos` は PK が `roasterId` なので**キーの時点で所有者が保証される**。
+- **公開カタログは sparse index**：`beans.orderStatus="off"` で `gsiPk`/`gsiSk` を落とす（作成・更新の両方）。
+- **`/api/admin/*` の状態変更は Origin 必須**（middleware のCSRF・不一致は403）。`/api/roaster/*`・`/api/account/*` は NextAuth セッション依存。
+- **`reservations` TTL は epoch 秒**。TTL は削除されると `reservedG` を戻せないため**cron が主・TTL は保険**。
+- **テーブル作成スクリプトは非冪等**（既存は `ResourceInUseException`）。GSI/TTL は非同期＝ACTIVE 確認要。
+- **結合テストは通常の `vitest run` に含めない**：`VERCEL_ENV=preview npx vitest run --config vitest.integration.config.ts`（本番テーブルを触らないためのガード付き）。
+- コミット前に **eslint**（[[feedback-lint-nextjs]]）。内部リンクは `<Link>`。
+
+---
+
 ## 参考リンク（法規制の根拠）
 
 - 食品衛生法の届出：[キーコーヒー 開業ナビ](https://www.keycoffee.co.jp/business/kaigyo-navi/category/business-use/detail/permission-to-sell-coffee-beans/) ／ [コーヒー豆研究所](https://coffee-labo.co.jp/coffee-sell-permit/)
