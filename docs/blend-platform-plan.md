@@ -383,7 +383,7 @@
 - [x] **API実装①：焙煎者昇格オンボーディング**（§13.7・2026-07-21）：型/バリデーション/認可基盤（`requireRoaster` 都度Get）＋4ルート（`roaster/apply`・`account/roaster`・`admin/roasters` GET/PATCH）。tsc/eslintクリーン、401/403/CSRF検証済み。status enum に `pending` 追加。
 - [x] **API実装②：掲載豆 CRUD**（§13.7・2026-07-21）：`BeanRecord` 型＋`bean{Create,Update}Schema`＋3ルート（`roaster/beans` GET/POST・`[beanId]` PATCH 所有者チェック）。公開カタログ GSI `list-index` は sparse（off で外す）。tsc/eslint クリーン、preview 実テーブル結合テスト 5/5。
 - [x] **API実装③：在庫ロット CRUD**（§13.7・2026-07-23）：`LotRecord` 型＋`lot{Create,Update}Schema`＋3ルート（`roaster/lots` GET/POST・`[beanId]/[roastDate]` PATCH）。数量操作は receivedG/wasteG/onHandG の排他3通り、`reservedG` との競合は **CAS＋409**。計測ロールアップ（`roaster_metrics` 原子 ADD）も接続。**`ConditionExpression` に算術式が書けないため派生属性 `availableG` を導入**（§11.2④・§13.3 の確保条件を読み替え）。tsc/eslint クリーン、vitest 15ケース追加（全139 passed）。preview 実テーブル検証は AWS 資格情報失効のため未実施。
-- [x] **API実装④：注文→確保→発注（§13.3）**（2026-07-23）：`reservations` の hold/commit/release（`TransactWriteItems`・all-or-nothing）＋`checkout/blend` のプラットフォーム対応（サーバ側で価格/可否を解決・不足は `mode="po"`）＋Stripe webhook での確定と計測ロールアップ（`claim` で二重計上防止）＋`cron/release-reservations`（10分毎・`vercel.json` 登録済み）。vitest 19ケース追加（全158 passed）、`next build` 通過。週上限の判定は「注文単体 vs 週上限」の近似（実績集計は未実装）。
+- [x] **API実装④：注文→確保→発注（§13.3）**（2026-07-23）：`reservations` の hold/commit/release（`TransactWriteItems`・all-or-nothing）＋`checkout/blend` のプラットフォーム対応（サーバ側で価格/可否を解決・不足は `mode="po"`）＋Stripe webhook での確定と計測ロールアップ（`claim` で二重計上防止）＋`cron/release-reservations`（10分毎・`vercel.json` 登録済み）。vitest 19ケース追加（全158 passed）、`next build` 通過。週上限の判定は「注文単体 vs 週上限」の近似（実績集計は未実装）。**preview 実テーブル結合テスト 12/12 パス**（実装③ぶんの確認も同梱・`scripts/integration/platform-flow.test.ts`）。
 - [ ] 次工程：**API実装⑤** = 発注応答（`roaster/pos` GET・`respond`・§6.2）＋`cron/po-timeouts`（48h無応答→T2/T3例外・§6.3）＋差替/返金の2択（`admin`/`account` の substitution・§6.3）。公開カタログ読取（`GET /api/beans`）＋焙煎者 active 絞り込みも後続。UI（焙煎者昇格フォーム／`account/roaster` 出し分け／豆・ロット管理／カタログからのブレンド作成）は API と並行。`blends` GSI は構築完了＋バックフィル後に旧 Scan を Query へ置換。逆引き（roaster→blends）は必要になってから後付け（§11.4）。
 - [ ] **週上限（`weeklyCapKg`）の判定を実績ベースへ**：現状は「注文単体 vs 週上限」の近似。`roaster_metrics` の週次化か受注ログの追加が必要（実装④で顕在化）。
 
@@ -498,7 +498,7 @@
   - **数量の動かし方を3通りに限定（排他）**：`receivedG`（追加入荷＝`onHandG`/`purchasedG` 加算）／`wasteG`（廃棄＝`onHandG` 減・`wastedG` 加算）／`onHandG`（棚卸しの絶対上書き・計測に載せない）。廃棄・入荷は `roaster_metrics` へ原子 ADD（実廃棄率の分子/分母）。
   - **同時実行**：`reservedG` は決済フロー（§13.3）が並行更新するため、素の read-modify-write は禁止。**読んだ `onHandG`/`reservedG`/`roasterId` を条件にした CAS**（`ConditionExpression`）＋割り込み時 409 とした。確保済みを下回る調整も 409。
   - **設計修正**：`ConditionExpression` に算術式が書けない件を受け、派生属性 `availableG` を導入（§11.2④ の注記）。
-  - 検証：tsc/eslint クリーン、**vitest 15ケース新規（全体 139 passed）**。AWS 資格情報が本 worktree で失効しており、**preview 実テーブルの結合テストは未実施**（②と同様の直接検証は要再ログイン）。
+  - 検証：tsc/eslint クリーン、**vitest 15ケース新規（全体 139 passed）**。preview 実テーブルでの確認（CAS の条件不成立・複合キーの `attribute_not_exists`・`by-freshBy` Query・計測 `ADD`）は実装④の結合テストに含めて実施済み（下記）。
 - **④注文→確保→発注（§13.3 の主要フロー）を実装**（2026-07-23）：
   - `src/lib/reservations.ts`：`planLotAllocations()`（**古いロットから FIFO 割当**・期限切れ/空きゼロは除外）／`holdReservations()`（**注文全体で1 `TransactWriteItems`**＝部分確保を作らない）／`commitReservations()`／`releaseReservation(sForOrder)()`／`findExpiredReservations()`（GSI `by-expire` Query）。
   - `src/lib/platformCheckout.ts`：`beanId` から **beans/roasters を forward Get** して価格・可否・生産国を決める（クライアント値は信用しない・§11.4）。`orderStatus!=="on"`／焙煎者が active・selling_out 以外は 409。**selling_out は在庫ぶんのみ**（不足＝購入不可＝§6.3 抜く禁止）。不足ぶんは `mode="po"`（週上限内＝`auto_approved`／超過＝`pending`＋48h `timeoutAt`）。`labelSnapshot`（生産国・重量比・価格）と `etaPromised`（発送準備3日＋最大リードタイム）を注文に固定。
@@ -506,7 +506,8 @@
   - `POST /api/webhooks/stripe` 拡張：`checkout.session.completed` で **held → committed**（`lots` の `onHandG`/`reservedG` を減らし `soldG` を積む）＋ `roaster_metrics` に GMV/件数/soldG を ADD（**`claim('platformCommittedAt')` で再送時の二重計上を防止**）。`checkout.session.expired` では**注文を消す前に確保を戻す**。
   - `GET /api/cron/release-reservations` 新設＋`vercel.json` に 10分毎で登録（TTL は削除されると `reservedG` を戻せなくなるため **cron が主・TTL は保険**）。
   - **週上限の判定は近似**：週次の受注実績を集計する場所が無いため「この注文単体 vs `weeklyCapKg`」で判定している。実績ベースにするなら `roaster_metrics` を週次化するか受注ログが要る（未対応）。
-  - 検証：tsc/eslint/`next build` クリーン、vitest **19ケース追加（全体 158 passed）**。preview 実テーブルでの通し確認は AWS 資格情報の再ログイン待ち。
+  - 検証：tsc/eslint/`next build` クリーン、vitest **19ケース追加（全体 158 passed）**。
+  - **preview 実テーブルの結合テスト 12/12 パス**（2026-07-23）：`scripts/integration/platform-flow.test.ts`＋`vitest.integration.config.ts`（通常の `vitest run` には含めない・実行は `VERCEL_ENV=preview npx vitest run --config vitest.integration.config.ts`）。確認できたのはモックでは検証できない DynamoDB 側の挙動——`TransactWriteItems` の all-or-nothing（1件不成立なら他も入らない）／`availableG >= :qty` 条件の成立・不成立／held→committed の二重適用防止（webhook 再送を模して2回実行）／二重戻し防止／GSI `by-expire`・`by-freshBy` の Query／複合キーでの `attribute_not_exists`／`ADD` の積み上げ。テストデータは毎回 UUID 付きで作り、後始末まで実施（残留ゼロを確認）。
 - 次スライス候補：発注応答（`roaster/pos` 系・§6.2）＋`cron/po-timeouts`（T2/T3 例外・§6.3）／公開カタログ読取 `GET /api/beans`／UI（焙煎者昇格フォーム・豆/ロット管理・カタログからのブレンド作成）。
 
 ---
