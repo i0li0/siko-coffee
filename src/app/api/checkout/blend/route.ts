@@ -9,7 +9,12 @@ import { auth } from '@/lib/auth';
 import { checkGeneralRateLimit, getClientIp } from '@/lib/rateLimit';
 import { blendCheckoutSchema } from '@/lib/validation';
 import { etaFromDays, resolvePlatformItem } from '@/lib/platformCheckout';
-import { holdReservations, releaseReservationsForOrder, type Allocation } from '@/lib/reservations';
+import {
+  holdReservations,
+  releaseReservationsForOrder,
+  sweepExpiredReservations,
+  type Allocation,
+} from '@/lib/reservations';
 import { createPoRecords } from '@/lib/pos';
 import type { LabelSnapshotEntry, ProcurementEntry } from '@/types/platform';
 
@@ -63,6 +68,16 @@ export async function POST(req: NextRequest) {
   const labelSnapshot: LabelSnapshotEntry[] = [];
   let etaDays = 0;
   const platformBlendIds: string[] = [];
+
+  // 失効した確保を先に戻してから在庫を見る（§14.3）。
+  // Hobby の cron は日次までで30分の確保に追いつかないため、**在庫が要る瞬間に自己修復**させる。
+  if (items.some((it) => it.components?.length || it.blendId)) {
+    try {
+      await sweepExpiredReservations();
+    } catch (err) {
+      Sentry.captureException(err, { tags: { route: 'checkout/blend', step: 'sweep' } });
+    }
+  }
 
   for (const item of items) {
     const grind = typeof item.grind === 'string' ? item.grind : '豆のまま';

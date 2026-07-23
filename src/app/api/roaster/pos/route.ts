@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import * as Sentry from '@sentry/nextjs'
 import { requireRoaster } from '@/lib/roasterAuth'
-import { listPosForRoaster } from '@/lib/pos'
+import { listPosForRoaster, sweepPoTimeouts } from '@/lib/pos'
 import type { PoStatus } from '@/types/platform'
 
 export const dynamic = 'force-dynamic'
@@ -18,6 +18,14 @@ export async function GET(req: NextRequest) {
   const statusParam = req.nextUrl.searchParams.get('status')
   if (statusParam && !VALID.includes(statusParam as PoStatus)) {
     return NextResponse.json({ error: 'Invalid status' }, { status: 400 })
+  }
+
+  // 期限切れの発注をここで拾って timeout 化しておく（Hobby の cron は日次までのため・§14.3）。
+  // 失敗しても一覧は返す。
+  try {
+    await sweepPoTimeouts()
+  } catch (err) {
+    Sentry.captureException(err, { tags: { route: 'roaster/pos', step: 'sweep' } })
   }
 
   try {

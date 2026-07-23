@@ -214,6 +214,21 @@ export async function releaseReservationsForOrder(orderId: string): Promise<numb
   return released
 }
 
+// 失効ぶんをまとめて戻す。cron からも、購入導線からも呼ぶ（下記の理由）。
+//
+// **なぜ購入導線からも呼ぶか**: Vercel Hobby プランの cron は「1日1回」までで、
+// 30分の確保に対して日次では遅すぎる（TTL は削除されると reservedG を戻せない＝在庫が死ぬ）。
+// そこで「在庫が要る瞬間＝チェックアウト時」に自己修復させ、cron は日次のバックストップに落とす。
+// Pro へ上げたら vercel.json の schedule を 10分毎に戻すだけでよい。
+export async function sweepExpiredReservations(limit = 50): Promise<number> {
+  const expired = await findExpiredReservations(Math.floor(Date.now() / 1000), limit)
+  let released = 0
+  for (const r of expired) {
+    if (await releaseReservation(r)) released += 1
+  }
+  return released
+}
+
 // 失効した確保を GSI by-expire で拾う（Scan なし・cron が主／TTL は保険・§13.4）。
 export async function findExpiredReservations(
   nowSec: number = Math.floor(Date.now() / 1000),

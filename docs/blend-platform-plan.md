@@ -552,7 +552,11 @@
 - **AWS**：`user/shun`（acct 654512230021）・`ap-northeast-1`。プラットフォーム7テーブルが preview／本番の両環境で稼働。
 - **`blends` GSI `list-index`**：追加済みだが**バックフィル未**。それまで `GET /api/blends` は旧 `ScanCommand` 経路（§13.6）。
 - **ローカル dev の `AUTH_SECRET` 未設定**：`auth()` が動かず**HTTP経由の認証済みE2Eは未検証**。データ層は preview 実テーブルの結合テストで代替確認している。
-- **cron**：`vercel.json` に `release-reservations`（10分毎）と `po-timeouts`（毎時5分）を登録済み。いずれも既存 `CRON_SECRET` を使う（新規 env 不要）。
+- **cron の頻度は Vercel Hobby プランの制約で日次**（重要・2026-07-23 に判明）：Hobby は **cron を1日1回までしか許可せず、それより頻繁な式はデプロイが失敗する**（`*/10 * * * *` を入れて実際に落ちた）。そのため `vercel.json` は日次（`release-reservations` 18:10 UTC／`po-timeouts` 18:20 UTC）にし、**適時性はリクエスト時の sweep で担保**する：
+  - 失効確保の戻し → `POST /api/checkout/blend` の冒頭で `sweepExpiredReservations()`（**在庫が要る瞬間に自己修復**。30分の確保に日次 cron は追いつかず、TTL は削除されると `reservedG` を戻せないため）。
+  - 発注のタイムアウト → `GET /api/roaster/pos`・`GET /api/admin/pos` の読取時に `sweepPoTimeouts()`。
+  - **Pro へ上げたら** `vercel.json` の schedule を `*/10 * * * *` / `5 * * * *` に戻すだけでよい（sweep はそのまま残して二重化で問題ない）。
+- **cron の認可**：いずれも既存 `CRON_SECRET`（新規 env 不要）。
 - **§6.3 の運用パラメータ**は `src/lib/platformParams.ts` で env 外出し（`PLATFORM_PO_TIMEOUT_HOURS` / `PLATFORM_DELAY_SILENT_DAYS` / `PLATFORM_DELAY_CHOICE_DAYS` / `PLATFORM_SUBSTITUTION_BAND_YEN`）。未設定なら既定値（48/3/7/100）。
 
 ### 14.4 残タスク（実装・優先順）
@@ -584,6 +588,7 @@
 - **`/api/admin/*` の状態変更は Origin 必須**（middleware のCSRF・不一致は403）。`/api/roaster/*`・`/api/account/*` は NextAuth セッション依存。
 - **`reservations` TTL は epoch 秒**。TTL は削除されると `reservedG` を戻せないため**cron が主・TTL は保険**。
 - **テーブル作成スクリプトは非冪等**（既存は `ResourceInUseException`）。GSI/TTL は非同期＝ACTIVE 確認要。
+- **Vercel Hobby の cron は日次まで**。`*/10` や毎時の式を `vercel.json` に書くと**デプロイ自体が失敗する**（ビルド前に弾かれるため Vercel 上にデプロイのレコードすら残らない）。頻繁な処理が要るならリクエスト時 sweep か Pro 昇格で（§14.3）。
 - **結合テストは通常の `vitest run` に含めない**：`VERCEL_ENV=preview npx vitest run --config vitest.integration.config.ts`（本番テーブルを触らないためのガード付き）。
 - コミット前に **eslint**（[[feedback-lint-nextjs]]）。内部リンクは `<Link>`。
 

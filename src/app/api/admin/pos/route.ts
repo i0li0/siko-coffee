@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import * as Sentry from '@sentry/nextjs'
 import { verifyAdminToken } from '@/lib/adminAuth'
-import { listPosByStatus } from '@/lib/pos'
+import { listPosByStatus, sweepPoTimeouts } from '@/lib/pos'
 import type { PoStatus } from '@/types/platform'
 
 export const dynamic = 'force-dynamic'
@@ -18,6 +18,13 @@ export async function GET(req: NextRequest) {
   const status = (req.nextUrl.searchParams.get('status') ?? 'pending') as PoStatus
   if (!VALID.includes(status)) {
     return NextResponse.json({ error: 'Invalid status' }, { status: 400 })
+  }
+
+  // 期限切れの発注を拾って timeout 化してから返す（Hobby の cron は日次までのため・§14.3）
+  try {
+    await sweepPoTimeouts()
+  } catch (err) {
+    Sentry.captureException(err, { tags: { route: 'admin/pos', step: 'sweep' } })
   }
 
   try {

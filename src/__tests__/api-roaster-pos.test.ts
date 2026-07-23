@@ -81,7 +81,10 @@ describe('GET /api/roaster/pos', () => {
     const body = (await res.json()) as { pos: PoRecord[]; pendingCount: number }
     expect(body.pos).toHaveLength(2)
     expect(body.pendingCount).toBe(1)
-    expect(sentCommands('QueryCommand')[0].input.KeyConditionExpression).toBe('roasterId = :rid')
+    const queries = sentCommands('QueryCommand').map((c) => c.input.KeyConditionExpression)
+    // 期限切れの sweep（GSI）→ 自分宛の一覧（PK）の順で引く。Scan は使わない。
+    expect(queries).toContain('gsiPk = :pk AND gsiSk <= :until')
+    expect(queries).toContain('roasterId = :rid')
   })
 
   it('status で絞り込める', async () => {

@@ -147,6 +147,36 @@ export async function syncOrderProcurement(orderId: string, beanId: string, poSt
   )
 }
 
+// 48h 無応答の発注を timeout にし、注文へ例外を立てる（§6.3）。
+// cron のほか、発注一覧の読み取り時にも呼ぶ（Hobby の cron が日次までのため＝下記 sweep の理由と同じ）。
+export async function sweepPoTimeouts(now = new Date().toISOString()): Promise<{ timedOut: number; skipped: number }> {
+  const expired = await listPosByStatus('pending', now)
+  let timedOut = 0
+  let skipped = 0
+
+  for (const po of expired) {
+    const updated = await transitionPo(po.roasterId, po.poKey, ['pending'], 'timeout')
+    if (!updated) {
+      skipped += 1 // 直前に焙煎者が応答した
+      continue
+    }
+    timedOut += 1
+
+    await syncOrderProcurement(po.orderId, po.beanId, 'timeout')
+    const roasterRes = await getDocClient().send(
+      new GetCommand({ TableName: TABLE.ROASTERS, Key: { roasterId: po.roasterId } }),
+    )
+    await applyOrderException(po.orderId, {
+      type: classifyException(roasterRes.Item as RoasterRecord | undefined),
+      beanId: po.beanId,
+      roasterId: po.roasterId,
+      reason: 'timeout',
+    })
+  }
+
+  return { timedOut, skipped }
+}
+
 // 欠け方の分類（§6.3 の軸1＝回復見込み）。
 //   T1 一時   … 復帰日がある休止（ETA を出せる＝待てる）
 //   T2 不定   … 休止だが復帰未定 / それ以外の目処なし
