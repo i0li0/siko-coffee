@@ -320,6 +320,12 @@
 - 属性：`gmvYen`・`orderCount`・`lostCount`（失注＝差替辞退/返金）・`purchasedG`・`soldG`・`wastedG` → **実廃棄率**=wasted/purchased・**失注率**=lost/(orders+lost)・**月次GMV**=gmvYen
 - 更新：注文paid/ロット廃棄/返金の各イベントで原子 `ADD`（集計Scan不要）。§6.3の運用パラメータ再調整もこの表を見る。
 
+**9. `pos`（新設・2026-07-23 追加）** — 発注（Purchase Order）＝ `orders.procurement[]` の焙煎者向け逆引き
+- PK `roasterId`・SK `poKey`（=`<orderId>#<beanId>`）
+- 属性：`orderId`・`beanId`・`beanName`・`qtyG`・`poStatus`("auto_approved"|"pending"|"accepted"|"declined"|"timeout")・`timeoutAt`・`leadTimeDays`・`respondedAt`・`comment`
+- GSI `by-status`：`gsiPk`=`"PO#<poStatus>"`、`gsiSk`=`timeoutAt ?? createdAt`（cron は `PO#pending` × `timeoutAt<=now` を Query／admin は任意ステータスを Query）
+- **なぜ独立テーブルにしたか**：焙煎者が自分宛の発注を引くには逆引きが要るが、`procurement` は**リスト属性で GSI キーにできず**、`orders` の Scan は禁止（[[feedback-dynamodb-scan]]）。§11.4 の「逆引きは必要になってから後付け」を実装⑤で実行した。真実は `orders.procurement[]` 側に置き、`pos` は表示・抽出用の非正規化として**両方を同期**する（`syncOrderProcurement()`）。
+
 **8. `subscriptions`（新設）** — 焙煎者サブスク
 - PK `roasterId`・SK `"sub"`（1焙煎者1サブスク）
 - 属性：`stripeSubId`・`plan`("founding"|"standard")・`priceYen`(3000)・`status`("active"|"past_due"|"canceled")・`currentPeriodEnd`・`createdAt`
@@ -384,7 +390,8 @@
 - [x] **API実装②：掲載豆 CRUD**（§13.7・2026-07-21）：`BeanRecord` 型＋`bean{Create,Update}Schema`＋3ルート（`roaster/beans` GET/POST・`[beanId]` PATCH 所有者チェック）。公開カタログ GSI `list-index` は sparse（off で外す）。tsc/eslint クリーン、preview 実テーブル結合テスト 5/5。
 - [x] **API実装③：在庫ロット CRUD**（§13.7・2026-07-23）：`LotRecord` 型＋`lot{Create,Update}Schema`＋3ルート（`roaster/lots` GET/POST・`[beanId]/[roastDate]` PATCH）。数量操作は receivedG/wasteG/onHandG の排他3通り、`reservedG` との競合は **CAS＋409**。計測ロールアップ（`roaster_metrics` 原子 ADD）も接続。**`ConditionExpression` に算術式が書けないため派生属性 `availableG` を導入**（§11.2④・§13.3 の確保条件を読み替え）。tsc/eslint クリーン、vitest 15ケース追加（全139 passed）。preview 実テーブル検証は AWS 資格情報失効のため未実施。
 - [x] **API実装④：注文→確保→発注（§13.3）**（2026-07-23）：`reservations` の hold/commit/release（`TransactWriteItems`・all-or-nothing）＋`checkout/blend` のプラットフォーム対応（サーバ側で価格/可否を解決・不足は `mode="po"`）＋Stripe webhook での確定と計測ロールアップ（`claim` で二重計上防止）＋`cron/release-reservations`（10分毎・`vercel.json` 登録済み）。vitest 19ケース追加（全158 passed）、`next build` 通過。週上限の判定は「注文単体 vs 週上限」の近似（実績集計は未実装）。**preview 実テーブル結合テスト 12/12 パス**（実装③ぶんの確認も同梱・`scripts/integration/platform-flow.test.ts`）。
-- [ ] 次工程：**API実装⑤** = 発注応答（`roaster/pos` GET・`respond`・§6.2）＋`cron/po-timeouts`（48h無応答→T2/T3例外・§6.3）＋差替/返金の2択（`admin`/`account` の substitution・§6.3）。公開カタログ読取（`GET /api/beans`）＋焙煎者 active 絞り込みも後続。UI（焙煎者昇格フォーム／`account/roaster` 出し分け／豆・ロット管理／カタログからのブレンド作成）は API と並行。`blends` GSI は構築完了＋バックフィル後に旧 Scan を Query へ置換。逆引き（roaster→blends）は必要になってから後付け（§11.4）。
+- [x] **API実装⑤：発注応答＋タイムアウト＋差替/返金**（§6.2・§6.3・2026-07-23）：**新テーブル `pos`（§11.2⑨）を preview／本番に作成**（GSI `by-status` ACTIVE）。`roaster/pos` GET・`respond`（`pending` からのみ遷移）・`cron/po-timeouts`（毎時5分・`vercel.json` 登録済み）・`admin/pos`・差替の推薦（admin）と承認/辞退（購入者）。例外は T1/T2/T3 × pre/post_charge で自動分類。差替は同系統＋±¥100/100g 圏に限定し吸収バンド内は支払額据え置き、辞退は全額返金＋`lostCount` 計上。運用パラメータは env 外出し（`src/lib/platformParams.ts`）。poStatus enum に `accepted` を追加。vitest 21ケース追加（全179 passed）、preview 実テーブル結合テスト 15/15、`next build` 通過。
+- [ ] 次工程：公開カタログ読取（`GET /api/beans`）＋焙煎者 active 絞り込みも後続。UI（焙煎者昇格フォーム／`account/roaster` 出し分け／豆・ロット管理／カタログからのブレンド作成）は API と並行。`blends` GSI は構築完了＋バックフィル後に旧 Scan を Query へ置換。逆引き（roaster→blends）は必要になってから後付け（§11.4）。
 - [ ] **`/shop` の表示は全てテストデータ**（オーナー確認・2026-07-23）：`src/components/shop/blend/data.ts` の `BEANS`（豆3種）・`PRESETS`（定番ブレンド4件）・`COMMUNITY`（みんなのブレンド5件）は産地/味/購入数/作者名すべて架空。**今は消さず**、将来削除して **SikŌ Coffee 自身の豆3種を実物として掲載する**。DynamoDB の `blends` は本番/preview とも0件＝削除対象はコードのみ。差し替え時の連動先：`/shop/product/[key]`・`src/app/sitemap.ts`・Stripe webhook の在庫減算（豆名マッチ）・比率配列が長さ3固定である前提。※ 焙煎者の掲載豆（`beans` テーブル）とは別枠。
 - [ ] **週上限（`weeklyCapKg`）の判定を実績ベースへ**：現状は「注文単体 vs 週上限」の近似。`roaster_metrics` の週次化か受注ログの追加が必要（実装④で顕在化）。
 
@@ -509,7 +516,16 @@
   - **週上限の判定は近似**：週次の受注実績を集計する場所が無いため「この注文単体 vs `weeklyCapKg`」で判定している。実績ベースにするなら `roaster_metrics` を週次化するか受注ログが要る（未対応）。
   - 検証：tsc/eslint/`next build` クリーン、vitest **19ケース追加（全体 158 passed）**。
   - **preview 実テーブルの結合テスト 12/12 パス**（2026-07-23）：`scripts/integration/platform-flow.test.ts`＋`vitest.integration.config.ts`（通常の `vitest run` には含めない・実行は `VERCEL_ENV=preview npx vitest run --config vitest.integration.config.ts`）。確認できたのはモックでは検証できない DynamoDB 側の挙動——`TransactWriteItems` の all-or-nothing（1件不成立なら他も入らない）／`availableG >= :qty` 条件の成立・不成立／held→committed の二重適用防止（webhook 再送を模して2回実行）／二重戻し防止／GSI `by-expire`・`by-freshBy` の Query／複合キーでの `attribute_not_exists`／`ADD` の積み上げ。テストデータは毎回 UUID 付きで作り、後始末まで実施（残留ゼロを確認）。
-- 次スライス候補：発注応答（`roaster/pos` 系・§6.2）＋`cron/po-timeouts`（T2/T3 例外・§6.3）／公開カタログ読取 `GET /api/beans`／UI（焙煎者昇格フォーム・豆/ロット管理・カタログからのブレンド作成）。
+- **⑤発注応答・タイムアウト・差替/返金の2択（§6.2・§6.3）を実装**（2026-07-23）：
+  - **新テーブル `pos`（§11.2⑨）を追加**（preview／本番とも作成済み・GSI `by-status` ACTIVE）。`orders.procurement[]` はリスト属性で GSI キーにできず Scan も禁止のため、焙煎者→発注の逆引きを非正規化で用意した。
+  - `src/lib/pos.ts`：`createPoRecords()`／`listPosForRoaster()`（PK Query）／`listPosByStatus()`（GSI Query）／`transitionPo()`（**`pending` からのみ遷移＝遅延応答を弾く**）／`syncOrderProcurement()`／`classifyException()`／`applyOrderException()`。
+  - `src/lib/platformParams.ts`：§6.3 の運用パラメータを**env で外出し**（`PO_TIMEOUT_HOURS`=48／`DELAY_SILENT_DAYS`=3／`DELAY_CHOICE_DAYS`=7／`SUBSTITUTION_BAND_YEN_PER_100G`=100）。計画書の「ハードコードせず設定値」を満たす。
+  - **poStatus enum に `accepted` を追加**：`auto_approved`（枠内で自動）と「焙煎者が明示承認」を区別しないと誰が通したか追えないため（§11.2⑥ の enum を精緻化）。
+  - ルート：`GET /api/roaster/pos`（要対応件数つき＝§6.2.1 のベル表示用）／`POST /api/roaster/pos/[orderId]/respond`（accept→`accepted`／decline→`declined`＋注文へ例外記録）／`GET /api/cron/po-timeouts`（`vercel.json` に毎時5分で登録）／`GET /api/admin/pos`／`POST /api/admin/orders/[id]/substitution`（Sikō推薦）／`POST /api/account/orders/[id]/substitution`（購入者の承認/辞退）。
+  - **例外の分類（§6.3 軸1）**：`classifyException()` が焙煎者ステータスから T1（`paused`＋`pausedUntil` あり＝ETA を出せる）／T2（復帰未定）／T3（`withdrawn`・`selling_out`＝「待つ」を出さない）を判定。phase は注文が `pending` なら pre_charge、それ以外は post_charge。
+  - **差替（`src/lib/substitution.ts`）**：推薦は**同系統（生豆生産国か焙煎度が一致）かつ ±¥100/100g 圏**に限定し、範囲外は 400 で作らせない。吸収バンド内は `absorbedBySiko=true`＝**購入者の支払額は据え置き**（§6.1.2 スナップショット固定と整合）。承認で**法定ラベルを再生成**（比率・g は保ち、豆/生産国/焙煎度/価格だけ差し替え＝作品の同一性を保つ）＋調達先を代替焙煎者の PO へ。辞退は `src/lib/refund.ts` で**全額返金**（確保中の在庫は戻し、**確定済みは戻さず単品消化へ**＝§5・§6.3）＋`roaster_metrics.lostCount` を計上。
+  - 検証：tsc/eslint/`next build` クリーン、vitest **21ケース追加（全体 179 passed）**、**preview 実テーブル結合テスト 15/15**（PO の PK Query・GSI by-status での期限切れ抽出・`pending` からのみの遷移・GSI パーティション移動・procurement 同期・例外の phase 判定を実機確認）。
+- 次スライス候補：公開カタログ読取（`GET /api/beans`）／サブスク（`roaster/subscription`・§11.2⑧）／UI（焙煎者昇格フォーム・豆/ロット管理・発注応答画面・カタログからのブレンド作成）。
 
 ---
 

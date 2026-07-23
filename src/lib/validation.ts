@@ -189,3 +189,23 @@ export const lotUpdateSchema = z
     (o) => [o.receivedG, o.wasteG, o.onHandG].filter((v) => v !== undefined).length <= 1,
     { message: 'receivedG / wasteG / onHandG は同時に指定できません' },
   );
+
+// --- ブレンド共創プラットフォーム: 発注応答と差替（§6.2 / §6.3 / §13.5） ---
+
+// 焙煎者の発注応答（48hタイムアウト前のみ有効・§6.2-5）
+export const poRespondSchema = z.object({
+  beanId: z.string().min(1),
+  decision: z.enum(['accept', 'decline']),
+  comment: z.string().trim().max(200).optional(),
+});
+
+// Sikō の差替推薦（§6.3：候補は Sikō が出し、確定は購入者承認）
+export const substitutionProposeSchema = z.object({
+  fromBeanId: z.string().min(1),
+  toBeanId: z.string().min(1),
+});
+
+// 購入者の差替判断。承認＝差替確定、辞退＝全額返金（v1は「抜く」を作らない2択）
+export const substitutionDecisionSchema = z.object({
+  decision: z.enum(['approve', 'decline']),
+});

@@ -1,6 +1,7 @@
 import { GetCommand } from '@aws-sdk/lib-dynamodb'
 import { getDocClient, TABLE } from '@/lib/db'
 import { planLotAllocations, type Allocation } from '@/lib/reservations'
+import { poTimeoutAt } from '@/lib/platformParams'
 import type {
   BeanRecord,
   LabelSnapshotEntry,
@@ -119,7 +120,7 @@ export async function resolvePlatformItem(
     if (roaster.status === 'selling_out') {
       return { ok: false, error: `「${bean.name}」は在庫限りのため、この量は購入できません`, status: 409 }
     }
-    // 週上限内なら自動承認、超過は焙煎者の応答待ち（48h・§6.2）
+    // 週上限内なら自動承認、超過は焙煎者の応答待ち（既定48h・§6.2／閾値は §6.3 の設定値）
     // ※ 週次の受注実績は現状どこにも集計していないため、判定は「この注文単体 vs 週上限」の近似。
     const autoApproved = plan.shortfallG / 1000 <= bean.weeklyCapKg
     procurement.push({
@@ -129,7 +130,7 @@ export async function resolvePlatformItem(
       mode: 'po',
       poStatus: autoApproved ? 'auto_approved' : 'pending',
       leadTimeDays: bean.leadTimeDays,
-      ...(autoApproved ? {} : { timeoutAt: new Date(Date.now() + 48 * 3600 * 1000).toISOString() }),
+      ...(autoApproved ? {} : { timeoutAt: poTimeoutAt() }),
     })
     etaDays = Math.max(etaDays, SHIP_PREP_DAYS + bean.leadTimeDays)
   }

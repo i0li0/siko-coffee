@@ -12,7 +12,15 @@ import {
 } from '@/lib/reservations'
 import { resolvePlatformItem } from '@/lib/platformCheckout'
 import { addRoasterMetrics, currentMetricsMonth } from '@/lib/roasterMetrics'
-import { lotKeyOf, type BeanRecord, type LotRecord, type RoasterRecord } from '@/types/platform'
+import {
+  applyOrderException,
+  createPoRecords,
+  listPosByStatus,
+  listPosForRoaster,
+  syncOrderProcurement,
+  transitionPo,
+} from '@/lib/pos'
+import { lotKeyOf, poKeyOf, type BeanRecord, type LotRecord, type RoasterRecord } from '@/types/platform'
 
 // preview 実テーブルに対する結合テスト（docs/blend-platform-plan.md §13.7）。
 // ユニットテストではモックできない DynamoDB 側の挙動を確認する:
@@ -203,6 +211,70 @@ describe('§13.3 注文→確保→確定（preview 実テーブル）', () => {
     await db.send(
       new DeleteCommand({ TableName: TABLE.RESERVATIONS, Key: { orderId: expiredOrderId, lotKey: lotKeyOf(BEAN_ID, NEW_LOT) } }),
     )
+  })
+})
+
+describe('§6.2/§6.3 発注応答と例外（preview 実テーブル）', () => {
+  const PO_ORDER_ID = `${ORDER_ID}-po`
+
+  it('⑨発注は焙煎者PKで引け、GSI by-status で期限切れも拾える', async () => {
+    // 注文本体（例外を書き込む先）も用意する
+    await db.send(
+      new PutCommand({
+        TableName: TABLE.ORDERS,
+        Item: {
+          id: PO_ORDER_ID,
+          status: 'paid',
+          createdAt: new Date().toISOString(),
+          procurement: [{ roasterId: ROASTER_ID, beanId: BEAN_ID, qtyG: 400, mode: 'po', poStatus: 'pending' }],
+        },
+      }),
+    )
+
+    const past = new Date(Date.now() - 3600 * 1000).toISOString()
+    await createPoRecords(PO_ORDER_ID, [
+      { roasterId: ROASTER_ID, beanId: BEAN_ID, beanName: bean.name, qtyG: 400, poStatus: 'pending', timeoutAt: past },
+    ])
+
+    const mine = await listPosForRoaster(ROASTER_ID, 'pending')
+    expect(mine).toHaveLength(1)
+    expect(mine[0]).toMatchObject({ orderId: PO_ORDER_ID, beanId: BEAN_ID, qtyG: 400 })
+
+    // cron が使う経路：PO#pending を timeoutAt <= now で Query
+    const expired = await listPosByStatus('pending', new Date().toISOString())
+    expect(expired.some((p) => p.orderId === PO_ORDER_ID)).toBe(true)
+  })
+
+  it('⑩応答は pending からのみ／二度目は条件不成立で弾かれる', async () => {
+    const key = poKeyOf(PO_ORDER_ID, BEAN_ID)
+    const accepted = await transitionPo(ROASTER_ID, key, ['pending'], 'accepted', { comment: '承知しました' })
+    expect(accepted).toMatchObject({ poStatus: 'accepted', comment: '承知しました', gsiPk: 'PO#accepted' })
+
+    // 遅延応答（既に accepted）は null
+    expect(await transitionPo(ROASTER_ID, key, ['pending'], 'declined')).toBeNull()
+
+    // GSI のパーティションも移っている＝pending の抽出に出てこない
+    const stillPending = await listPosByStatus('pending', new Date().toISOString())
+    expect(stillPending.some((p) => p.orderId === PO_ORDER_ID)).toBe(false)
+  })
+
+  it('⑪注文側の procurement 同期と例外記録（課金済み＝post_charge）', async () => {
+    await syncOrderProcurement(PO_ORDER_ID, BEAN_ID, 'declined')
+    const exception = await applyOrderException(PO_ORDER_ID, {
+      type: 'T2',
+      beanId: BEAN_ID,
+      roasterId: ROASTER_ID,
+      reason: 'declined',
+    })
+    expect(exception).toMatchObject({ type: 'T2', phase: 'post_charge' })
+
+    const order = await db.send(new GetCommand({ TableName: TABLE.ORDERS, Key: { id: PO_ORDER_ID } }))
+    expect((order.Item?.procurement as { poStatus: string }[])[0]?.poStatus).toBe('declined')
+    expect(order.Item?.exception).toMatchObject({ type: 'T2', reason: 'declined' })
+
+    // 後始末
+    await db.send(new DeleteCommand({ TableName: TABLE.POS, Key: { roasterId: ROASTER_ID, poKey: poKeyOf(PO_ORDER_ID, BEAN_ID) } }))
+    await db.send(new DeleteCommand({ TableName: TABLE.ORDERS, Key: { id: PO_ORDER_ID } }))
   })
 })
 

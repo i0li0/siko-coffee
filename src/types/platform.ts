@@ -125,7 +125,9 @@ export function lotKeyOf(beanId: string, roastDate: string): string {
 // ───────────────────────────────────────── 注文の調達・ラベル（§11.2⑥ / §3.4）
 
 export type ProcurementMode = 'stock' | 'po'
-export type PoStatus = 'auto_approved' | 'pending' | 'declined' | 'timeout'
+// §11.2⑥ の enum に `accepted`（焙煎者が明示承認）を追加。
+// auto_approved（枠内で自動）と区別しないと「誰が通したか」が追えないため。
+export type PoStatus = 'auto_approved' | 'pending' | 'accepted' | 'declined' | 'timeout'
 
 export interface ProcurementEntry {
   roasterId: string
@@ -135,6 +137,58 @@ export interface ProcurementEntry {
   poStatus?: PoStatus         // mode==="po" のときだけ
   timeoutAt?: string          // pending の48h期限（§6.3）
   leadTimeDays?: number       // ETA の素
+}
+
+// ───────────────────────────────────────── 発注レコード（§11.2⑨ / §6.2）
+// orders.procurement[] の焙煎者向け逆引き。リスト属性は GSI キーにできず orders の Scan も禁止なので、
+// 注文×豆ごとに1行へ非正規化して roasterId を PK にする（§11.4）。
+export interface PoRecord {
+  roasterId: string           // PK
+  poKey: string               // SK = `${orderId}#${beanId}`
+  orderId: string
+  beanId: string
+  beanName: string
+  qtyG: number
+  poStatus: PoStatus
+  timeoutAt?: string          // pending の48h期限
+  leadTimeDays?: number
+  respondedAt?: string
+  comment?: string
+  createdAt: string
+  updatedAt: string
+  gsiPk: string               // GSI by-status = `PO#${poStatus}`
+  gsiSk: string               // = timeoutAt ?? createdAt
+}
+
+export function poKeyOf(orderId: string, beanId: string): string {
+  return `${orderId}#${beanId}`
+}
+
+// ───────────────────────────────────────── 例外と差替（§6.3）
+
+// T1=一時（復帰日あり）/ T2=不定（休止・目処なし）/ T3=恒久（退会・売り切り）
+export type ExceptionType = 'T1' | 'T2' | 'T3'
+export type ExceptionPhase = 'pre_charge' | 'post_charge'
+
+export interface OrderException {
+  type: ExceptionType
+  phase: ExceptionPhase
+  beanId: string
+  roasterId: string
+  reason: 'declined' | 'timeout'
+  createdAt: string
+}
+
+export interface SubstitutionEntry {
+  fromBeanId: string
+  toBeanId: string
+  toBeanName: string
+  deltaYen: number            // 注文全体の差額（＋＝値上がり）
+  deltaPer100g: number        // 推薦バンド判定に使う 円/100g 差
+  absorbedBySiko: boolean     // |deltaPer100g| <= 吸収バンド なら Sikō が飲む（購入者承認だけで確定）
+  proposedAt: string
+  approvedByBuyerAt?: string
+  declinedByBuyerAt?: string
 }
 
 // 法定ラベル（生豆生産国・重量比）を発注時点で固定するスナップショット（§3.4）

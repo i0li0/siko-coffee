@@ -10,6 +10,7 @@ import { checkGeneralRateLimit, getClientIp } from '@/lib/rateLimit';
 import { blendCheckoutSchema } from '@/lib/validation';
 import { etaFromDays, resolvePlatformItem } from '@/lib/platformCheckout';
 import { holdReservations, releaseReservationsForOrder, type Allocation } from '@/lib/reservations';
+import { createPoRecords } from '@/lib/pos';
 import type { LabelSnapshotEntry, ProcurementEntry } from '@/types/platform';
 
 export const dynamic = 'force-dynamic';
@@ -150,6 +151,27 @@ export async function POST(req: NextRequest) {
     await releaseReservationsForOrder(orderId); // 注文が残らないので確保も戻す
     Sentry.captureException(err, { tags: { route: 'checkout/blend', step: 'pre-save' } });
     return NextResponse.json({ error: 'Failed to save order' }, { status: 500 });
+  }
+
+  // 発注（PO）を焙煎者向けの逆引きレコードとして作る（§11.2⑨）。
+  // 失敗しても注文自体は成立させる（真実は orders.procurement[] 側にあり、後から補填できる）。
+  const poSeeds = procurement
+    .filter((p) => p.mode === 'po')
+    .map((p) => ({
+      roasterId: p.roasterId,
+      beanId: p.beanId,
+      beanName: labelSnapshot.find((l) => l.beanId === p.beanId)?.name ?? p.beanId,
+      qtyG: p.qtyG,
+      poStatus: p.poStatus ?? 'pending',
+      timeoutAt: p.timeoutAt,
+      leadTimeDays: p.leadTimeDays,
+    }));
+  if (poSeeds.length > 0) {
+    try {
+      await createPoRecords(orderId, poSeeds);
+    } catch (err) {
+      Sentry.captureException(err, { tags: { route: 'checkout/blend', step: 'create-pos' } });
+    }
   }
 
   let session;

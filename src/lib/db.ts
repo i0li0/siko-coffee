@@ -39,4 +39,5 @@ export const TABLE = {
   RESERVATIONS:    `${prefix}reservations`,
   ROASTER_METRICS: `${prefix}roaster-metrics`,
   SUBSCRIPTIONS:   `${prefix}subscriptions`,
+  POS:             `${prefix}pos`,
 } as const;
