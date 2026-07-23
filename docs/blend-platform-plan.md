@@ -492,6 +492,58 @@
 
 ---
 
+## 14. 実装ハンドオフ（次セッション再開用・2026-07-21）
+
+> このセクションだけ読めば、冷えた状態から実装を再開できることを意図した自己完結の引き継ぎ。詳細は各§を参照。
+
+### 14.1 現在地
+- **設計（§1〜§13）は完了**。**実装②（掲載豆CRUD）まで着手済み**。**PR #68**（`claude/blend-platform-plan-docs-7dd63f` → `main`）で提出済み・未マージ。
+- ブランチ／worktree：`claude/blend-platform-plan-docs-7dd63f`。最新コミット `16a1ca2`。
+
+### 14.2 完了済み（DONE）
+1. **設計 §1〜§13**：ビジネス/法規制/会計/同意/アカウント/在庫/配送/データモデル(§11)/API設計(§13)。
+2. **DynamoDB テーブル**（§11.6）：新設6（`roasters`/`beans`/`lots`/`reservations`/`roaster-metrics`/`subscriptions`）＋ `blends` GSI `list-index`。作成スクリプトは `scripts/create-*-table.sh`・`add-blends-list-index.sh`・`create-platform-tables.sh`。**preview・本番の両環境へ適用済み**（全 ACTIVE・GSI ACTIVE・`reservations` TTL ENABLED）。
+3. **API① 焙煎者オンボーディング**（§13.7）：`roaster/apply`・`account/roaster`・`admin/roasters`(GET/PATCH)。`requireRoaster()`（`src/lib/roasterAuth.ts`）。
+4. **API② 掲載豆CRUD**（§13.7）：`roaster/beans`(GET/POST)・`roaster/beans/[beanId]`(PATCH)。公開カタログ GSI は sparse。
+5. `src/lib/db.ts` の `TABLE` に6定数追加。型 `src/types/platform.ts`、検証 `src/lib/validation.ts`。
+
+### 14.3 環境の状態（要注意）
+- **AWS**：`user/shun`（acct 654512230021）・`ap-northeast-1`。テーブルは両環境で稼働中。
+- **`blends` GSI `list-index`**：追加済みだが**既存アイテムのバックフィル未**（`gsiPk="BLEND#PUBLIC"`/`gsiSk=createdAt` を公開ブレンドへ書く移行が必要）。それまで旧 `ScanCommand` 経路を残す（§13.6）。
+- **ローカル dev の `AUTH_SECRET` 未設定**：`auth()` が動かず**HTTP経由の認証済みE2Eは未検証**。検証は preview デプロイか env 設定が必要。データ層は preview 実テーブルへの結合テストで代替確認済み（beans 5/5）。
+
+### 14.4 残タスク（実装・優先順）
+- [ ] **実装③ `lots` 在庫ロットCRUD**（§11.2④）：`roaster/lots`(POST)・`roaster/lots/[beanId]/[roastDate]`(PATCH)。`onHandG`/`reservedG`/`parRankG`/`freshBy`/計測。
+- [ ] **`checkout/blend` 拡張＝在庫確保の核心**（§13.3）：`reservations`＋`lots` を `TransactWriteItems`＋`ConditionExpression` で一括確保（部分確保を作らない／不成立豆は発注へ）。既存 `src/app/api/checkout/blend/route.ts` を拡張。
+- [ ] **Stripe webhook 拡張**（§13.3/§13.4）：`checkout.session.completed` で `reservations` commit＋`lots` 減算＋`roaster_metrics` ADD。冪等（`status="pending"` 条件・`state="held"` 条件）。
+- [ ] **発注（PO）**：`roaster/pos`(GET)・`roaster/pos/[orderId]/respond`(POST)。自動承認/48hタイムアウト。
+- [ ] **差替（§6.3）**：`admin/orders/[id]/substitution`(POST)＋`account/orders/[id]/substitution`(POST 承認/辞退)。
+- [ ] **cron群**：`release-reservations`・`fresh-lots`・`po-timeouts`・`subscription-dunning`（`verifyBearer(CRON_SECRET)`・`vercel.json` の `crons` 登録）。
+- [ ] **公開カタログ読取**：`GET /api/beans`（GSI `list-index`）＋**焙煎者 active 絞り込み**（read時 forward Get）。`GET /api/blends` の Scan→Query 置換（要バックフィル）。
+- [ ] **サブスク**：`roaster/subscription`(POST) ＋ Stripe Billing。`subscriptions` テーブル。
+- [ ] **UI**：焙煎者昇格フォーム／`account/roaster` 出し分け／豆管理／（後に）ブレンド作成プレビュー（§6.2.1）。API と並行。
+- [ ] **認証済みE2E検証**：preview デプロイ後に「申請→admin承認→active→豆登録→一覧/更新」を通しで確認。
+
+### 14.5 残タスク（外部確認・実装と並行可）
+- [ ] 焙煎届出の住所訂正（北新田町→潮新町）の完了確認（§10）。
+- [ ] 保健所：複数焙煎者ブレンド小分け・通販が現行届出でカバーされるか（§3.3）。
+- [ ] 税理士：免税前提の会計裏取り（§4/§3.5）。
+- [ ] オープンデータ取込の実装調査（昇格の自動一次判定・§6.1.1）。※初期は手動ゲートで回避可。
+
+### 14.6 次の一手（推奨開始点）
+**実装③ `lots` CRUD** から。`src/app/api/roaster/beans/` を雛形に、`requireRoaster()`＋所有者チェック（`lots` は PK `beanId`＋SK `roastDate` なので、対象 `beanId` の `beans` を Get して `roasterId` 一致を確認）。その後 `checkout/blend` 拡張（本命）。
+
+### 14.7 実装上の注意（gotchas・既確認）
+- **焙煎者ガードは都度 `roasters` Get**（`requireRoaster`）。所有者チェックは `roasterId`/`createdBy` とセッション `userId` の一致。
+- **`status` は DynamoDB 予約語** → GSI/Update で `ExpressionAttributeNames`（`#s`）必須。
+- **公開カタログは sparse index**：`beans.orderStatus="off"` で `gsiPk`/`gsiSk` を落とす（作成・更新の両方）。
+- **`/api/admin/*` の状態変更は Origin 必須**（middleware のCSRF・不一致は403、自前 admin 認証の前段）。`/api/roaster/*` は NextAuth セッション依存。
+- **`reservations` TTL は epoch 秒**。確実な戻しは cron＋GSI `by-expire`（TTLは保険）。
+- **テーブル作成スクリプトは非冪等**（既存は `ResourceInUseException`）。GSI/TTL は非同期＝ACTIVE 確認要。
+- コミット前に **eslint**（[[feedback-lint-nextjs]]）。内部リンクは `<Link>`。
+
+---
+
 ## 参考リンク（法規制の根拠）
 
 - 食品衛生法の届出：[キーコーヒー 開業ナビ](https://www.keycoffee.co.jp/business/kaigyo-navi/category/business-use/detail/permission-to-sell-coffee-beans/) ／ [コーヒー豆研究所](https://coffee-labo.co.jp/coffee-sell-permit/)
