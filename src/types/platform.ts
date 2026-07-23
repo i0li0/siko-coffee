@@ -100,6 +100,55 @@ export interface LotRecord {
 // TransactWriteItems での all-or-nothing 確保もそのまま実装できる。
 // → lots への書き込みでは常に availableG = onHandG − reservedG を維持すること。
 
+// ───────────────────────────────────────── 在庫確保（§11.2⑤ / §9）
+
+export type ReservationState = 'held' | 'committed' | 'released'
+
+export interface ReservationRecord {
+  orderId: string             // PK
+  lotKey: string              // SK = `${beanId}#${roastDate}`
+  beanId: string
+  roastDate: string
+  roasterId: string
+  qtyG: number
+  state: ReservationState
+  expireAt: number            // epoch"秒"（DynamoDB ネイティブTTL。確実な戻しは cron が主・§13.4）
+  createdAt: string
+  updatedAt: string
+  gsiPk: 'RSV'                // GSI by-expire（cron が失効ぶんを Query）
+}
+
+export function lotKeyOf(beanId: string, roastDate: string): string {
+  return `${beanId}#${roastDate}`
+}
+
+// ───────────────────────────────────────── 注文の調達・ラベル（§11.2⑥ / §3.4）
+
+export type ProcurementMode = 'stock' | 'po'
+export type PoStatus = 'auto_approved' | 'pending' | 'declined' | 'timeout'
+
+export interface ProcurementEntry {
+  roasterId: string
+  beanId: string
+  qtyG: number
+  mode: ProcurementMode
+  poStatus?: PoStatus         // mode==="po" のときだけ
+  timeoutAt?: string          // pending の48h期限（§6.3）
+  leadTimeDays?: number       // ETA の素
+}
+
+// 法定ラベル（生豆生産国・重量比）を発注時点で固定するスナップショット（§3.4）
+export interface LabelSnapshotEntry {
+  beanId: string
+  roasterId: string
+  name: string
+  greenOrigin: string
+  roastLevel: RoastLevel
+  ratioPct: number
+  grams: number
+  pricePer100g: number
+}
+
 // ───────────────────────────────────────── 計測ロールアップ（§11.2⑦）
 
 export interface RoasterMetricsRecord {

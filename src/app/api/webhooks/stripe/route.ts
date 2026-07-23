@@ -7,6 +7,9 @@ import { sendEmail, OWNER_EMAIL } from '@/lib/email';
 import { orderConfirmation, ownerNewOrder, type MailItem } from '@/lib/emailTemplates';
 import { signOrderToken } from '@/lib/orderToken';
 import { BEANS } from '@/components/shop/blend/data';
+import { commitReservations, releaseReservationsForOrder } from '@/lib/reservations';
+import { addRoasterMetrics } from '@/lib/roasterMetrics';
+import type { LabelSnapshotEntry, ProcurementEntry } from '@/types/platform';
 import type Stripe from 'stripe';
 
 export const dynamic = 'force-dynamic';
@@ -206,16 +209,20 @@ export async function POST(req: NextRequest) {
 
     const effectiveOrderId = orderId ?? session.id;
 
-    // 事前保存した注文から items を取得（旧経路は空）
+    // 事前保存した注文から items とプラットフォーム明細を取得（旧経路は空）
     let items: OrderItem[] = [];
+    let labelSnapshot: LabelSnapshotEntry[] = [];
+    let procurement: ProcurementEntry[] = [];
     if (orderId) {
       try {
         const orderRes = await getDocClient().send(new GetCommand({
           TableName: TABLE.ORDERS,
           Key: { id: orderId },
-          ProjectionExpression: 'items',
+          ProjectionExpression: 'items, labelSnapshot, procurement',
         }));
         items = (orderRes.Item?.items ?? []) as OrderItem[];
+        labelSnapshot = (orderRes.Item?.labelSnapshot ?? []) as LabelSnapshotEntry[];
+        procurement = (orderRes.Item?.procurement ?? []) as ProcurementEntry[];
       } catch (err) {
         Sentry.captureException(err, { tags: { route: 'webhook/stripe', step: 'get-items' } });
       }
@@ -245,6 +252,34 @@ export async function POST(req: NextRequest) {
     // 在庫減算（冪等・best-effort）
     if (items.length > 0 && await claim(effectiveOrderId, 'inventoryAppliedAt')) {
       await applyInventory(effectiveOrderId, items);
+    }
+
+    // プラットフォーム在庫の確定（held → committed・§13.3 ②）と計測ロールアップ（§11.2⑦）。
+    // reservations.state="held" 条件つきなので webhook 再送でも二重に減らない（§13.4）。
+    // claim で1回だけ（計測の ADD は冪等でないため、再送時に二重計上しない）
+    if (
+      orderId &&
+      (labelSnapshot.length > 0 || procurement.length > 0) &&
+      (await claim(effectiveOrderId, 'platformCommittedAt'))
+    ) {
+      try {
+        const soldByRoaster = await commitReservations(orderId);
+        // GMV は焙煎者ぶんの明細（発注ぶんも含む）から。数量は確定した在庫ぶんだけ。
+        const gmvByRoaster = new Map<string, number>();
+        for (const line of labelSnapshot) {
+          const yen = Math.round((line.grams / 100) * line.pricePer100g);
+          gmvByRoaster.set(line.roasterId, (gmvByRoaster.get(line.roasterId) ?? 0) + yen);
+        }
+        for (const roasterId of new Set([...gmvByRoaster.keys(), ...Object.keys(soldByRoaster)])) {
+          await addRoasterMetrics(roasterId, {
+            gmvYen: gmvByRoaster.get(roasterId) ?? 0,
+            orderCount: 1,
+            soldG: soldByRoaster[roasterId] ?? 0,
+          });
+        }
+      } catch (err) {
+        Sentry.captureException(err, { tags: { route: 'webhook/stripe', step: 'commit-reservations', orderId } });
+      }
     }
 
     const mailItems: MailItem[] = items;
@@ -284,6 +319,12 @@ export async function POST(req: NextRequest) {
     const session = event.data.object as Stripe.Checkout.Session;
     const orderId = session.client_reference_id;
     if (orderId) {
+      // 先に在庫の確保を戻す（注文を消すと戻せなくなるため順序が重要・§13.4）
+      try {
+        await releaseReservationsForOrder(orderId);
+      } catch (err) {
+        Sentry.captureException(err, { tags: { route: 'webhook/stripe', step: 'release-reservations', orderId } });
+      }
       try {
         await getDocClient().send(new DeleteCommand({
           TableName: TABLE.ORDERS,

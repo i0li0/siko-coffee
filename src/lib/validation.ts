@@ -14,18 +14,43 @@ export const feedbackSchema = z.object({
 
 // --- Checkout (blend) ---
 
-export const blendCartItemSchema = z.object({
-  name: z.string().min(1).max(40),
-  ratios: z.array(z.number().min(0).max(100)).length(3).refine(
-    (r) => Math.abs(r.reduce((a, b) => a + b, 0) - 100) <= 1,
-    { message: 'Ratios must sum to 100' },
-  ),
-  grind: z.string().max(20).optional(),
-  grams: z.number().refine((g) => [100, 150, 200, 250, 300, 350, 400, 450, 500].includes(g)).optional(),
-  custom: z.boolean().optional(),
-  single: z.boolean().optional(),
-  publish: z.boolean().optional(),
+// プラットフォーム構成（§13.5 拡張）: 焙煎者の掲載豆を beanId で指定する。
+// 価格・可否・生産国はサーバ側で beans/roasters を Get して決める（クライアント値は信用しない）。
+export const blendComponentSchema = z.object({
+  beanId: z.string().min(1),
+  ratioPct: z.number().min(1).max(100),
 });
+
+export const blendCartItemSchema = z
+  .object({
+    name: z.string().min(1).max(40),
+    // 既存3種ブレンド（ハードコード BEANS）の比率。プラットフォーム構成では使わない。
+    ratios: z
+      .array(z.number().min(0).max(100))
+      .length(3)
+      .refine((r) => Math.abs(r.reduce((a, b) => a + b, 0) - 100) <= 1, { message: 'Ratios must sum to 100' })
+      .optional(),
+    grind: z.string().max(20).optional(),
+    grams: z.number().refine((g) => [100, 150, 200, 250, 300, 350, 400, 450, 500].includes(g)).optional(),
+    custom: z.boolean().optional(),
+    single: z.boolean().optional(),
+    publish: z.boolean().optional(),
+    // --- プラットフォーム（§13.3）---
+    blendId: z.string().min(1).optional(),
+    blendVersion: z.number().int().min(1).optional(),
+    components: z
+      .array(blendComponentSchema)
+      .min(1)
+      .max(5)
+      .refine(
+        (c) => Math.abs(c.reduce((a, b) => a + b.ratioPct, 0) - 100) <= 1,
+        { message: '構成比の合計を100%にしてください' },
+      )
+      .optional(),
+  })
+  .refine((it) => !!it.ratios || !!it.components || !!it.blendId, {
+    message: 'ratios / components / blendId のいずれかが必要です',
+  });
 
 export const blendCheckoutSchema = z.object({
   items: z.array(blendCartItemSchema).min(1).max(20),
