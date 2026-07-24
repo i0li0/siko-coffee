@@ -82,6 +82,7 @@ export default function AccountClient({ user, emailVerified, initialAvatarPreset
   const [resendResult, setResendResult] = useState<'sent' | 'error' | null>(null)
   const [orders, setOrders] = useState<Order[]>([])
   const [ordersLoading, setOrdersLoading] = useState(true)
+  const [isRoaster, setIsRoaster] = useState(false)
 
   const [avatarPreset, setAvatarPreset] = useState(initialAvatarPreset ?? null)
   const [avatarUrl, setAvatarUrl] = useState(initialAvatarUrl ?? null)
@@ -97,6 +98,14 @@ export default function AccountClient({ user, emailVerified, initialAvatarPreset
       .then(data => setOrders(data.orders ?? []))
       .catch(() => {})
       .finally(() => setOrdersLoading(false))
+  }, [])
+
+  // 焙煎者かどうか（登録済みなら焙煎者ダッシュボードへの導線を出す・§13.1）
+  useEffect(() => {
+    fetch('/api/account/roaster')
+      .then(r => (r.ok ? r.json() : null))
+      .then(data => setIsRoaster(!!data?.roaster))
+      .catch(() => {})
   }, [])
 
   // サーバーから最新のアバター情報を取得
@@ -402,6 +411,21 @@ export default function AccountClient({ user, emailVerified, initialAvatarPreset
           ログアウト
         </button>
       </div>
+
+      {/* 焙煎者ダッシュボードへの導線（登録者のみ） */}
+      {isRoaster && (
+        <Link href="/roaster" style={{ ...cardStyle, marginTop: '24px', padding: '20px 24px', textDecoration: 'none', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <div>
+            <p style={{ fontSize: '14px', color: 'var(--cream)', margin: '0 0 4px', letterSpacing: '0.06em' }}>
+              焙煎者ダッシュボード
+            </p>
+            <p style={{ fontSize: '11px', color: 'var(--dim)', margin: 0, letterSpacing: '0.04em' }}>
+              発注応答・掲載豆・在庫の管理
+            </p>
+          </div>
+          <span style={{ color: 'var(--amber)', fontSize: '14px' }}>→</span>
+        </Link>
+      )}
 
       {/* 注文履歴 */}
       <div style={{ ...cardStyle, marginTop: '24px' }}>
