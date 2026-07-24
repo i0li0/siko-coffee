@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server'
 import { GetCommand } from '@aws-sdk/lib-dynamodb'
 import { auth } from '@/lib/auth'
 import { getDocClient, TABLE } from '@/lib/db'
-import type { RoasterRecord } from '@/types/platform'
+import type { BeanRecord, RoasterRecord } from '@/types/platform'
 
 // 焙煎者の認可（docs/blend-platform-plan.md §13.1）。
 // 設計判断: セッションに role/roaster を焼き込まず「都度 roasters を Get」する。
@@ -46,4 +46,13 @@ export async function requireRoaster(): Promise<RoasterAuthResult> {
     }
   }
   return { ok: true, userId: ctx.userId, roaster: ctx.roaster }
+}
+
+// 自分が所有する豆を取得。他人の豆・未存在はどちらも null（存在を漏らさず 404 に落とす）。
+export async function getOwnedBean(beanId: string, roasterId: string): Promise<BeanRecord | null> {
+  const res = await getDocClient().send(
+    new GetCommand({ TableName: TABLE.BEANS, Key: { beanId } }),
+  )
+  const bean = res.Item as BeanRecord | undefined
+  return bean && bean.roasterId === roasterId ? bean : null
 }

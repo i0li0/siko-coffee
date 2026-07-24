@@ -14,18 +14,43 @@ export const feedbackSchema = z.object({
 
 // --- Checkout (blend) ---
 
-export const blendCartItemSchema = z.object({
-  name: z.string().min(1).max(40),
-  ratios: z.array(z.number().min(0).max(100)).length(3).refine(
-    (r) => Math.abs(r.reduce((a, b) => a + b, 0) - 100) <= 1,
-    { message: 'Ratios must sum to 100' },
-  ),
-  grind: z.string().max(20).optional(),
-  grams: z.number().refine((g) => [100, 150, 200, 250, 300, 350, 400, 450, 500].includes(g)).optional(),
-  custom: z.boolean().optional(),
-  single: z.boolean().optional(),
-  publish: z.boolean().optional(),
+// プラットフォーム構成（§13.5 拡張）: 焙煎者の掲載豆を beanId で指定する。
+// 価格・可否・生産国はサーバ側で beans/roasters を Get して決める（クライアント値は信用しない）。
+export const blendComponentSchema = z.object({
+  beanId: z.string().min(1),
+  ratioPct: z.number().min(1).max(100),
 });
+
+export const blendCartItemSchema = z
+  .object({
+    name: z.string().min(1).max(40),
+    // 既存3種ブレンド（ハードコード BEANS）の比率。プラットフォーム構成では使わない。
+    ratios: z
+      .array(z.number().min(0).max(100))
+      .length(3)
+      .refine((r) => Math.abs(r.reduce((a, b) => a + b, 0) - 100) <= 1, { message: 'Ratios must sum to 100' })
+      .optional(),
+    grind: z.string().max(20).optional(),
+    grams: z.number().refine((g) => [100, 150, 200, 250, 300, 350, 400, 450, 500].includes(g)).optional(),
+    custom: z.boolean().optional(),
+    single: z.boolean().optional(),
+    publish: z.boolean().optional(),
+    // --- プラットフォーム（§13.3）---
+    blendId: z.string().min(1).optional(),
+    blendVersion: z.number().int().min(1).optional(),
+    components: z
+      .array(blendComponentSchema)
+      .min(1)
+      .max(5)
+      .refine(
+        (c) => Math.abs(c.reduce((a, b) => a + b.ratioPct, 0) - 100) <= 1,
+        { message: '構成比の合計を100%にしてください' },
+      )
+      .optional(),
+  })
+  .refine((it) => !!it.ratios || !!it.components || !!it.blendId, {
+    message: 'ratios / components / blendId のいずれかが必要です',
+  });
 
 export const blendCheckoutSchema = z.object({
   items: z.array(blendCartItemSchema).min(1).max(20),
@@ -130,3 +155,57 @@ export const beanUpdateSchema = z
     orderStatus: orderStatusSchema.optional(),
   })
   .refine((o) => Object.keys(o).length > 0, { message: '更新項目がありません' });
+
+// --- ブレンド共創プラットフォーム: 在庫ロット（§11.2④ / §7 / §13.5） ---
+
+const lotStatusSchema = z.enum(['fresh', 'discount', 'expired']);
+const gramsSchema = z.number().int().min(0).max(1_000_000);
+
+// ロット登録＝豆 × 焙煎日。parRankG は §7 の在庫ランク上限（100g刻み）。
+export const lotCreateSchema = z.object({
+  beanId: z.string().min(1),
+  roastDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'yyyy-mm-dd 形式で入力してください'),
+  onHandG: gramsSchema,
+  parRankG: gramsSchema.refine((g) => g % 100 === 0, { message: 'parRankG は100g刻みで指定してください' }),
+  freshBy: z.string().datetime({ offset: true }).or(z.string().regex(/^\d{4}-\d{2}-\d{2}$/)),
+  status: lotStatusSchema.optional().default('fresh'),
+});
+
+// 在庫調整・値引き/廃棄マーク。数量の動かし方は3通りで、混在は禁止（意図を一意にする）。
+//   receivedG … 追加入荷（onHandG/purchasedG を加算）
+//   wasteG    … 廃棄（onHandG を減算・wastedG を加算 → 実廃棄率の分子）
+//   onHandG   … 棚卸しによる絶対値の上書き（差分は計測に載せない）
+export const lotUpdateSchema = z
+  .object({
+    receivedG: gramsSchema.min(1).optional(),
+    wasteG: gramsSchema.min(1).optional(),
+    onHandG: gramsSchema.optional(),
+    parRankG: gramsSchema.refine((g) => g % 100 === 0, { message: 'parRankG は100g刻みで指定してください' }).optional(),
+    freshBy: z.string().datetime({ offset: true }).or(z.string().regex(/^\d{4}-\d{2}-\d{2}$/)).optional(),
+    status: lotStatusSchema.optional(),
+  })
+  .refine((o) => Object.keys(o).length > 0, { message: '更新項目がありません' })
+  .refine(
+    (o) => [o.receivedG, o.wasteG, o.onHandG].filter((v) => v !== undefined).length <= 1,
+    { message: 'receivedG / wasteG / onHandG は同時に指定できません' },
+  );
+
+// --- ブレンド共創プラットフォーム: 発注応答と差替（§6.2 / §6.3 / §13.5） ---
+
+// 焙煎者の発注応答（48hタイムアウト前のみ有効・§6.2-5）
+export const poRespondSchema = z.object({
+  beanId: z.string().min(1),
+  decision: z.enum(['accept', 'decline']),
+  comment: z.string().trim().max(200).optional(),
+});
+
+// Sikō の差替推薦（§6.3：候補は Sikō が出し、確定は購入者承認）
+export const substitutionProposeSchema = z.object({
+  fromBeanId: z.string().min(1),
+  toBeanId: z.string().min(1),
+});
+
+// 購入者の差替判断。承認＝差替確定、辞退＝全額返金（v1は「抜く」を作らない2択）
+export const substitutionDecisionSchema = z.object({
+  decision: z.enum(['approve', 'decline']),
+});

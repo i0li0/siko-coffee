@@ -300,14 +300,15 @@
 
 **4. `lots`（新設）** — 在庫ロット＝販売者×焙煎日（既存 `inventory` は現行ショップ単一SKU在庫として別に温存）
 - PK `beanId`・SK `roastDate`（yyyy-mm-dd）＝ロット
-- 属性：`onHandG`・`reservedG`（`available = onHandG − reservedG`）・`parRankG`(100g刻み)・`freshBy`(ISO 鮮度期限)・`status`("fresh"|"discount"|"expired")・**計測**`purchasedG`・`soldG`・`wastedG`
+- 属性：`onHandG`・`reservedG`・**`availableG`**（`= onHandG − reservedG` を**実体として保持**・下記）・`roasterId`（豆のownerを非正規化＝ロット単体で所有者判定）・`parRankG`(100g刻み)・`freshBy`(ISO 鮮度期限)・`status`("fresh"|"discount"|"expired")・**計測**`purchasedG`・`soldG`・`wastedG`
+- **なぜ `availableG` を実体で持つか（実装制約・2026-07-23 に判明）**：DynamoDB の `ConditionExpression` は**算術式を書けない**ため、本書が §11.2⑤/§13.3 で書いていた `reservedG + qty <= onHandG` は**そのままでは表現できない**。派生値を属性化すれば `availableG >= :qty` の単純比較で条件付き更新でき、`TransactWriteItems` の all-or-nothing 確保もそのまま実装できる。→ **lots へのあらゆる書き込みで `availableG = onHandG − reservedG` を維持する**（実装③で導入済み。§13.3 の確保条件は `availableG >= :qty` ＋ `ADD availableG :-qty, reservedG :qty` に読み替える）。
 - GSI `by-freshBy`：`gsiPk`=`"LOT"`、`gsiSk`=`freshBy`（鮮度切れ間近ロットを Query＝廃棄/値引き判定。Scanを使わない）
 
 **5. `reservations`（新設）** — 決済中の在庫確保（§9・TTL失効）
 - PK `orderId`・SK `beanId#roastDate`（確保したロット）
 - 属性：`qtyG`・`state`("held"|"committed"|"released")・`expireAt`(N epoch ← **DynamoDB ネイティブTTL**)
 - GSI `by-expire`：`gsiPk`=`"RSV"`、`gsiSk`=`expireAt`（cron が失効ぶんを Query して `reservedG` を戻す。TTLはバックストップ、確実な戻しはこのGSI）
-- 確保＝`inventory` を `UpdateItem` の `ConditionExpression`（`reservedG + qty <= onHandG`）で原子加算。ブレンドは複数ロットを `TransactWriteItems` で一括確保（1つでも不成立なら全体失敗→失敗豆を発注へ）。
+- 確保＝`lots` を `UpdateItem` の `ConditionExpression`（**`availableG >= :qty`** ※算術式は書けないため §11.2④ の派生属性を使う）で原子加算（`ADD reservedG :qty, availableG :-qty`）。ブレンドは複数ロットを `TransactWriteItems` で一括確保（1つでも不成立なら全体失敗→失敗豆を発注へ）。
 
 **6. `orders`（拡張）** — 注文＋発注＋差替（既存 PK `id` 維持）
 - 既存：`items`・`status`・`createdAt`・`userId`
@@ -318,6 +319,12 @@
 - PK `roasterId`・SK `yyyy-mm`（月次）
 - 属性：`gmvYen`・`orderCount`・`lostCount`（失注＝差替辞退/返金）・`purchasedG`・`soldG`・`wastedG` → **実廃棄率**=wasted/purchased・**失注率**=lost/(orders+lost)・**月次GMV**=gmvYen
 - 更新：注文paid/ロット廃棄/返金の各イベントで原子 `ADD`（集計Scan不要）。§6.3の運用パラメータ再調整もこの表を見る。
+
+**9. `pos`（新設・2026-07-23 追加）** — 発注（Purchase Order）＝ `orders.procurement[]` の焙煎者向け逆引き
+- PK `roasterId`・SK `poKey`（=`<orderId>#<beanId>`）
+- 属性：`orderId`・`beanId`・`beanName`・`qtyG`・`poStatus`("auto_approved"|"pending"|"accepted"|"declined"|"timeout")・`timeoutAt`・`leadTimeDays`・`respondedAt`・`comment`
+- GSI `by-status`：`gsiPk`=`"PO#<poStatus>"`、`gsiSk`=`timeoutAt ?? createdAt`（cron は `PO#pending` × `timeoutAt<=now` を Query／admin は任意ステータスを Query）
+- **なぜ独立テーブルにしたか**：焙煎者が自分宛の発注を引くには逆引きが要るが、`procurement` は**リスト属性で GSI キーにできず**、`orders` の Scan は禁止（[[feedback-dynamodb-scan]]）。§11.4 の「逆引きは必要になってから後付け」を実装⑤で実行した。真実は `orders.procurement[]` 側に置き、`pos` は表示・抽出用の非正規化として**両方を同期**する（`syncOrderProcurement()`）。
 
 **8. `subscriptions`（新設）** — 焙煎者サブスク
 - PK `roasterId`・SK `"sub"`（1焙煎者1サブスク）
@@ -381,7 +388,12 @@
 - [x] **本番環境へ適用**（2026-07-21）：`create-platform-tables.sh`（prefix無し）を実行。新設6テーブルは全 ACTIVE（各GSIも ACTIVE、`reservations` の TTL=`expireAt` ENABLED）。`blends` の GSI `list-index` は非同期構築中（本番実データのバックフィルに時間を要するが非破壊・未使用のため非ブロッキング）。
 - [x] **API実装①：焙煎者昇格オンボーディング**（§13.7・2026-07-21）：型/バリデーション/認可基盤（`requireRoaster` 都度Get）＋4ルート（`roaster/apply`・`account/roaster`・`admin/roasters` GET/PATCH）。tsc/eslintクリーン、401/403/CSRF検証済み。status enum に `pending` 追加。
 - [x] **API実装②：掲載豆 CRUD**（§13.7・2026-07-21）：`BeanRecord` 型＋`bean{Create,Update}Schema`＋3ルート（`roaster/beans` GET/POST・`[beanId]` PATCH 所有者チェック）。公開カタログ GSI `list-index` は sparse（off で外す）。tsc/eslint クリーン、preview 実テーブル結合テスト 5/5。
-- [ ] 次工程：**API実装③** = `lots` 在庫ロット CRUD（§11.2④）→ `checkout/blend` 拡張（`reservations`＋`TransactWriteItems`・§13.3）。公開カタログ読取（`GET /api/beans`）＋焙煎者 active 絞り込みも後続。UI（焙煎者昇格フォーム／`account/roaster` 出し分け／豆管理）は API と並行。`blends` GSI は構築完了＋バックフィル後に旧 Scan を Query へ置換。逆引き（roaster→blends）は必要になってから後付け（§11.4）。
+- [x] **API実装③：在庫ロット CRUD**（§13.7・2026-07-23）：`LotRecord` 型＋`lot{Create,Update}Schema`＋3ルート（`roaster/lots` GET/POST・`[beanId]/[roastDate]` PATCH）。数量操作は receivedG/wasteG/onHandG の排他3通り、`reservedG` との競合は **CAS＋409**。計測ロールアップ（`roaster_metrics` 原子 ADD）も接続。**`ConditionExpression` に算術式が書けないため派生属性 `availableG` を導入**（§11.2④・§13.3 の確保条件を読み替え）。tsc/eslint クリーン、vitest 15ケース追加（全139 passed）。preview 実テーブル検証は AWS 資格情報失効のため未実施。
+- [x] **API実装④：注文→確保→発注（§13.3）**（2026-07-23）：`reservations` の hold/commit/release（`TransactWriteItems`・all-or-nothing）＋`checkout/blend` のプラットフォーム対応（サーバ側で価格/可否を解決・不足は `mode="po"`）＋Stripe webhook での確定と計測ロールアップ（`claim` で二重計上防止）＋`cron/release-reservations`（10分毎・`vercel.json` 登録済み）。vitest 19ケース追加（全158 passed）、`next build` 通過。週上限の判定は「注文単体 vs 週上限」の近似（実績集計は未実装）。**preview 実テーブル結合テスト 12/12 パス**（実装③ぶんの確認も同梱・`scripts/integration/platform-flow.test.ts`）。
+- [x] **API実装⑤：発注応答＋タイムアウト＋差替/返金**（§6.2・§6.3・2026-07-23）：**新テーブル `pos`（§11.2⑨）を preview／本番に作成**（GSI `by-status` ACTIVE）。`roaster/pos` GET・`respond`（`pending` からのみ遷移）・`cron/po-timeouts`（毎時5分・`vercel.json` 登録済み）・`admin/pos`・差替の推薦（admin）と承認/辞退（購入者）。例外は T1/T2/T3 × pre/post_charge で自動分類。差替は同系統＋±¥100/100g 圏に限定し吸収バンド内は支払額据え置き、辞退は全額返金＋`lostCount` 計上。運用パラメータは env 外出し（`src/lib/platformParams.ts`）。poStatus enum に `accepted` を追加。vitest 21ケース追加（全179 passed）、preview 実テーブル結合テスト 15/15、`next build` 通過。
+- [ ] 次工程：公開カタログ読取（`GET /api/beans`）＋焙煎者 active 絞り込みも後続。UI（焙煎者昇格フォーム／`account/roaster` 出し分け／豆・ロット管理／カタログからのブレンド作成）は API と並行。`blends` GSI は構築完了＋バックフィル後に旧 Scan を Query へ置換。逆引き（roaster→blends）は必要になってから後付け（§11.4）。
+- [ ] **`/shop` の表示は全てテストデータ**（オーナー確認・2026-07-23）：`src/components/shop/blend/data.ts` の `BEANS`（豆3種）・`PRESETS`（定番ブレンド4件）・`COMMUNITY`（みんなのブレンド5件）は産地/味/購入数/作者名すべて架空。**今は消さず**、将来削除して **SikŌ Coffee 自身の豆3種を実物として掲載する**。DynamoDB の `blends` は本番/preview とも0件＝削除対象はコードのみ。差し替え時の連動先：`/shop/product/[key]`・`src/app/sitemap.ts`・Stripe webhook の在庫減算（豆名マッチ）・比率配列が長さ3固定である前提。※ 焙煎者の掲載豆（`beans` テーブル）とは別枠。
+- [ ] **週上限（`weeklyCapKg`）の判定を実績ベースへ**：現状は「注文単体 vs 週上限」の近似。`roaster_metrics` の週次化か受注ログの追加が必要（実装④で顕在化）。
 
 ---
 
@@ -488,7 +500,97 @@
   - ルート：`GET/POST /api/roaster/beans`（自分の豆一覧＝GSI `by-roaster` Query／作成）・`PATCH /api/roaster/beans/[beanId]`（価格・週上限・LT・ON/OFF の部分更新。**所有者チェック**＝`roasterId` 一致・read-modify-write＋`ConditionExpression`）。
   - **公開カタログ GSI `list-index` は sparse**：`orderStatus!=="off"` のとき `gsiPk="BEAN#PUBLIC"`/`gsiSk=createdAt` を書き、`off` で外す（作成/更新の両方で維持）。
   - 検証：tsc/eslint クリーン、dev server で未認証=401。**preview 実テーブルへの直接結合テスト 5/5 パス**（by-roaster 新着降順／カタログが on を含み off を除外＝sparse／on→off でカタログ脱落）。公開カタログの読取エンドポイント（`GET /api/beans`）と焙煎者 active 判定の絞り込みは後続。
-- 次スライス候補：`lots`（在庫ロット CRUD・§11.2④）→ `checkout/blend` 拡張（`reservations`＋`TransactWriteItems`・§13.3）。
+- **③在庫ロット CRUD（§11.2④・§7）を実装**（2026-07-23）：
+  - `src/types/platform.ts`（`LotRecord`・`LotStatus`・`RoasterMetricsRecord`）／`src/lib/validation.ts`（`lotCreateSchema`・`lotUpdateSchema`）／`src/lib/roasterAuth.ts` に `getOwnedBean()` 追加／`src/lib/roasterMetrics.ts`（`addRoasterMetrics()`＝§11.2⑦ の原子 ADD・月キーは **JST** 基準）。
+  - ルート：`GET /api/roaster/lots?beanId=`（PK Query・焙煎日降順）・`POST /api/roaster/lots`（`attribute_not_exists` で豆×焙煎日の二重登録を409）・`PATCH /api/roaster/lots/[beanId]/[roastDate]`。所有者判定は `lots.roasterId`（豆の owner を非正規化）＝ロット単体で完結。
+  - **数量の動かし方を3通りに限定（排他）**：`receivedG`（追加入荷＝`onHandG`/`purchasedG` 加算）／`wasteG`（廃棄＝`onHandG` 減・`wastedG` 加算）／`onHandG`（棚卸しの絶対上書き・計測に載せない）。廃棄・入荷は `roaster_metrics` へ原子 ADD（実廃棄率の分子/分母）。
+  - **同時実行**：`reservedG` は決済フロー（§13.3）が並行更新するため、素の read-modify-write は禁止。**読んだ `onHandG`/`reservedG`/`roasterId` を条件にした CAS**（`ConditionExpression`）＋割り込み時 409 とした。確保済みを下回る調整も 409。
+  - **設計修正**：`ConditionExpression` に算術式が書けない件を受け、派生属性 `availableG` を導入（§11.2④ の注記）。
+  - 検証：tsc/eslint クリーン、**vitest 15ケース新規（全体 139 passed）**。preview 実テーブルでの確認（CAS の条件不成立・複合キーの `attribute_not_exists`・`by-freshBy` Query・計測 `ADD`）は実装④の結合テストに含めて実施済み（下記）。
+- **④注文→確保→発注（§13.3 の主要フロー）を実装**（2026-07-23）：
+  - `src/lib/reservations.ts`：`planLotAllocations()`（**古いロットから FIFO 割当**・期限切れ/空きゼロは除外）／`holdReservations()`（**注文全体で1 `TransactWriteItems`**＝部分確保を作らない）／`commitReservations()`／`releaseReservation(sForOrder)()`／`findExpiredReservations()`（GSI `by-expire` Query）。
+  - `src/lib/platformCheckout.ts`：`beanId` から **beans/roasters を forward Get** して価格・可否・生産国を決める（クライアント値は信用しない・§11.4）。`orderStatus!=="on"`／焙煎者が active・selling_out 以外は 409。**selling_out は在庫ぶんのみ**（不足＝購入不可＝§6.3 抜く禁止）。不足ぶんは `mode="po"`（週上限内＝`auto_approved`／超過＝`pending`＋48h `timeoutAt`）。`labelSnapshot`（生産国・重量比・価格）と `etaPromised`（発送準備3日＋最大リードタイム）を注文に固定。
+  - `POST /api/checkout/blend` 拡張：`components`／`blendId`／`blendVersion` を受け付け（既存の3種ブレンド＝`ratios` 経路はそのまま動く）、**確保 → 注文 Put → Stripe** の順。以降で失敗したら確保を戻す。競合で確保に失敗＝409。
+  - `POST /api/webhooks/stripe` 拡張：`checkout.session.completed` で **held → committed**（`lots` の `onHandG`/`reservedG` を減らし `soldG` を積む）＋ `roaster_metrics` に GMV/件数/soldG を ADD（**`claim('platformCommittedAt')` で再送時の二重計上を防止**）。`checkout.session.expired` では**注文を消す前に確保を戻す**。
+  - `GET /api/cron/release-reservations` 新設＋`vercel.json` に 10分毎で登録（TTL は削除されると `reservedG` を戻せなくなるため **cron が主・TTL は保険**）。
+  - **週上限の判定は近似**：週次の受注実績を集計する場所が無いため「この注文単体 vs `weeklyCapKg`」で判定している。実績ベースにするなら `roaster_metrics` を週次化するか受注ログが要る（未対応）。
+  - 検証：tsc/eslint/`next build` クリーン、vitest **19ケース追加（全体 158 passed）**。
+  - **preview 実テーブルの結合テスト 12/12 パス**（2026-07-23）：`scripts/integration/platform-flow.test.ts`＋`vitest.integration.config.ts`（通常の `vitest run` には含めない・実行は `VERCEL_ENV=preview npx vitest run --config vitest.integration.config.ts`）。確認できたのはモックでは検証できない DynamoDB 側の挙動——`TransactWriteItems` の all-or-nothing（1件不成立なら他も入らない）／`availableG >= :qty` 条件の成立・不成立／held→committed の二重適用防止（webhook 再送を模して2回実行）／二重戻し防止／GSI `by-expire`・`by-freshBy` の Query／複合キーでの `attribute_not_exists`／`ADD` の積み上げ。テストデータは毎回 UUID 付きで作り、後始末まで実施（残留ゼロを確認）。
+- **⑤発注応答・タイムアウト・差替/返金の2択（§6.2・§6.3）を実装**（2026-07-23）：
+  - **新テーブル `pos`（§11.2⑨）を追加**（preview／本番とも作成済み・GSI `by-status` ACTIVE）。`orders.procurement[]` はリスト属性で GSI キーにできず Scan も禁止のため、焙煎者→発注の逆引きを非正規化で用意した。
+  - `src/lib/pos.ts`：`createPoRecords()`／`listPosForRoaster()`（PK Query）／`listPosByStatus()`（GSI Query）／`transitionPo()`（**`pending` からのみ遷移＝遅延応答を弾く**）／`syncOrderProcurement()`／`classifyException()`／`applyOrderException()`。
+  - `src/lib/platformParams.ts`：§6.3 の運用パラメータを**env で外出し**（`PO_TIMEOUT_HOURS`=48／`DELAY_SILENT_DAYS`=3／`DELAY_CHOICE_DAYS`=7／`SUBSTITUTION_BAND_YEN_PER_100G`=100）。計画書の「ハードコードせず設定値」を満たす。
+  - **poStatus enum に `accepted` を追加**：`auto_approved`（枠内で自動）と「焙煎者が明示承認」を区別しないと誰が通したか追えないため（§11.2⑥ の enum を精緻化）。
+  - ルート：`GET /api/roaster/pos`（要対応件数つき＝§6.2.1 のベル表示用）／`POST /api/roaster/pos/[orderId]/respond`（accept→`accepted`／decline→`declined`＋注文へ例外記録）／`GET /api/cron/po-timeouts`（`vercel.json` に毎時5分で登録）／`GET /api/admin/pos`／`POST /api/admin/orders/[id]/substitution`（Sikō推薦）／`POST /api/account/orders/[id]/substitution`（購入者の承認/辞退）。
+  - **例外の分類（§6.3 軸1）**：`classifyException()` が焙煎者ステータスから T1（`paused`＋`pausedUntil` あり＝ETA を出せる）／T2（復帰未定）／T3（`withdrawn`・`selling_out`＝「待つ」を出さない）を判定。phase は注文が `pending` なら pre_charge、それ以外は post_charge。
+  - **差替（`src/lib/substitution.ts`）**：推薦は**同系統（生豆生産国か焙煎度が一致）かつ ±¥100/100g 圏**に限定し、範囲外は 400 で作らせない。吸収バンド内は `absorbedBySiko=true`＝**購入者の支払額は据え置き**（§6.1.2 スナップショット固定と整合）。承認で**法定ラベルを再生成**（比率・g は保ち、豆/生産国/焙煎度/価格だけ差し替え＝作品の同一性を保つ）＋調達先を代替焙煎者の PO へ。辞退は `src/lib/refund.ts` で**全額返金**（確保中の在庫は戻し、**確定済みは戻さず単品消化へ**＝§5・§6.3）＋`roaster_metrics.lostCount` を計上。
+  - 検証：tsc/eslint/`next build` クリーン、vitest **21ケース追加（全体 179 passed）**、**preview 実テーブル結合テスト 15/15**（PO の PK Query・GSI by-status での期限切れ抽出・`pending` からのみの遷移・GSI パーティション移動・procurement 同期・例外の phase 判定を実機確認）。
+- 次スライス候補：公開カタログ読取（`GET /api/beans`）／サブスク（`roaster/subscription`・§11.2⑧）／UI（焙煎者昇格フォーム・豆/ロット管理・発注応答画面・カタログからのブレンド作成）。
+
+---
+
+## 14. 実装ハンドオフ（次セッション再開用・2026-07-23 更新）
+
+> このセクションだけ読めば、冷えた状態から実装を再開できることを意図した自己完結の引き継ぎ。詳細は各§を参照。
+> **経緯**：初版は 2026-07-21 に `claude/blend-platform-plan-docs-7dd63f`（commit `3de981e`）で書かれたが、**PR #68 のマージ時に main へ入らなかった**（当該ブランチは未マージのまま残っている）。本節はその後継として現状に合わせて書き直したもの。
+
+### 14.1 現在地
+- **設計（§1〜§13）完了。実装①〜⑤まで完了**（昇格オンボーディング／掲載豆CRUD／在庫ロットCRUD／注文→確保→発注／発注応答・タイムアウト・差替/返金）。
+- ブランチ：`claude/section-14-implementation-3-82d2cc`（worktree 運用）。テストは全 179 passed、`next build` 通過。
+
+### 14.2 完了済み（DONE）
+1. **設計 §1〜§13**。
+2. **DynamoDB**：新設6＋`blends` GSI（2026-07-21）に加え、**`pos`（§11.2⑨）を追加**（2026-07-23・preview／本番とも ACTIVE）。作成は `scripts/create-*-table.sh`・一括 `create-platform-tables.sh`。
+3. **API①** 焙煎者オンボーディング（`roaster/apply`・`account/roaster`・`admin/roasters`）。
+4. **API②** 掲載豆CRUD（`roaster/beans`・`[beanId]`）。公開カタログ GSI は sparse。
+5. **API③** 在庫ロットCRUD（`roaster/lots`・`[beanId]/[roastDate]`）。数量操作は receivedG/wasteG/onHandG の排他3通り、競合は CAS＋409。
+6. **API④** 注文→確保→発注（`checkout/blend` 拡張・Stripe webhook で commit・`cron/release-reservations`）。
+7. **API⑤** 発注応答（`roaster/pos`・`respond`）・`cron/po-timeouts`・差替/返金（`admin`／`account` の substitution）。
+8. **結合テスト基盤**：`scripts/integration/platform-flow.test.ts`＋`vitest.integration.config.ts`（preview 実テーブル・15/15 パス）。
+
+### 14.3 環境の状態（要注意）
+- **AWS**：`user/shun`（acct 654512230021）・`ap-northeast-1`。プラットフォーム7テーブルが preview／本番の両環境で稼働。
+- **`blends` GSI `list-index`**：追加済みだが**バックフィル未**。それまで `GET /api/blends` は旧 `ScanCommand` 経路（§13.6）。
+- **ローカル dev の `AUTH_SECRET` 未設定**：`auth()` が動かず**HTTP経由の認証済みE2Eは未検証**。データ層は preview 実テーブルの結合テストで代替確認している。
+- **cron の頻度は Vercel Hobby プランの制約で日次**（重要・2026-07-23 に判明）：Hobby は **cron を1日1回までしか許可せず、それより頻繁な式はデプロイが失敗する**（`*/10 * * * *` を入れて実際に落ちた）。そのため `vercel.json` は日次（`release-reservations` 18:10 UTC／`po-timeouts` 18:20 UTC）にし、**適時性はリクエスト時の sweep で担保**する：
+  - 失効確保の戻し → `POST /api/checkout/blend` の冒頭で `sweepExpiredReservations()`（**在庫が要る瞬間に自己修復**。30分の確保に日次 cron は追いつかず、TTL は削除されると `reservedG` を戻せないため）。
+  - 発注のタイムアウト → `GET /api/roaster/pos`・`GET /api/admin/pos` の読取時に `sweepPoTimeouts()`。
+  - **Pro へ上げたら** `vercel.json` の schedule を `*/10 * * * *` / `5 * * * *` に戻すだけでよい（sweep はそのまま残して二重化で問題ない）。
+- **cron の認可**：いずれも既存 `CRON_SECRET`（新規 env 不要）。
+- **§6.3 の運用パラメータ**は `src/lib/platformParams.ts` で env 外出し（`PLATFORM_PO_TIMEOUT_HOURS` / `PLATFORM_DELAY_SILENT_DAYS` / `PLATFORM_DELAY_CHOICE_DAYS` / `PLATFORM_SUBSTITUTION_BAND_YEN`）。未設定なら既定値（48/3/7/100）。
+
+### 14.4 残タスク（実装・優先順）
+- [ ] **公開カタログ読取**：`GET /api/beans`（GSI `list-index`）＋**焙煎者 active 絞り込み**（read時 forward Get）。`GET /api/blends` の Scan→Query 置換（要バックフィル）。
+- [ ] **UI**：焙煎者昇格フォーム／`account/roaster` 出し分け／豆・ロット管理／**発注応答画面**（要対応件数のベル表示・§6.2.1）／カタログからのブレンド作成。API はすべて揃っている。
+- [ ] **サブスク**：`roaster/subscription`(POST) ＋ Stripe Billing。`subscriptions` テーブルは作成済み・未使用。
+- [ ] **cron 残り**：`fresh-lots`（鮮度切れの値引き/廃棄・GSI `by-freshBy` は実機確認済み）・`subscription-dunning`。
+- [ ] **T1「待つ」の導線**（§6.3 ①）：遅延Δの閾値パラメータは用意済みだが、**ETA 再計算と通知が未実装**。
+- [ ] **週上限の実績ベース判定**：現状は「注文単体 vs `weeklyCapKg`」の近似。`roaster_metrics` の週次化か受注ログが要る。
+- [ ] **認証済みE2E検証**：preview デプロイ後に「申請→admin承認→active→豆/ロット登録→注文→発注応答→差替/返金」を通しで確認。
+- [ ] **`/shop` のテストデータ差し替え**：`data.ts` の豆3種・定番/みんなのブレンドは全て架空（§12）。SikŌ 自身の3種へ差し替える。
+
+### 14.5 残タスク（外部確認・実装と並行可）
+- [ ] 焙煎届出の住所訂正（北新田町→潮新町）の完了確認（§10）。
+- [ ] 保健所：複数焙煎者ブレンド小分け・通販が現行届出でカバーされるか（§3.3）。
+- [ ] 税理士：免税前提の会計裏取り（§4/§3.5）。
+- [ ] オープンデータ取込の実装調査（昇格の自動一次判定・§6.1.1）。※初期は手動ゲートで回避可。
+
+### 14.6 次の一手（推奨開始点）
+**UI か 公開カタログ読取（`GET /api/beans`）**。API は注文の一巡（掲載→在庫→注文→確保→発注→応答→例外→差替/返金）まで揃ったので、**次のボトルネックは触れる画面が無いこと**。UI を作るなら発注応答画面（焙煎者の必須動線）→豆/ロット管理→昇格フォームの順が実利が高い。
+
+### 14.7 実装上の注意（gotchas・既確認）
+- **`ConditionExpression` に算術式は書けない**（`reservedG + qty <= onHandG` は不可）。→ `lots` は派生属性 `availableG` を実体で持ち、`availableG >= :qty` の単純比較で確保する。**lots へのあらゆる書き込みで `availableG = onHandG − reservedG` を維持すること**（§11.2④）。
+- **`lots` の read-modify-write は禁止**（`reservedG` を決済フローが並行更新する）。更新は**読んだ値を条件にした CAS**＋競合時 409。
+- **`status`・`state`・`comment` は DynamoDB 予約語** → `ExpressionAttributeNames` 必須。
+- **計測（`roaster_metrics`）の ADD は冪等でない** → webhook からの計上は `claim()` で1回だけに絞る。
+- **焙煎者ガードは都度 `roasters` Get**（`requireRoaster`）。`pos` は PK が `roasterId` なので**キーの時点で所有者が保証される**。
+- **公開カタログは sparse index**：`beans.orderStatus="off"` で `gsiPk`/`gsiSk` を落とす（作成・更新の両方）。
+- **`/api/admin/*` の状態変更は Origin 必須**（middleware のCSRF・不一致は403）。`/api/roaster/*`・`/api/account/*` は NextAuth セッション依存。
+- **`reservations` TTL は epoch 秒**。TTL は削除されると `reservedG` を戻せないため**cron が主・TTL は保険**。
+- **テーブル作成スクリプトは非冪等**（既存は `ResourceInUseException`）。GSI/TTL は非同期＝ACTIVE 確認要。
+- **Vercel Hobby の cron は日次まで**。`*/10` や毎時の式を `vercel.json` に書くと**デプロイ自体が失敗する**（ビルド前に弾かれるため Vercel 上にデプロイのレコードすら残らない）。頻繁な処理が要るならリクエスト時 sweep か Pro 昇格で（§14.3）。
+- **結合テストは通常の `vitest run` に含めない**：`VERCEL_ENV=preview npx vitest run --config vitest.integration.config.ts`（本番テーブルを触らないためのガード付き）。
+- コミット前に **eslint**（[[feedback-lint-nextjs]]）。内部リンクは `<Link>`。
 
 ---
 

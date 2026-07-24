@@ -67,3 +67,152 @@ export interface BeanRecord {
   gsiPk?: 'BEAN#PUBLIC'
   gsiSk?: string              // = createdAt
 }
+
+// ───────────────────────────────────────── 在庫ロット（§11.2④ / §7）
+
+export type LotStatus = 'fresh' | 'discount' | 'expired'
+
+export interface LotRecord {
+  beanId: string              // PK（= BeanRecord.beanId）
+  roastDate: string           // SK（yyyy-mm-dd）＝焙煎日でロットを分ける
+  roasterId: string           // 所有者。豆の owner を非正規化（ロット単体で所有者判定するため）
+  onHandG: number             // 実在庫(g)
+  reservedG: number           // 決済中の確保ぶん(g)・§11.2⑤
+  availableG: number          // = onHandG − reservedG を**実体として保持**（下の注記参照）
+  parRankG: number            // 在庫ランク上限(100g刻み・§7)
+  freshBy: string             // 鮮度期限（ISO）
+  status: LotStatus
+  // 計測（§11.2⑦ のロールアップ元）
+  purchasedG: number
+  soldG: number
+  wastedG: number
+  createdAt: string
+  updatedAt: string
+  // GSI by-freshBy（鮮度切れ間近ロットの抽出）
+  gsiPk: 'LOT'
+  gsiSk: string               // = freshBy
+}
+
+// なぜ availableG を持つか（§13.3 の在庫確保に効く実装制約）:
+// DynamoDB の ConditionExpression は**算術式を書けない**ため、計画書の
+// `reservedG + qty <= onHandG` はそのままでは表現できない。
+// 派生値を属性として保持すれば `availableG >= :qty` という単純比較で条件付き更新でき、
+// TransactWriteItems での all-or-nothing 確保もそのまま実装できる。
+// → lots への書き込みでは常に availableG = onHandG − reservedG を維持すること。
+
+// ───────────────────────────────────────── 在庫確保（§11.2⑤ / §9）
+
+export type ReservationState = 'held' | 'committed' | 'released'
+
+export interface ReservationRecord {
+  orderId: string             // PK
+  lotKey: string              // SK = `${beanId}#${roastDate}`
+  beanId: string
+  roastDate: string
+  roasterId: string
+  qtyG: number
+  state: ReservationState
+  expireAt: number            // epoch"秒"（DynamoDB ネイティブTTL。確実な戻しは cron が主・§13.4）
+  createdAt: string
+  updatedAt: string
+  gsiPk: 'RSV'                // GSI by-expire（cron が失効ぶんを Query）
+}
+
+export function lotKeyOf(beanId: string, roastDate: string): string {
+  return `${beanId}#${roastDate}`
+}
+
+// ───────────────────────────────────────── 注文の調達・ラベル（§11.2⑥ / §3.4）
+
+export type ProcurementMode = 'stock' | 'po'
+// §11.2⑥ の enum に `accepted`（焙煎者が明示承認）を追加。
+// auto_approved（枠内で自動）と区別しないと「誰が通したか」が追えないため。
+export type PoStatus = 'auto_approved' | 'pending' | 'accepted' | 'declined' | 'timeout'
+
+export interface ProcurementEntry {
+  roasterId: string
+  beanId: string
+  qtyG: number
+  mode: ProcurementMode
+  poStatus?: PoStatus         // mode==="po" のときだけ
+  timeoutAt?: string          // pending の48h期限（§6.3）
+  leadTimeDays?: number       // ETA の素
+}
+
+// ───────────────────────────────────────── 発注レコード（§11.2⑨ / §6.2）
+// orders.procurement[] の焙煎者向け逆引き。リスト属性は GSI キーにできず orders の Scan も禁止なので、
+// 注文×豆ごとに1行へ非正規化して roasterId を PK にする（§11.4）。
+export interface PoRecord {
+  roasterId: string           // PK
+  poKey: string               // SK = `${orderId}#${beanId}`
+  orderId: string
+  beanId: string
+  beanName: string
+  qtyG: number
+  poStatus: PoStatus
+  timeoutAt?: string          // pending の48h期限
+  leadTimeDays?: number
+  respondedAt?: string
+  comment?: string
+  createdAt: string
+  updatedAt: string
+  gsiPk: string               // GSI by-status = `PO#${poStatus}`
+  gsiSk: string               // = timeoutAt ?? createdAt
+}
+
+export function poKeyOf(orderId: string, beanId: string): string {
+  return `${orderId}#${beanId}`
+}
+
+// ───────────────────────────────────────── 例外と差替（§6.3）
+
+// T1=一時（復帰日あり）/ T2=不定（休止・目処なし）/ T3=恒久（退会・売り切り）
+export type ExceptionType = 'T1' | 'T2' | 'T3'
+export type ExceptionPhase = 'pre_charge' | 'post_charge'
+
+export interface OrderException {
+  type: ExceptionType
+  phase: ExceptionPhase
+  beanId: string
+  roasterId: string
+  reason: 'declined' | 'timeout'
+  createdAt: string
+}
+
+export interface SubstitutionEntry {
+  fromBeanId: string
+  toBeanId: string
+  toBeanName: string
+  deltaYen: number            // 注文全体の差額（＋＝値上がり）
+  deltaPer100g: number        // 推薦バンド判定に使う 円/100g 差
+  absorbedBySiko: boolean     // |deltaPer100g| <= 吸収バンド なら Sikō が飲む（購入者承認だけで確定）
+  proposedAt: string
+  approvedByBuyerAt?: string
+  declinedByBuyerAt?: string
+}
+
+// 法定ラベル（生豆生産国・重量比）を発注時点で固定するスナップショット（§3.4）
+export interface LabelSnapshotEntry {
+  beanId: string
+  roasterId: string
+  name: string
+  greenOrigin: string
+  roastLevel: RoastLevel
+  ratioPct: number
+  grams: number
+  pricePer100g: number
+}
+
+// ───────────────────────────────────────── 計測ロールアップ（§11.2⑦）
+
+export interface RoasterMetricsRecord {
+  roasterId: string           // PK
+  month: string               // SK（yyyy-mm）
+  gmvYen?: number
+  orderCount?: number
+  lostCount?: number
+  purchasedG?: number
+  soldG?: number
+  wastedG?: number
+  updatedAt?: string
+}

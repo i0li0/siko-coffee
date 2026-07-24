@@ -24,6 +24,7 @@ bash "$DIR/create-lots-table.sh"             "$ENV_ARG"
 bash "$DIR/create-reservations-table.sh"     "$ENV_ARG"
 bash "$DIR/create-roaster-metrics-table.sh"  "$ENV_ARG"
 bash "$DIR/create-subscriptions-table.sh"    "$ENV_ARG"
+bash "$DIR/create-pos-table.sh"              "$ENV_ARG"
 bash "$DIR/add-blends-list-index.sh"         "$ENV_ARG"
 
 echo "=== All platform table operations dispatched (${ENV_ARG:-production}) ==="
