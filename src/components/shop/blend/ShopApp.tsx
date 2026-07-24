@@ -42,6 +42,7 @@ function ShopHeader({ route, nav, cartCount }: { route: Route; nav: NavFn; cartC
         </button>
         <nav aria-label="ショップナビゲーション" style={{ display: 'flex', gap: 18, marginLeft: 10 }} className="ss-header-nav">
           <button className={`ss-nav-link${['maker', 'select', 'single'].includes(route.name) ? ' is-on' : ''}`} onClick={() => nav('select')} aria-current={['maker', 'select', 'single'].includes(route.name) ? 'page' : undefined}>つくる</button>
+          <Link href="/shop/catalog" className="ss-nav-link" style={{ textDecoration: 'none' }}>焙煎家の豆</Link>
           <button className={`ss-nav-link${route.name === 'quiz' ? ' is-on' : ''}`} onClick={() => nav('quiz')} aria-current={route.name === 'quiz' ? 'page' : undefined}>好み診断</button>
           <button className={`ss-nav-link${route.name === 'mypage' ? ' is-on' : ''}`} onClick={() => nav('mypage')} aria-current={route.name === 'mypage' ? 'page' : undefined}>マイページ</button>
         </nav>
