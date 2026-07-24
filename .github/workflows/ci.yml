@@ -21,6 +21,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Cron schedule (Vercel Hobby ≤ daily)
+        run: npm run check:cron
+
       - name: ESLint
         run: npm run lint
 
