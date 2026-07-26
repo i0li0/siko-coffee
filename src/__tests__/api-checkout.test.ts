@@ -42,12 +42,20 @@ function makeRequest(formFields: Record<string, string>): NextRequest {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  vi.stubEnv('PAYMENTS_ENABLED', 'true')
   vi.mocked(getClientIp).mockReturnValue('1.2.3.4')
   vi.mocked(checkGeneralRateLimit).mockResolvedValue({ allowed: true })
   vi.mocked(auth).mockResolvedValue(null as never)
 })
 
 describe('POST /api/checkout', () => {
+  it('決済停止中（PAYMENTS_ENABLED 未設定）は 503 で Stripe を呼ばない', async () => {
+    vi.stubEnv('PAYMENTS_ENABLED', '')
+    const res = await POST(makeRequest({ productId: 'x' }))
+    expect(res.status).toBe(503)
+    expect(stripe.checkout.sessions.create).not.toHaveBeenCalled()
+  })
+
   it('レート制限超過で 429', async () => {
     vi.mocked(checkGeneralRateLimit).mockResolvedValue({ allowed: false, retryAfter: 60 })
     const res = await POST(makeRequest({ productId: 'x' }))

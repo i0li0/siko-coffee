@@ -7,6 +7,7 @@ import { getDocClient, TABLE } from '@/lib/db';
 import { buildShippingOptions } from '@/lib/shipping';
 import { auth } from '@/lib/auth';
 import { checkGeneralRateLimit, getClientIp } from '@/lib/rateLimit';
+import { isPaymentsEnabled, PAYMENTS_DISABLED_MESSAGE } from '@/lib/payments';
 import { blendCheckoutSchema } from '@/lib/validation';
 import { etaFromDays, resolvePlatformItem } from '@/lib/platformCheckout';
 import {
@@ -32,6 +33,10 @@ function getOrigin(req: NextRequest): string {
 }
 
 export async function POST(req: NextRequest) {
+  // 決済停止中は在庫確保・発注も含め一切副作用を起こさずに打ち切る。
+  if (!isPaymentsEnabled()) {
+    return NextResponse.json({ error: PAYMENTS_DISABLED_MESSAGE }, { status: 503 });
+  }
   const ip = getClientIp(req.headers);
   const rl = await checkGeneralRateLimit(ip, { prefix: 'checkout-blend', maxAttempts: 10, windowMs: 60_000 });
   if (!rl.allowed) {
