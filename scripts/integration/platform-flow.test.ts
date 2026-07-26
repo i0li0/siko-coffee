@@ -19,8 +19,9 @@ import {
   listPosForRoaster,
   syncOrderProcurement,
   transitionPo,
+  weeklyPoLoadG,
 } from '@/lib/pos'
-import { lotKeyOf, poKeyOf, type BeanRecord, type LotRecord, type RoasterRecord } from '@/types/platform'
+import { lotKeyOf, poKeyOf, type BeanRecord, type LotRecord, type PoStatus, type RoasterRecord } from '@/types/platform'
 
 // preview 実テーブルに対する結合テスト（docs/blend-platform-plan.md §13.7）。
 // ユニットテストではモックできない DynamoDB 側の挙動を確認する:
@@ -350,5 +351,97 @@ describe('§11.2④/⑦ ロット更新と計測（preview 実テーブル）', 
       new GetCommand({ TableName: TABLE.ROASTER_METRICS, Key: { roasterId: ROASTER_ID, month: METRICS_MONTH } }),
     )
     expect(res.Item).toMatchObject({ purchasedG: 1000, wastedG: 150, gmvYen: 2400, orderCount: 1 })
+  })
+})
+
+describe('§14.4 週上限の実績ベース判定（preview 実テーブル）', () => {
+  // 在庫ロットを作らない豆を用意する＝要求量が丸ごと発注（mode='po'）に回るので、
+  // 在庫割当の影響を受けずに「週上限の判定」だけを観察できる。
+  const CAP_BEAN_ID = `it-cap-bean-${suffix}`
+  const CAP_G = 200 // 各テストの要求量
+  const capBean: BeanRecord = {
+    ...bean,
+    beanId: CAP_BEAN_ID,
+    name: `結合テスト豆(週上限) ${suffix}`,
+    weeklyCapKg: 0.3, // = 300g。CAP_G を1回ぶんは飲めるが2回ぶんは超える
+  }
+
+  const createdPoKeys: string[] = []
+
+  // createPoRecords は createdAt を now で固定するため、window 外を作るには生 Put が要る
+  async function putPo(orderId: string, beanId: string, qtyG: number, poStatus: PoStatus, createdAt: string) {
+    const poKey = poKeyOf(orderId, beanId)
+    await db.send(
+      new PutCommand({
+        TableName: TABLE.POS,
+        Item: {
+          roasterId: ROASTER_ID, poKey, orderId, beanId,
+          beanName: capBean.name, qtyG, poStatus,
+          createdAt, updatedAt: createdAt,
+          gsiPk: `PO#${poStatus}`, gsiSk: createdAt,
+        },
+      }),
+    )
+    createdPoKeys.push(poKey)
+  }
+
+  async function removePo(orderId: string, beanId: string) {
+    const poKey = poKeyOf(orderId, beanId)
+    await db.send(new DeleteCommand({ TableName: TABLE.POS, Key: { roasterId: ROASTER_ID, poKey } }))
+  }
+
+  async function resolveCapItem() {
+    const resolved = await resolvePlatformItem(
+      { components: [{ beanId: CAP_BEAN_ID, ratioPct: 100 }], grams: CAP_G },
+      null,
+    )
+    expect(resolved.ok).toBe(true)
+    if (!resolved.ok) throw new Error(resolved.error)
+    return resolved.item.procurement[0]
+  }
+
+  beforeAll(async () => {
+    await db.send(
+      new PutCommand({
+        TableName: TABLE.BEANS,
+        Item: { ...capBean, gsiPk: 'BEAN#PUBLIC', gsiSk: capBean.createdAt },
+      }),
+    )
+  })
+
+  afterAll(async () => {
+    for (const poKey of createdPoKeys) {
+      await db.send(new DeleteCommand({ TableName: TABLE.POS, Key: { roasterId: ROASTER_ID, poKey } }))
+    }
+    await db.send(new DeleteCommand({ TableName: TABLE.BEANS, Key: { beanId: CAP_BEAN_ID } }))
+  })
+
+  it('⑬既存の発注が無ければ上限内＝自動承認', async () => {
+    expect(await weeklyPoLoadG(ROASTER_ID, CAP_BEAN_ID)).toBe(0)
+    expect(await resolveCapItem()).toMatchObject({ mode: 'po', poStatus: 'auto_approved' })
+  })
+
+  it('⑭直近7日の発注を積み上げて超過を検出＝焙煎者の応答待ち', async () => {
+    const recent = new Date().toISOString()
+    await putPo(`${ORDER_ID}-cap-a`, CAP_BEAN_ID, 250, 'accepted', recent)
+
+    // 実テーブルの Query（PK=roasterId）＋フィルタが効いていることを直接確認する
+    expect(await weeklyPoLoadG(ROASTER_ID, CAP_BEAN_ID)).toBe(250)
+    // 250 + 200 > 300 → 自動承認せず焙煎者の応答を待つ
+    expect(await resolveCapItem()).toMatchObject({ mode: 'po', poStatus: 'pending' })
+  })
+
+  it('⑮辞退/失効・7日より前・別の豆は枠を消費しない', async () => {
+    await removePo(`${ORDER_ID}-cap-a`, CAP_BEAN_ID) // ⑭の枠消費ぶんを外す
+
+    const recent = new Date().toISOString()
+    const old = new Date(Date.now() - 8 * 24 * 3600 * 1000).toISOString()
+    await putPo(`${ORDER_ID}-cap-b`, CAP_BEAN_ID, 250, 'declined', recent) // 辞退＝解放済み
+    await putPo(`${ORDER_ID}-cap-c`, CAP_BEAN_ID, 250, 'timeout', recent)  // 失効＝解放済み
+    await putPo(`${ORDER_ID}-cap-d`, CAP_BEAN_ID, 250, 'accepted', old)    // 8日前＝window 外
+    await putPo(`${ORDER_ID}-cap-e`, BEAN_ID, 250, 'accepted', recent)     // 別の豆
+
+    expect(await weeklyPoLoadG(ROASTER_ID, CAP_BEAN_ID)).toBe(0)
+    expect(await resolveCapItem()).toMatchObject({ mode: 'po', poStatus: 'auto_approved' })
   })
 })

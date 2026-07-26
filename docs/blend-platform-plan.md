@@ -393,7 +393,7 @@
 - [x] **API実装⑤：発注応答＋タイムアウト＋差替/返金**（§6.2・§6.3・2026-07-23）：**新テーブル `pos`（§11.2⑨）を preview／本番に作成**（GSI `by-status` ACTIVE）。`roaster/pos` GET・`respond`（`pending` からのみ遷移）・`cron/po-timeouts`（毎時5分・`vercel.json` 登録済み）・`admin/pos`・差替の推薦（admin）と承認/辞退（購入者）。例外は T1/T2/T3 × pre/post_charge で自動分類。差替は同系統＋±¥100/100g 圏に限定し吸収バンド内は支払額据え置き、辞退は全額返金＋`lostCount` 計上。運用パラメータは env 外出し（`src/lib/platformParams.ts`）。poStatus enum に `accepted` を追加。vitest 21ケース追加（全179 passed）、preview 実テーブル結合テスト 15/15、`next build` 通過。
 - [ ] 次工程：公開カタログ読取（`GET /api/beans`）＋焙煎者 active 絞り込みも後続。UI（焙煎者昇格フォーム／`account/roaster` 出し分け／豆・ロット管理／カタログからのブレンド作成）は API と並行。`blends` GSI は構築完了＋バックフィル後に旧 Scan を Query へ置換。逆引き（roaster→blends）は必要になってから後付け（§11.4）。
 - [ ] **`/shop` の表示は全てテストデータ**（オーナー確認・2026-07-23）：`src/components/shop/blend/data.ts` の `BEANS`（豆3種）・`PRESETS`（定番ブレンド4件）・`COMMUNITY`（みんなのブレンド5件）は産地/味/購入数/作者名すべて架空。**今は消さず**、将来削除して **SikŌ Coffee 自身の豆3種を実物として掲載する**。DynamoDB の `blends` は本番/preview とも0件＝削除対象はコードのみ。差し替え時の連動先：`/shop/product/[key]`・`src/app/sitemap.ts`・Stripe webhook の在庫減算（豆名マッチ）・比率配列が長さ3固定である前提。※ 焙煎者の掲載豆（`beans` テーブル）とは別枠。
-- [x] **週上限（`weeklyCapKg`）の判定を実績ベースへ**（2026-07-24）：`pos` を PK Query して直近7日 rolling の枠消費ぶんを積み上げ、「既存週内 + 今回 vs 週上限」で自動承認を判定（`weeklyPoLoadG()`）。新テーブル不要で既存 `pos` を再利用（§14.4）。
+- [x] **週上限（`weeklyCapKg`）の判定を実績ベースへ**（2026-07-24 実装 / 2026-07-26 preview 実テーブルで実挙動を確認）：`pos` を PK Query して直近7日 rolling の枠消費ぶんを積み上げ、「既存週内 + 今回 vs 週上限」で自動承認を判定（`weeklyPoLoadG()`）。新テーブル不要で既存 `pos` を再利用（§14.4）。結合テスト3ケース追加＝在庫ロットを持たない専用の豆を立てて発注経路だけを観察し、①既存0→自動承認 ②直近7日 accepted 250g + 今回 200g > 300g → `pending` ③辞退/失効・8日前・別の豆は枠を消費しない、を実 DynamoDB で確認した。
 
 ---
 
@@ -548,7 +548,7 @@
 5. **API③** 在庫ロットCRUD（`roaster/lots`・`[beanId]/[roastDate]`）。数量操作は receivedG/wasteG/onHandG の排他3通り、競合は CAS＋409。
 6. **API④** 注文→確保→発注（`checkout/blend` 拡張・Stripe webhook で commit・`cron/release-reservations`）。
 7. **API⑤** 発注応答（`roaster/pos`・`respond`）・`cron/po-timeouts`・差替/返金（`admin`／`account` の substitution）。
-8. **結合テスト基盤**：`scripts/integration/platform-flow.test.ts`＋`vitest.integration.config.ts`（preview 実テーブル・15/15 パス）。
+8. **結合テスト基盤**：`scripts/integration/platform-flow.test.ts`＋`vitest.integration.config.ts`（preview 実テーブル・**18/18 パス**）。
 9. **焙煎家UI（2026-07-24）**：`/roaster` ハブ（ステータス出し分け・要対応バッジ）／`/roaster/apply`（昇格申請・§5 同意オプトイン・`termsVersion='1.0'`）／`/roaster/orders`（発注応答＝承認/辞退・48h残時間・履歴）／`/roaster/beans`（豆CRUD＋受注ON/OFF/休止）／`/roaster/lots`（豆セレクタ・入荷/廃棄/棚卸し・鮮度ステータス・確保中ガード）。`/account` に焙煎家のみ導線。全てサーバゲート `getSessionRoaster()`（都度Get）。
 10. **admin 焙煎家承認UI（2026-07-24）**：`/admin/(protected)/roasters`（ステータスタブ・申告内容表示・承認/却下/停止/退会）。遷移は API の `TRANSITIONS` と一致。`AdminSidebar` に「焙煎家管理」を追加。→ 昇格承認が画面で完結（旧：API 直叩き）。
 11. **公開カタログ＋ブレンド作成（2026-07-24）**：`GET /api/beans`（GSI `list-index` を Query → `orderStatus="on"` かつ焙煎家 `active` を `roasters` BatchGet で forward 絞り込み）／`/shop/catalog`（最大5種選択・比率100%検証・分量/挽き方・概算価格 → `checkout/blend` に `components` で投げ既存フローに合流）／`/shop` ヘッダーに「焙煎家の豆」導線。
@@ -572,7 +572,12 @@
 - [ ] **cron 残り**：`fresh-lots`（鮮度切れの値引き/廃棄・GSI `by-freshBy` は実機確認済み）・`subscription-dunning`。
 - [ ] **T1「待つ」の導線**（§6.3 ①）：遅延Δの閾値パラメータは用意済みだが、**ETA 再計算と通知が未実装**。
 - [x] **週上限の実績ベース判定（2026-07-24）**：`weeklyPoLoadG()`（`src/lib/pos.ts`）で **`pos` を PK Query（Scan なし）→ 直近7日 rolling × 同一豆 × 枠を消費するステータス（`auto_approved`/`pending`/`accepted`）の `qtyG` 合算**を出し、`checkout/blend` の自動承認判定を「既存週内 + 今回 <= `weeklyCapKg`」へ変更（`src/lib/platformCheckout.ts`）。`declined`/`timeout` は解放済みとして除外。新テーブル不要（§11.4「逆引きは必要になってから」に沿い既存 `pos` を再利用）。vitest +2（全181 passed）／tsc・eslint・`next build` クリーン。
-- [ ] **認証済みE2E検証**：preview デプロイ後に「申請→admin承認→active→豆/ロット登録→（カタログで）ブレンド作成→注文→発注応答→差替/返金」を通しで確認。UI は全て揃ったので**あとは通すだけ**。※ preview は Vercel SSO 保護のため要 Vercel ログイン。
+- [ ] **認証済みE2E検証**：preview デプロイ後に「申請→admin承認→active→豆/ロット登録→（カタログで）ブレンド作成→注文→発注応答→差替/返金」を通しで確認。
+  - 🔴 **2026-07-26 時点、HTTP 経由の通し確認は2つの理由でブロックされている**:
+    1. **決済が停止中**（AWS 移行 Phase 0・`docs/aws-migration-feasibility.md`）。`PAYMENTS_ENABLED` は Vercel のどの環境にも存在せず、preview でも `POST /api/checkout/blend` は **503** を返す＝「注文」の一歩が踏めない。
+    2. かつ Vercel env の `STRIPE_SECRET_KEY` は**失効済みの旧キー**なので、仮に `PAYMENTS_ENABLED` を preview だけに入れても Stripe 認証で落ちる。通すには **preview 用の Stripe テストキー**を別途用意する必要がある。
+  - ※ preview は Vercel SSO 保護のため、ブラウザ操作にも Vercel ログインが要る。
+  - **データ層は結合テストで代替確認済み**（§14.4 の週上限判定を含む・18/18）。残るのは HTTP + 認証 + Stripe の経路だけ。
 - [ ] **`/shop` のテストデータ差し替え**：`data.ts` の豆3種・定番/みんなのブレンドは全て架空（§12）。SikŌ 自身の3種へ差し替える。※ 焙煎家の掲載豆（`beans` テーブル）＋新設 `/shop/catalog` とは別枠で、既存 ShopApp 側の話。
 
 ### 14.5 残タスク（外部確認・実装と並行可）
@@ -582,7 +587,9 @@
 - [ ] オープンデータ取込の実装調査（昇格の自動一次判定・§6.1.1）。※初期は手動ゲートで回避可。
 
 ### 14.6 次の一手（推奨開始点）
-**認証済みE2Eの通し確認**（§14.4）。API・UI とも掲載→在庫→カタログ→注文→確保→発注→応答→差替/返金まで揃ったので、次は preview で一巡させて実挙動を確認するのが最短。※ preview は Vercel SSO 保護のため要 Vercel ログイン。
+**認証済みE2Eの通し確認**（§14.4）。API・UI とも掲載→在庫→カタログ→注文→確保→発注→応答→差替/返金まで揃っている。
+ただし **HTTP 経由の通しは決済停止（Phase 0）で止まっている**（上記 §14.4 の 🔴 参照）。着手するなら先に「preview だけ決済を有効化する（Stripe テストキー＋`PAYMENTS_ENABLED`）」の判断が要る。
+データ層は preview 実テーブルの結合テストで代替確認済み（**18/18**・週上限の実績ベース判定を含む）。
 その後の実装候補は実利順で **①T1「待つ」導線（ETA再計算＋通知）→ ②サブスク（Stripe Billing）→ ③cron 残り（`fresh-lots`／`subscription-dunning`）**（旧①「週上限の実績ベース判定」は 2026-07-24 完了）。`GET /api/blends` の Scan→Query は `blends` GSI バックフィル待ちで別軸。
 
 ### 14.7 実装上の注意（gotchas・既確認）
