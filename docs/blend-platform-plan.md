@@ -393,7 +393,7 @@
 - [x] **API実装⑤：発注応答＋タイムアウト＋差替/返金**（§6.2・§6.3・2026-07-23）：**新テーブル `pos`（§11.2⑨）を preview／本番に作成**（GSI `by-status` ACTIVE）。`roaster/pos` GET・`respond`（`pending` からのみ遷移）・`cron/po-timeouts`（毎時5分・`vercel.json` 登録済み）・`admin/pos`・差替の推薦（admin）と承認/辞退（購入者）。例外は T1/T2/T3 × pre/post_charge で自動分類。差替は同系統＋±¥100/100g 圏に限定し吸収バンド内は支払額据え置き、辞退は全額返金＋`lostCount` 計上。運用パラメータは env 外出し（`src/lib/platformParams.ts`）。poStatus enum に `accepted` を追加。vitest 21ケース追加（全179 passed）、preview 実テーブル結合テスト 15/15、`next build` 通過。
 - [ ] 次工程：公開カタログ読取（`GET /api/beans`）＋焙煎者 active 絞り込みも後続。UI（焙煎者昇格フォーム／`account/roaster` 出し分け／豆・ロット管理／カタログからのブレンド作成）は API と並行。`blends` GSI は構築完了＋バックフィル後に旧 Scan を Query へ置換。逆引き（roaster→blends）は必要になってから後付け（§11.4）。
 - [ ] **`/shop` の表示は全てテストデータ**（オーナー確認・2026-07-23）：`src/components/shop/blend/data.ts` の `BEANS`（豆3種）・`PRESETS`（定番ブレンド4件）・`COMMUNITY`（みんなのブレンド5件）は産地/味/購入数/作者名すべて架空。**今は消さず**、将来削除して **SikŌ Coffee 自身の豆3種を実物として掲載する**。DynamoDB の `blends` は本番/preview とも0件＝削除対象はコードのみ。差し替え時の連動先：`/shop/product/[key]`・`src/app/sitemap.ts`・Stripe webhook の在庫減算（豆名マッチ）・比率配列が長さ3固定である前提。※ 焙煎者の掲載豆（`beans` テーブル）とは別枠。
-- [ ] **週上限（`weeklyCapKg`）の判定を実績ベースへ**：現状は「注文単体 vs 週上限」の近似。`roaster_metrics` の週次化か受注ログの追加が必要（実装④で顕在化）。
+- [x] **週上限（`weeklyCapKg`）の判定を実績ベースへ**（2026-07-24）：`pos` を PK Query して直近7日 rolling の枠消費ぶんを積み上げ、「既存週内 + 今回 vs 週上限」で自動承認を判定（`weeklyPoLoadG()`）。新テーブル不要で既存 `pos` を再利用（§14.4）。
 
 ---
 
@@ -513,7 +513,7 @@
   - `POST /api/checkout/blend` 拡張：`components`／`blendId`／`blendVersion` を受け付け（既存の3種ブレンド＝`ratios` 経路はそのまま動く）、**確保 → 注文 Put → Stripe** の順。以降で失敗したら確保を戻す。競合で確保に失敗＝409。
   - `POST /api/webhooks/stripe` 拡張：`checkout.session.completed` で **held → committed**（`lots` の `onHandG`/`reservedG` を減らし `soldG` を積む）＋ `roaster_metrics` に GMV/件数/soldG を ADD（**`claim('platformCommittedAt')` で再送時の二重計上を防止**）。`checkout.session.expired` では**注文を消す前に確保を戻す**。
   - `GET /api/cron/release-reservations` 新設＋`vercel.json` に 10分毎で登録（TTL は削除されると `reservedG` を戻せなくなるため **cron が主・TTL は保険**）。
-  - **週上限の判定は近似**：週次の受注実績を集計する場所が無いため「この注文単体 vs `weeklyCapKg`」で判定している。実績ベースにするなら `roaster_metrics` を週次化するか受注ログが要る（未対応）。
+  - **週上限の判定（2026-07-24 に実績ベース化）**：当初は「この注文単体 vs `weeklyCapKg`」の近似だったが、`weeklyPoLoadG()`（`pos` を PK Query→直近7日 rolling×同一豆×枠消費ステータスの `qtyG` 合算）で「既存週内 + 今回 vs `weeklyCapKg`」へ変更（§14.4）。
   - 検証：tsc/eslint/`next build` クリーン、vitest **19ケース追加（全体 158 passed）**。
   - **preview 実テーブルの結合テスト 12/12 パス**（2026-07-23）：`scripts/integration/platform-flow.test.ts`＋`vitest.integration.config.ts`（通常の `vitest run` には含めない・実行は `VERCEL_ENV=preview npx vitest run --config vitest.integration.config.ts`）。確認できたのはモックでは検証できない DynamoDB 側の挙動——`TransactWriteItems` の all-or-nothing（1件不成立なら他も入らない）／`availableG >= :qty` 条件の成立・不成立／held→committed の二重適用防止（webhook 再送を模して2回実行）／二重戻し防止／GSI `by-expire`・`by-freshBy` の Query／複合キーでの `attribute_not_exists`／`ADD` の積み上げ。テストデータは毎回 UUID 付きで作り、後始末まで実施（残留ゼロを確認）。
 - **⑤発注応答・タイムアウト・差替/返金の2択（§6.2・§6.3）を実装**（2026-07-23）：
@@ -571,7 +571,7 @@
 - [ ] **サブスク**：`roaster/subscription`(POST) ＋ Stripe Billing。`subscriptions` テーブルは作成済み・未使用。
 - [ ] **cron 残り**：`fresh-lots`（鮮度切れの値引き/廃棄・GSI `by-freshBy` は実機確認済み）・`subscription-dunning`。
 - [ ] **T1「待つ」の導線**（§6.3 ①）：遅延Δの閾値パラメータは用意済みだが、**ETA 再計算と通知が未実装**。
-- [ ] **週上限の実績ベース判定**：現状は「注文単体 vs `weeklyCapKg`」の近似。`roaster_metrics` の週次化か受注ログが要る。
+- [x] **週上限の実績ベース判定（2026-07-24）**：`weeklyPoLoadG()`（`src/lib/pos.ts`）で **`pos` を PK Query（Scan なし）→ 直近7日 rolling × 同一豆 × 枠を消費するステータス（`auto_approved`/`pending`/`accepted`）の `qtyG` 合算**を出し、`checkout/blend` の自動承認判定を「既存週内 + 今回 <= `weeklyCapKg`」へ変更（`src/lib/platformCheckout.ts`）。`declined`/`timeout` は解放済みとして除外。新テーブル不要（§11.4「逆引きは必要になってから」に沿い既存 `pos` を再利用）。vitest +2（全181 passed）／tsc・eslint・`next build` クリーン。
 - [ ] **認証済みE2E検証**：preview デプロイ後に「申請→admin承認→active→豆/ロット登録→（カタログで）ブレンド作成→注文→発注応答→差替/返金」を通しで確認。UI は全て揃ったので**あとは通すだけ**。※ preview は Vercel SSO 保護のため要 Vercel ログイン。
 - [ ] **`/shop` のテストデータ差し替え**：`data.ts` の豆3種・定番/みんなのブレンドは全て架空（§12）。SikŌ 自身の3種へ差し替える。※ 焙煎家の掲載豆（`beans` テーブル）＋新設 `/shop/catalog` とは別枠で、既存 ShopApp 側の話。
 
@@ -583,7 +583,7 @@
 
 ### 14.6 次の一手（推奨開始点）
 **認証済みE2Eの通し確認**（§14.4）。API・UI とも掲載→在庫→カタログ→注文→確保→発注→応答→差替/返金まで揃ったので、次は preview で一巡させて実挙動を確認するのが最短。※ preview は Vercel SSO 保護のため要 Vercel ログイン。
-その後の実装候補は実利順で **①週上限の実績ベース判定 → ②T1「待つ」導線（ETA再計算＋通知）→ ③サブスク（Stripe Billing）→ ④cron 残り（`fresh-lots`／`subscription-dunning`）**。`GET /api/blends` の Scan→Query は `blends` GSI バックフィル待ちで別軸。
+その後の実装候補は実利順で **①T1「待つ」導線（ETA再計算＋通知）→ ②サブスク（Stripe Billing）→ ③cron 残り（`fresh-lots`／`subscription-dunning`）**（旧①「週上限の実績ベース判定」は 2026-07-24 完了）。`GET /api/blends` の Scan→Query は `blends` GSI バックフィル待ちで別軸。
 
 ### 14.7 実装上の注意（gotchas・既確認）
 - **`ConditionExpression` に算術式は書けない**（`reservedG + qty <= onHandG` は不可）。→ `lots` は派生属性 `availableG` を実体で持ち、`availableG >= :qty` の単純比較で確保する。**lots へのあらゆる書き込みで `availableG = onHandG − reservedG` を維持すること**（§11.2④）。
