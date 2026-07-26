@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
 import UserMenu from '@/components/auth/UserMenu';
+import SalesSuspendedNotice from '@/components/shop/SalesSuspendedNotice';
 import {
   BEANS, COMMUNITY, evenSplit, activeBeans, singleRatios, DEFAULT_GRAMS,
 } from './data';
@@ -73,7 +74,7 @@ function readSession<T>(key: string, fallback: T): T {
   } catch { return fallback; }
 }
 
-export default function ShopApp() {
+export default function ShopApp({ paymentsEnabled }: { paymentsEnabled: boolean }) {
   const [route, setRoute] = useState<Route>({ name: 'top' });
   const [cart, setCart] = useState<CartItem[]>(() => readSession('ss_cart', []));
   const [saved, setSaved] = useState<SavedBlend[]>(() => readSession('ss_saved', []));
@@ -171,7 +172,8 @@ export default function ShopApp() {
   };
 
   const checkout = async () => {
-    if (checkingOut || cart.length === 0) return;
+    // 停止中はそもそも API を叩かない（叩いても 503 が返るが、503 を UI で見せないため）。
+    if (!paymentsEnabled || checkingOut || cart.length === 0) return;
     setCheckingOut(true);
     try {
       const res = await fetch('/api/checkout/blend', {
@@ -199,6 +201,9 @@ export default function ShopApp() {
       <div className="ss-stars" />
       <ShopHeader route={route} nav={nav} cartCount={cart.length} />
       <main className="ss-main" id="ss-main" ref={mainRef} tabIndex={-1} style={{ outline: 'none' }}>
+        {!paymentsEnabled && (
+          <SalesSuspendedNotice style={{ maxWidth: 620, margin: '26px auto 0' }} />
+        )}
         {route.name === 'top' && (
           <ScreenTop nav={nav} addToCart={addToCart} startMaker={startMaker} addSingleToCart={addSingleToCart} communityBlends={communityBlends} />
         )}
@@ -218,7 +223,7 @@ export default function ShopApp() {
           <ScreenDetail id={routeParam} nav={nav} addToCart={addToCart} startMaker={startMaker} />
         )}
         {route.name === 'cart' && (
-          <ScreenCart cart={cart} nav={nav} removeAt={(i) => setCart((c) => c.filter((_, j) => j !== i))} updateGrams={updateGrams} startMaker={startMaker} checkout={checkout} checkingOut={checkingOut} />
+          <ScreenCart cart={cart} nav={nav} removeAt={(i) => setCart((c) => c.filter((_, j) => j !== i))} updateGrams={updateGrams} startMaker={startMaker} checkout={checkout} checkingOut={checkingOut} paymentsEnabled={paymentsEnabled} />
         )}
         {route.name === 'mypage' && (
           <ScreenMyPage saved={saved} nav={nav} addCustomToCart={addCustomToCart} startMaker={startMaker} togglePublish={togglePublish} />
