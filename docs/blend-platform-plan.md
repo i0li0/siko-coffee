@@ -570,7 +570,14 @@
 - [ ] **`GET /api/blends` の Scan→Query 置換**：GSI `list-index` のバックフィル完了後に置換（§13.6・§14.3）。カタログの `GET /api/beans` とは別テーブル（`blends`）の話。
 - [ ] **サブスク**：`roaster/subscription`(POST) ＋ Stripe Billing。`subscriptions` テーブルは作成済み・未使用。
 - [ ] **cron 残り**：`fresh-lots`（鮮度切れの値引き/廃棄・GSI `by-freshBy` は実機確認済み）・`subscription-dunning`。
-- [ ] **T1「待つ」の導線**（§6.3 ①）：遅延Δの閾値パラメータは用意済みだが、**ETA 再計算と通知が未実装**。
+- [x] **T1「待つ」の導線**（§6.3 ①・2026-07-26）：発注が **accept された時点で ETA を引き直す**（`src/lib/etaDelay.ts`）。焙煎者のリードタイムは「発注を受けた日」から動き出すため、応答が遅れたぶんはそのまま着荷の遅れになる＝新 ETA は `respondedAt + 発送準備3日 + leadTimeDays`。約束 ETA との差 Δ（**切り上げ**＝半日でも1日として扱い購入者に不利にしない）で3段に分岐する。
+  - `Δ <= PLATFORM_DELAY_SILENT_DAYS`(既定3) … **silent**: `etaCurrent` を更新するだけでメールは出さない。
+  - `<= PLATFORM_DELAY_CHOICE_DAYS`(既定7) … **choice**: 変更を通知するが注文は継続（例外は立てない）。
+  - 超 … **required**: 待たせられないので `applyOrderException(T2, reason:'delay')` で**差替/返金へ送る**。`OrderException.reason` に `'delay'` を追加した。
+  - **再プロンプトしない**: 注文に `delay.notifiedTier` を持ち、**段が上がったときだけ1回**通知する（choice で通知済み→ required で1回だけエスカレーション）。同じ段の再計算では通知しない。
+  - **前倒し・据え置きは何もしない**（新 ETA <= 現 ETA なら書き換えない）＝良い方向の変動で購入者を煩わせない。
+  - 通知は購入者へメール（`etaDelayNotice`・閾値超かどうかで文面が変わる）＋ Slack。**通知の失敗で発注応答そのものを 500 にしない**（状態遷移は既に成立しているため respond 側で握り潰して Sentry に送る）。
+  - vitest 13ケース追加（境界値・エスカレーション・メール無し・対象外注文）。
 - [x] **週上限の実績ベース判定（2026-07-24）**：`weeklyPoLoadG()`（`src/lib/pos.ts`）で **`pos` を PK Query（Scan なし）→ 直近7日 rolling × 同一豆 × 枠を消費するステータス（`auto_approved`/`pending`/`accepted`）の `qtyG` 合算**を出し、`checkout/blend` の自動承認判定を「既存週内 + 今回 <= `weeklyCapKg`」へ変更（`src/lib/platformCheckout.ts`）。`declined`/`timeout` は解放済みとして除外。新テーブル不要（§11.4「逆引きは必要になってから」に沿い既存 `pos` を再利用）。vitest +2（全181 passed）／tsc・eslint・`next build` クリーン。
 - [ ] **認証済みE2E検証**：preview デプロイ後に「申請→admin承認→active→豆/ロット登録→（カタログで）ブレンド作成→注文→発注応答→差替/返金」を通しで確認。
   - 🔴 **2026-07-26 時点、HTTP 経由の通し確認は2つの理由でブロックされている**:
@@ -590,6 +597,7 @@
 **認証済みE2Eの通し確認**（§14.4）。API・UI とも掲載→在庫→カタログ→注文→確保→発注→応答→差替/返金まで揃っている。
 ただし **HTTP 経由の通しは決済停止（Phase 0）で止まっている**（上記 §14.4 の 🔴 参照）。着手するなら先に「preview だけ決済を有効化する（Stripe テストキー＋`PAYMENTS_ENABLED`）」の判断が要る。
 データ層は preview 実テーブルの結合テストで代替確認済み（**18/18**・週上限の実績ベース判定を含む）。
+**2026-07-26 の判断**: E2E は決済再開時にまとめて実施することとし、先に実装を進める方針を選択。旧②「T1『待つ』導線」も同日完了したため、**残る実装候補は ①サブスク(Stripe Billing) ②cron残り（`fresh-lots`／`subscription-dunning`）**。
 その後の実装候補は実利順で **①T1「待つ」導線（ETA再計算＋通知）→ ②サブスク（Stripe Billing）→ ③cron 残り（`fresh-lots`／`subscription-dunning`）**（旧①「週上限の実績ベース判定」は 2026-07-24 完了）。`GET /api/blends` の Scan→Query は `blends` GSI バックフィル待ちで別軸。
 
 ### 14.7 実装上の注意（gotchas・既確認）

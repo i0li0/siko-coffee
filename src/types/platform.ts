@@ -175,7 +175,8 @@ export interface OrderException {
   phase: ExceptionPhase
   beanId: string
   roasterId: string
-  reason: 'declined' | 'timeout'
+  // delay = 承認されたが遅延 Δ が閾値超（§6.3 ① Tier C）。待てないので差替/返金へ送る
+  reason: 'declined' | 'timeout' | 'delay'
   createdAt: string
 }
 

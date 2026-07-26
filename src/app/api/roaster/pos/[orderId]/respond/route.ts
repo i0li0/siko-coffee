@@ -4,6 +4,7 @@ import { requireRoaster } from '@/lib/roasterAuth'
 import { checkGeneralRateLimit, getClientIp } from '@/lib/rateLimit'
 import { poRespondSchema } from '@/lib/validation'
 import { applyOrderException, classifyException, syncOrderProcurement, transitionPo } from '@/lib/pos'
+import { recalculateOrderEta } from '@/lib/etaDelay'
 import { poKeyOf } from '@/types/platform'
 
 export const dynamic = 'force-dynamic'
@@ -59,6 +60,21 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ ord
     }
 
     await syncOrderProcurement(orderId, beanId, nextStatus)
+
+    if (decision === 'accept') {
+      // 承認された時点からリードタイムが動き出す＝応答が遅れたぶんは着荷の遅れになる。
+      // ETA を引き直し、遅延幅に応じて通知/選択肢の要否を決める（§6.3 T1）。
+      // 通知の失敗で応答そのものを 500 にはしない（発注の状態遷移は既に成立している）。
+      await recalculateOrderEta({
+        orderId,
+        beanId,
+        roasterId: authed.roaster.roasterId,
+        leadTimeDays: updated.leadTimeDays ?? 0,
+        respondedAt: updated.respondedAt,
+      }).catch((err) => {
+        Sentry.captureException(err, { tags: { route: 'roaster/pos/[orderId]/respond', step: 'eta' } })
+      })
+    }
 
     if (decision === 'decline') {
       // 辞退＝構成豆が欠ける。回復見込みで T1/T2/T3 を分類して注文に記録（§6.3）。
