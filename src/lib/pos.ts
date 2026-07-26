@@ -70,6 +70,29 @@ export async function listPosForRoaster(roasterId: string, status?: PoStatus): P
   return status ? items.filter((p) => p.poStatus === status) : items
 }
 
+// 週上限の実績判定（§6.2.1・§14.4）。直近7日（rolling）で「焙煎に回る」PO＝
+// auto_approved / pending / accepted の qtyG を豆ごとに合算する。declined / timeout は
+// 枠を消費しない（辞退・失効で解放済み）ので除外。PK Query だけ＝Scan なし（[[feedback-dynamodb-scan]]）。
+export const CAP_CONSUMING_STATUSES: PoStatus[] = ['auto_approved', 'pending', 'accepted']
+
+export async function weeklyPoLoadG(
+  roasterId: string,
+  beanId: string,
+  now: Date = new Date(),
+): Promise<number> {
+  const since = new Date(now.getTime() - 7 * 24 * 3600 * 1000).toISOString()
+  const res = await getDocClient().send(
+    new QueryCommand({
+      TableName: TABLE.POS,
+      KeyConditionExpression: 'roasterId = :rid',
+      ExpressionAttributeValues: { ':rid': roasterId },
+    }),
+  )
+  return ((res.Items ?? []) as PoRecord[])
+    .filter((p) => p.beanId === beanId && p.createdAt >= since && CAP_CONSUMING_STATUSES.includes(p.poStatus))
+    .reduce((sum, p) => sum + (p.qtyG ?? 0), 0)
+}
+
 // ステータス別の横断一覧（GSI by-status）。cron は pending × timeoutAt<=now で使う。
 export async function listPosByStatus(status: PoStatus, until?: string, limit = 100): Promise<PoRecord[]> {
   const res = await getDocClient().send(
