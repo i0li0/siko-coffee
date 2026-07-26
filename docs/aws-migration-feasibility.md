@@ -168,12 +168,33 @@ OpenNext 4.1.0 の peer range は `>=16.2.11`。Next.js のマイナーアップ
 |---|---|---|---|
 | 1 | `feat/payments-kill-switch` でコミット | Claude | ✅ |
 | 2 | PR 作成・CI 通過確認 | Claude | ✅ |
-| 3 | **PR のマージ** | **オーナー** | ⬜ |
-| 4 | Vercel 自動デプロイ | 自動 | ⬜ |
-| 5 | 本番の `/api/checkout` が **503** を返すことを確認 | Claude | ⬜ |
-| 6 | Vercel に `PAYMENTS_ENABLED` が**存在しない**ことを確認（フェイルクローズ前提の裏取り） | **オーナー** | ⬜ |
-| 7 | Stripe ダッシュボードでライブキーを無効化／ロール（二重防御・推奨） | **オーナー** | ⬜ |
+| 3 | **PR のマージ**（#75 squash → main `ef96ef9`） | オーナー | ✅ |
+| 4 | Vercel 自動デプロイ | 自動 | ✅ |
+| 5 | 本番の `/api/checkout` が **503** を返すことを確認 | Claude | ✅ |
+| 6 | Vercel に `PAYMENTS_ENABLED` が**存在しない**ことを確認 | オーナー | ✅ |
+| 7 | Stripe ダッシュボードでライブキーを無効化／ロール | オーナー | ✅ |
 | 8 | 販売停止バナーを出すか判断（出す場合の実装は Claude） | **オーナー** | ⬜ |
+
+#### Phase 0 完了時の多層防御（2026-07-26）
+
+| 層 | 状態 |
+|---|---|
+| アプリ | `PAYMENTS_ENABLED` 未設定 → checkout は **503 + 停止文言**（本番実測・画面表示も確認済） |
+| Vercel env | `STRIPE_SECRET_KEY` は**失効済みの旧キー** `sk_live_...J04e` を保持 |
+| Stripe | Secret key を Rotate（旧キーは **"Now" で即時失効**）。新キー `sk_live_...Nk7B` は**パスワードマネージャにのみ保管**し Vercel には未投入。未使用の Restricted key（Jun 7 作成・一度も未使用）も Expire 済み |
+
+**取引実績ゼロの裏取り**: Stripe 側 Gross volume ¥0 / JPY balance ¥0、DynamoDB `siko-coffee-orders` 0 件、Payment links・Invoices・Subscriptions すべて未設定。サブスク実装なし（両 checkout とも `mode: 'payment'`）。
+
+**副作用なし**: 旧キー失効後も `/`・`/shop`・`/shop/catalog`・`/api/health`・`/api/menu`・`/api/instagram` はすべて 200。Stripe Webhook 受信は 400（署名なしで正常）＝**受信側は意図的に生かしている**。ガードが Stripe より手前にあるため、そもそも Stripe を呼びに行かない。
+
+#### 🔑 販売再開の手順（順番が重要）
+
+1. パスワードマネージャから `sk_live_...Nk7B` を取り出し、Vercel 本番の `STRIPE_SECRET_KEY` を**更新**
+2. `PAYMENTS_ENABLED=true` を追加
+3. 再デプロイ
+4. `POST /api/checkout` が 503 を返さなくなることを確認
+
+**1 を飛ばすと Stripe 認証エラーになる。**
 
 **判断済み**: 決済を止めるため **Vercel Pro への昇格は不要**。Hobby のまま進める。
 
@@ -220,7 +241,7 @@ SST v3 で stage `dev` を立て、既存のプレビュー用テーブル `siko
 | 1 | IAM ユーザー `shun` は `administrator` グループ経由で **AdministratorAccess**。そのアクセスキーが Vercel の環境変数に置かれている＝**Vercel に預けた鍵がアカウント全権限を持つ**。漏洩時の影響範囲は全 AWS リソース | **高** |
 | 2 | ~~アクセスキーが**2本ともActive**。`AKIA...DLMC` は 2026-05-18 以降未使用~~ → **✅ 対応済 2026-07-26**（無効化→本番疎通確認→削除。残るは本番稼働中の `AKIA...ZCYG` のみ） | ~~中~~ |
 | 3 | ~~**CloudTrail のトレイルが1本も無い**~~ → **✅ 対応済 2026-07-26**（下記参照） | ~~中~~ |
-| 4 | **DynamoDB の PITR が無効**（`siko-coffee-orders` で確認）。削除保護も `false`。注文データの誤削除・破損から復旧できない | **中** |
+| 4 | ~~**DynamoDB の PITR が無効**。削除保護も `false`~~ → **✅ 対応済 2026-07-26**（本番16テーブル全てで有効化。下記参照） | ~~中~~ |
 | 5 | GuardDuty 無効 | 低 |
 
 **良好な点**: ルートアカウント MFA 有効 / `shun` も MFA 有効 / S3 パブリックアクセス全ブロック + 暗号化有効 / RDS・EC2 の課金残骸なし。
@@ -233,9 +254,31 @@ Amplify アプリ `siko-coffee`（`d3059a6gcvih7x`）、`AmplifyServiceRole`、`
 
 1. ~~未使用アクセスキー `AKIA...DLMC` を削除~~ → **✅ 完了 2026-07-26**
 2. ~~CloudTrail を有効化~~ → **✅ 完了 2026-07-26**
-3. **DynamoDB PITR + 削除保護を有効化**（注文データ保護。PITR は微課金） ← 次はここ
-4. 移行完了後、**Vercel 用アクセスキーを削除し Lambda 実行ロールへ移行**（項目12）
+3. ~~DynamoDB PITR + 削除保護を有効化~~ → **✅ 完了 2026-07-26**
+4. 移行完了後、**Vercel 用アクセスキーを削除し Lambda 実行ロールへ移行**（項目12） ← 移行のゴール
 5. 旧構成の IAM ロール・Amplify アプリを整理
+
+### DynamoDB データ保護（2026-07-26 実施）
+
+本番 16 テーブル**すべて**で PITR（ポイントインタイムリカバリ）と削除保護を有効化した。実施前は 16/16 が両方とも無効。
+
+対象: `auth` `beans` `blends` `config` `expenses` `feedback` `inventory` `lots` `orders` `pos` `products` `reservations` `roaster-metrics` `roasters` `sales` `subscriptions`（すべて `siko-coffee-` プレフィックス）
+
+**守っている実データ**（実施時点の概算件数）: `expenses` 124 / `config` 26 / `sales` 14 / `products` 8 / `auth` 7。いずれも失うと復元不能な業務データで、PITR 無効は理論上ではなく実質的なリスクだった。
+
+| 項目 | 内容 |
+|---|---|
+| PITR | 過去 **35 日間**の任意の秒に復元可能（AWS 既定） |
+| 削除保護 | `DeleteTable` を API/コンソールから拒否。解除は明示的な `update-table --no-deletion-protection-enabled` が必要 |
+| コスト | 本番16テーブルの合計サイズは **36.5 KB**。PITR は約 $0.20/GB-月なので **実質 $0** |
+
+**プレビュー用テーブル（`siko-coffee-preview-*` 16個）は意図的に対象外**。データは使い捨てであり、削除保護を付けると移行作業中の作り直し・撤去の妨げになるため。
+
+確認コマンド:
+
+```
+aws dynamodb describe-continuous-backups --table-name siko-coffee-orders --region ap-northeast-1
+```
 
 ### CloudTrail 構成（2026-07-26 構築）
 
