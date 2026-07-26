@@ -73,3 +73,15 @@ export async function verifyOrderToken(orderId: string, token: string): Promise<
     return false
   }
 }
+
+// 署名付きの注文照会 URL。トークンが作れない環境（ORDER_TOKEN_SECRET 未設定など）では
+// リンクを付けずにメールを出せるよう undefined を返す＝通知そのものは止めない。
+export async function buildOrderUrl(orderId: string): Promise<string | undefined> {
+  try {
+    const siteUrl = process.env.SITE_URL || 'https://www.sikocoffee.com'
+    const token = await signOrderToken(orderId)
+    return `${siteUrl}/shop/order/${orderId}?t=${token}`
+  } catch {
+    return undefined
+  }
+}

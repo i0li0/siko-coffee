@@ -167,6 +167,55 @@ export function deliveredNotice(ctx: {
   return { subject, text, html: wrapHtml('商品をお届けしました', bodyHtml, ctx.orderUrl) }
 }
 
+// ── お届け予定の変更メール（顧客宛・§6.3 T1「待つ」導線） ──
+// 遅延 Δ が閾値内なら「知らせるだけ」、閾値超なら差替/返金の選択をお願いする文面に変える。
+export function etaDelayNotice(ctx: {
+  orderId: string
+  customerName?: string | null
+  deltaDays: number
+  etaAfter: string
+  requiresChoice: boolean
+  orderUrl?: string
+}) {
+  const name = ctx.customerName ?? 'お客様'
+  const eta = new Date(ctx.etaAfter).toLocaleDateString('ja-JP', {
+    year: 'numeric', month: 'long', day: 'numeric',
+  })
+  const subject = `[${SITE_NAME}] お届け予定日の変更のお知らせ（注文番号 ${shortId(ctx.orderId)}）`
+
+  const lead = ctx.requiresChoice
+    ? 'ご注文の一部の豆について、焙煎家からの入荷にお時間がかかることが分かりました。\nお待ちいただくには長いお日にちとなるため、恐れ入りますが対応をお選びください。'
+    : 'ご注文の一部の豆について入荷に時間がかかっており、お届け予定日が変更となりました。\nこのままお届けの準備を進めてまいりますので、いましばらくお待ちください。'
+
+  const action = ctx.requiresChoice
+    ? '別の豆への差し替え、または全額返金をご用意しております。ご注文ページからお選びください。'
+    : 'お手続きは不要です。ご不明な点がございましたら、このメールにご返信ください。'
+
+  const text = [
+    `${name} 様`,
+    '',
+    lead,
+    '',
+    `新しいお届け予定: ${eta}（当初のご案内より約${ctx.deltaDays}日の遅れ）`,
+    `注文番号: ${shortId(ctx.orderId)}`,
+    '',
+    action,
+    ctx.orderUrl ? `\nご注文状況の確認: ${ctx.orderUrl}` : '',
+    '',
+    'ご迷惑をおかけし申し訳ございません。',
+    `${SITE_NAME}`,
+  ].filter((l) => l !== undefined).join('\n')
+
+  const bodyHtml = `<p>${name} 様</p>
+<p>${lead.replace(/\n/g, '<br/>')}</p>
+<p style="font-size:15px">新しいお届け予定 <strong>${eta}</strong><br/><span style="color:#888;font-size:13px">当初のご案内より約${ctx.deltaDays}日の遅れ</span></p>
+<p style="color:#888;font-size:13px">注文番号 ${shortId(ctx.orderId)}</p>
+<p style="font-size:14px">${action}</p>
+<p style="margin-top:20px;font-size:13px;color:#555">ご迷惑をおかけし申し訳ございません。</p>`
+
+  return { subject, text, html: wrapHtml('お届け予定日の変更', bodyHtml, ctx.orderUrl) }
+}
+
 // ── 新規注文の通知メール（店主宛） ──
 export function ownerNewOrder(ctx: {
   orderId: string
