@@ -13,3 +13,9 @@ export function isPaymentsEnabled(): boolean {
 // 停止中に利用者へ提示する文言。checkout 系 API のエラー応答としてそのまま画面に出る。
 export const PAYMENTS_DISABLED_MESSAGE =
   'ただいまオンライン販売を一時停止しています。再開までしばらくお待ちください。';
+
+// 購入導線の見出しとして使う短い表示（SalesSuspendedNotice の見出し）。
+export const PAYMENTS_DISABLED_HEADING = 'オンライン販売 一時停止中';
+
+// 購入ボタンなど、文字数の限られる箇所に出す停止表示。
+export const PAYMENTS_DISABLED_LABEL = '販売停止中';

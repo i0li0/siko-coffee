@@ -3,8 +3,9 @@
 import Link from 'next/link';
 import { BEANS, PRICE_PER_100G, AXES, tasteDots } from '@/components/shop/blend/data';
 import { RatioBar } from '@/components/shop/blend/atoms';
+import SalesSuspendedNotice from '@/components/shop/SalesSuspendedNotice';
 
-export default function ProductClient({ beanKey }: { beanKey: string }) {
+export default function ProductClient({ beanKey, paymentsEnabled }: { beanKey: string; paymentsEnabled: boolean }) {
   const bean = BEANS.find((b) => b.key === beanKey);
   if (!bean) return null;
 
@@ -52,12 +53,14 @@ export default function ProductClient({ beanKey }: { beanKey: string }) {
             <span style={{ fontSize: 11, color: 'var(--ss-dim)' }}>/ 200g</span>
           </div>
 
+          {!paymentsEnabled && <SalesSuspendedNotice />}
+
           <Link
             href="/shop"
             className="ss-btn"
             style={{ display: 'inline-block', textAlign: 'center', textDecoration: 'none', marginTop: 8 }}
           >
-            ショップで購入する
+            {paymentsEnabled ? 'ショップで購入する' : 'ショップを見る'}
           </Link>
         </div>
       </div>
