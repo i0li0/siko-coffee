@@ -6,6 +6,7 @@ import { stripe } from '@/lib/stripe';
 import { buildShippingOptions } from '@/lib/shipping';
 import { auth } from '@/lib/auth';
 import { checkGeneralRateLimit, getClientIp } from '@/lib/rateLimit';
+import { isPaymentsEnabled, PAYMENTS_DISABLED_MESSAGE } from '@/lib/payments';
 import type { Product } from '@/types/product';
 
 export const dynamic = 'force-dynamic';
@@ -21,6 +22,10 @@ function getOrigin(req: NextRequest): string {
 }
 
 export async function POST(req: NextRequest) {
+  // 決済停止中は Stripe に一切触れずに打ち切る（レート制限やDB参照より前）。
+  if (!isPaymentsEnabled()) {
+    return NextResponse.json({ error: PAYMENTS_DISABLED_MESSAGE }, { status: 503 });
+  }
   const ip = getClientIp(req.headers);
   const rl = await checkGeneralRateLimit(ip, { prefix: 'checkout', maxAttempts: 10, windowMs: 60_000 });
   if (!rl.allowed) {

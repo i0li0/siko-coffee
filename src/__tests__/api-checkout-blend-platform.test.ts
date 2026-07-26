@@ -118,11 +118,22 @@ function transactionCanceled() {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  vi.stubEnv('PAYMENTS_ENABLED', 'true')
   vi.mocked(getClientIp).mockReturnValue('1.2.3.4')
   vi.mocked(checkGeneralRateLimit).mockResolvedValue({ allowed: true })
   vi.mocked(auth).mockResolvedValue(null as never)
   vi.mocked(stripe.checkout.sessions.create).mockResolvedValue({ url: 'https://stripe.test/session' } as never)
   installDbRouter()
+})
+
+describe('POST /api/checkout/blend（決済停止スイッチ）', () => {
+  it('PAYMENTS_ENABLED 未設定なら 503 で Stripe も在庫確保も走らない', async () => {
+    vi.stubEnv('PAYMENTS_ENABLED', '')
+    const res = await POST(request({ items: [{ name: 'モーニング', ratios: [50, 30, 20], grams: 200 }] }))
+    expect(res.status).toBe(503)
+    expect(stripe.checkout.sessions.create).not.toHaveBeenCalled()
+    expect(sentCommands('TransactWriteCommand')).toHaveLength(0)
+  })
 })
 
 describe('POST /api/checkout/blend（既存の3種ブレンド）', () => {
