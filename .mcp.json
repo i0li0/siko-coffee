@@ -1,14 +1,16 @@
 {
   "mcpServers": {
-    "aws-api": {
+    "aws-mcp": {
       "command": "uvx",
-      "args": ["awslabs.aws-api-mcp-server@latest"],
-      "env": {
-        "AWS_REGION": "ap-northeast-1",
-        "AWS_API_MCP_PROFILE_NAME": "default",
-        "READ_OPERATIONS_ONLY": "true",
-        "REQUIRE_MUTATION_CONSENT": "true"
-      }
+      "args": [
+        "mcp-proxy-for-aws==1.6.4",
+        "https://aws-mcp.us-east-1.api.aws/mcp",
+        "--profile",
+        "default",
+        "--metadata",
+        "AWS_REGION=ap-northeast-1",
+        "--read-only"
+      ]
     },
     "aws-docs": {
       "command": "uvx",
