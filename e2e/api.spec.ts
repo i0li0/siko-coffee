@@ -18,10 +18,18 @@ test.describe('API エンドポイント', () => {
     expect(res.status()).toBe(200);
   });
 
-  test('POST /api/checkout に不正ボディ → 400 系', async ({ request }) => {
+  // 決済停止中（PAYMENTS_ENABLED 未設定）はキルスイッチが手前で 503 を返し、
+  // 決済有効時はバリデーションで 400 系になる。どちらの構成でも「不正ボディで
+  // 想定外のサーバーエラーにならない」ことを検証する。src/lib/payments.ts 参照。
+  test('POST /api/checkout に不正ボディ → 503（決済停止中）または 400 系', async ({ request }) => {
     const res = await request.post('/api/checkout', { data: {} });
-    expect(res.status()).toBeGreaterThanOrEqual(400);
-    expect(res.status()).toBeLessThan(500);
+    const status = res.status();
+    if (status === 503) {
+      expect((await res.json()).error).toContain('一時停止');
+      return;
+    }
+    expect(status).toBeGreaterThanOrEqual(400);
+    expect(status).toBeLessThan(500);
   });
 
   test('POST /api/webhooks/stripe に署名なし → 400', async ({ request }) => {
