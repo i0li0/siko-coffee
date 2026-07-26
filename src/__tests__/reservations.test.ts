@@ -12,6 +12,7 @@ import {
   findExpiredReservations,
   holdReservations,
   planLotAllocations,
+  reconcileLotReservations,
   releaseReservation,
 } from '@/lib/reservations'
 import type { LotRecord, ReservationRecord } from '@/types/platform'
@@ -174,6 +175,110 @@ describe('releaseReservation', () => {
   it('既に確定/戻し済み（条件不成立）なら false', async () => {
     mockSend.mockRejectedValue(transactionCanceled())
     expect(await releaseReservation(reservation())).toBe(false)
+  })
+})
+
+describe('reconcileLotReservations', () => {
+  // 「確保レコードは無いのに reservedG が残っている」＝TTL が先に消した孤児。
+  // sweep は確保レコードを起点にするため直せない。本番で実際に発生した（2026-07-27）。
+  function staleLot(over: Partial<LotRecord> = {}): LotRecord {
+    return {
+      ...lot('2026-07-10', 800),
+      onHandG: 1000,
+      reservedG: 200,
+      availableG: 800,
+      updatedAt: '2026-07-24T10:59:15.846Z', // 十分に古い
+      ...over,
+    }
+  }
+
+  // 確保 Query → ロット Query の順で応答を返す
+  function mockQueries(reservations: ReservationRecord[], lots: LotRecord[]) {
+    let call = 0
+    mockSend.mockImplementation(async (cmd: { constructor: { name: string } }) => {
+      if (cmd.constructor.name === 'QueryCommand') {
+        call += 1
+        return { Items: call === 1 ? reservations : lots }
+      }
+      return {}
+    })
+  }
+
+  it('確保レコードが消えた孤児 reservedG を戻し、availableG も回復させる', async () => {
+    mockQueries([], [staleLot()])
+    const res = await reconcileLotReservations()
+    expect(res).toEqual({ checked: 1, repaired: 1, freedG: 200 })
+
+    const items = sentCommands('TransactWriteCommand')[0].input.TransactItems as Record<
+      string,
+      { UpdateExpression?: string; ConditionExpression?: string; ExpressionAttributeValues?: Record<string, unknown> }
+    >[]
+    expect(items[0].Update?.UpdateExpression).toContain('availableG = onHandG - :expected')
+    // 読んだ値を条件にした CAS（read-modify-write ではない）
+    expect(items[0].Update?.ConditionExpression).toBe('reservedG = :current AND onHandG = :onHand')
+    expect(items[0].Update?.ExpressionAttributeValues?.[':expected']).toBe(0)
+  })
+
+  it('Scan を使わず、確保→ロットの順に GSI を Query する', async () => {
+    mockQueries([], [staleLot()])
+    await reconcileLotReservations()
+    expect(sentCommands('ScanCommand')).toHaveLength(0)
+    const queries = sentCommands('QueryCommand')
+    expect(queries[0].input.IndexName).toBe('by-expire')
+    expect(queries[1].input.IndexName).toBe('by-freshBy')
+  })
+
+  it('有効な確保があるぶんは残す（部分的なドリフトだけ直す）', async () => {
+    mockQueries([reservation({ qtyG: 50, lotKey: `${BEAN_ID}#2026-07-10` })], [staleLot()])
+    const res = await reconcileLotReservations()
+    expect(res).toEqual({ checked: 1, repaired: 1, freedG: 150 })
+    const items = sentCommands('TransactWriteCommand')[0].input.TransactItems as Record<
+      string,
+      { Update?: { ExpressionAttributeValues?: Record<string, unknown> } }
+    >[]
+    expect((items[0] as { Update?: { ExpressionAttributeValues?: Record<string, unknown> } }).Update?.ExpressionAttributeValues?.[':expected']).toBe(50)
+  })
+
+  it('直近に更新されたロットは触らない（確保直後の誤開放を防ぐ）', async () => {
+    mockQueries([], [staleLot({ updatedAt: new Date().toISOString() })])
+    const res = await reconcileLotReservations()
+    expect(res).toEqual({ checked: 1, repaired: 0, freedG: 0 })
+    expect(sentCommands('TransactWriteCommand')).toHaveLength(0)
+  })
+
+  it('確保が reservedG を上回る場合は何もしない（不足側は触らない）', async () => {
+    mockQueries([reservation({ qtyG: 500, lotKey: `${BEAN_ID}#2026-07-10` })], [staleLot()])
+    const res = await reconcileLotReservations()
+    expect(res).toEqual({ checked: 1, repaired: 0, freedG: 0 })
+    expect(sentCommands('TransactWriteCommand')).toHaveLength(0)
+  })
+
+  it('held 以外の確保は期待値に数えない', async () => {
+    mockQueries(
+      [reservation({ qtyG: 200, lotKey: `${BEAN_ID}#2026-07-10`, state: 'committed' })],
+      [staleLot()],
+    )
+    const res = await reconcileLotReservations()
+    expect(res.freedG).toBe(200)
+  })
+
+  it('reservedG が 0 のロットは検査対象にしない', async () => {
+    mockQueries([], [staleLot({ reservedG: 0, availableG: 1000 })])
+    const res = await reconcileLotReservations()
+    expect(res).toEqual({ checked: 0, repaired: 0, freedG: 0 })
+  })
+
+  it('並行更新（条件不成立）なら諦めて次回に回す', async () => {
+    let call = 0
+    mockSend.mockImplementation(async (cmd: { constructor: { name: string } }) => {
+      if (cmd.constructor.name === 'QueryCommand') {
+        call += 1
+        return { Items: call === 1 ? [] : [staleLot()] }
+      }
+      throw transactionCanceled()
+    })
+    const res = await reconcileLotReservations()
+    expect(res).toEqual({ checked: 1, repaired: 0, freedG: 0 })
   })
 })
 
