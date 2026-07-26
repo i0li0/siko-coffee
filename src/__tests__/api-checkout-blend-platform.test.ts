@@ -12,6 +12,7 @@ vi.mock('@/lib/db', () => ({
     RESERVATIONS: 'reservations',
     BLENDS: 'blends',
     ROASTER_METRICS: 'roaster_metrics',
+    POS: 'pos',
   },
   isDbConfigured: () => false,
 }))
@@ -29,7 +30,7 @@ import { POST } from '@/app/api/checkout/blend/route'
 import { stripe } from '@/lib/stripe'
 import { auth } from '@/lib/auth'
 import { checkGeneralRateLimit, getClientIp } from '@/lib/rateLimit'
-import type { BeanRecord, LotRecord, RoasterRecord } from '@/types/platform'
+import type { BeanRecord, LotRecord, PoRecord, RoasterRecord } from '@/types/platform'
 
 const BEAN_ID = 'bean-1'
 const ROASTER_ID = 'roaster-1'
@@ -74,11 +75,12 @@ interface RouterState {
   bean?: BeanRecord | undefined
   roaster?: RoasterRecord | undefined
   lots?: LotRecord[]
+  pos?: Partial<PoRecord>[]
   transactError?: Error
 }
 
 function installDbRouter(state: RouterState = {}) {
-  const { bean: b = bean, roaster: r = roaster, lots = [lot], transactError } = state
+  const { bean: b = bean, roaster: r = roaster, lots = [lot], pos = [], transactError } = state
   mockSend.mockImplementation(async (cmd: { constructor: { name: string }; input: Record<string, unknown> }) => {
     const kind = cmd.constructor.name
     const table = cmd.input.TableName as string | undefined
@@ -86,6 +88,7 @@ function installDbRouter(state: RouterState = {}) {
     if (kind === 'GetCommand' && table === 'roasters') return { Item: r }
     if (kind === 'QueryCommand' && table === 'lots') return { Items: lots }
     if (kind === 'QueryCommand' && table === 'reservations') return { Items: [] }
+    if (kind === 'QueryCommand' && table === 'pos') return { Items: pos }
     if (kind === 'TransactWriteCommand') {
       if (transactError) throw transactError
       return {}
@@ -195,6 +198,38 @@ describe('POST /api/checkout/blend（プラットフォーム構成）', () => {
     const item = orderPut()?.input.Item as { procurement: { poStatus: string; timeoutAt: string }[] }
     expect(item.procurement[0].poStatus).toBe('pending')
     expect(item.procurement[0].timeoutAt).toBeTruthy()
+  })
+
+  it('週上限の判定は直近7日の既存 PO を積み上げる（実績ベース・§14.4）', async () => {
+    // weeklyCapKg=0.3(=300g)。既存 PO で 250g 消費済み → 今回 200g で超過 → pending。
+    const recent = new Date().toISOString()
+    installDbRouter({
+      bean: { ...bean, weeklyCapKg: 0.3 },
+      lots: [],
+      pos: [{ beanId: BEAN_ID, qtyG: 250, poStatus: 'accepted', createdAt: recent }],
+    })
+    const res = await POST(request({ items: [platformItem] }))
+    expect(res.status).toBe(200)
+    const item = orderPut()?.input.Item as { procurement: { poStatus: string }[] }
+    expect(item.procurement[0].poStatus).toBe('pending') // 250 + 200 > 300
+  })
+
+  it('辞退/失効・8日前の PO は枠を消費しない（declined/timeout・window 外は無視）', async () => {
+    const recent = new Date().toISOString()
+    const old = new Date(Date.now() - 8 * 24 * 3600 * 1000).toISOString()
+    installDbRouter({
+      bean: { ...bean, weeklyCapKg: 0.3 },
+      lots: [],
+      pos: [
+        { beanId: BEAN_ID, qtyG: 250, poStatus: 'declined', createdAt: recent }, // 辞退＝枠を消費しない
+        { beanId: BEAN_ID, qtyG: 250, poStatus: 'accepted', createdAt: old }, // 8日前＝window 外
+        { beanId: 'other-bean', qtyG: 250, poStatus: 'accepted', createdAt: recent }, // 別の豆
+      ],
+    })
+    const res = await POST(request({ items: [platformItem] }))
+    expect(res.status).toBe(200)
+    const item = orderPut()?.input.Item as { procurement: { poStatus: string }[] }
+    expect(item.procurement[0].poStatus).toBe('auto_approved') // 有効な既存ぶん 0 + 200 <= 300
   })
 
   it('受付停止中（orderStatus="off"）の豆は 409 で買えない', async () => {

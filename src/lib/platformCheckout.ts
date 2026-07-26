@@ -1,6 +1,7 @@
 import { GetCommand } from '@aws-sdk/lib-dynamodb'
 import { getDocClient, TABLE } from '@/lib/db'
 import { planLotAllocations, type Allocation } from '@/lib/reservations'
+import { weeklyPoLoadG } from '@/lib/pos'
 import { poTimeoutAt } from '@/lib/platformParams'
 import type {
   BeanRecord,
@@ -120,9 +121,10 @@ export async function resolvePlatformItem(
     if (roaster.status === 'selling_out') {
       return { ok: false, error: `「${bean.name}」は在庫限りのため、この量は購入できません`, status: 409 }
     }
-    // 週上限内なら自動承認、超過は焙煎者の応答待ち（既定48h・§6.2／閾値は §6.3 の設定値）
-    // ※ 週次の受注実績は現状どこにも集計していないため、判定は「この注文単体 vs 週上限」の近似。
-    const autoApproved = plan.shortfallG / 1000 <= bean.weeklyCapKg
+    // 週上限内なら自動承認、超過は焙煎者の応答待ち（既定48h・§6.2／閾値は §6.3 の設定値）。
+    // 直近7日で既にこの豆に積まれている PO（焙煎に回るぶん）と今回ぶんの合算で判定する（§14.4・実績ベース）。
+    const weekLoadG = await weeklyPoLoadG(bean.roasterId, bean.beanId)
+    const autoApproved = weekLoadG + grams <= bean.weeklyCapKg * 1000
     procurement.push({
       roasterId: bean.roasterId,
       beanId: bean.beanId,
