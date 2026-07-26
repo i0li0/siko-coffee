@@ -10,6 +10,7 @@ import {
 } from './data';
 import type { Bean, Blend } from './data';
 import { calcShipping, FREE_SHIPPING_THRESHOLD } from '@/lib/shipping';
+import { PAYMENTS_DISABLED_LABEL } from '@/lib/payments';
 import { Bag, RatioBar, TasteDots, BeanLegend, BlendCardH, SingleCard, SectionHead } from './atoms';
 
 // ─── types ───────────────────────────────────────────────
@@ -625,11 +626,11 @@ export function ScreenDetail({ id, nav, addToCart, startMaker }: {
 
 // ─── ScreenCart ───────────────────────────────────────────
 
-export function ScreenCart({ cart, nav, removeAt, updateGrams, startMaker, checkout, checkingOut }: {
+export function ScreenCart({ cart, nav, removeAt, updateGrams, startMaker, checkout, checkingOut, paymentsEnabled }: {
   cart: CartItem[]; nav: NavFn; removeAt: (i: number) => void;
   updateGrams: (i: number, grams: number) => void;
   startMaker: (ratios: number[], base: string, editIndex?: number) => void;
-  checkout: () => void; checkingOut: boolean;
+  checkout: () => void; checkingOut: boolean; paymentsEnabled: boolean;
 }) {
   const total = cart.reduce((sum, item) => sum + calcPrice(item.grams ?? 200), 0);
   const ship = cart.length === 0 ? 0 : calcShipping(total);
@@ -701,12 +702,27 @@ export function ScreenCart({ cart, nav, removeAt, updateGrams, startMaker, check
               ¥ {(total + ship).toLocaleString()}
             </span>
           </div>
-          <button className="ss-btn" style={{ height: 52, marginTop: 8 }} disabled={checkingOut} onClick={checkout} aria-busy={checkingOut}>
-            {checkingOut ? '処理中…' : '購入手続きへ(ゲストOK)'}
-          </button>
-          <span aria-live="assertive" className="sr-only">
-            {checkingOut ? '決済処理中です。しばらくお待ちください。' : ''}
-          </span>
+          {paymentsEnabled ? (
+            <>
+              <button className="ss-btn" style={{ height: 52, marginTop: 8 }} disabled={checkingOut} onClick={checkout} aria-busy={checkingOut}>
+                {checkingOut ? '処理中…' : '購入手続きへ(ゲストOK)'}
+              </button>
+              <span aria-live="assertive" className="sr-only">
+                {checkingOut ? '決済処理中です。しばらくお待ちください。' : ''}
+              </span>
+            </>
+          ) : (
+            <>
+              {/* 停止中は押せる購入ボタンを置かない。:disabled の opacity では文字が読めないため上書きする。 */}
+              <button className="ss-btn ss-btn--ghost" style={{ height: 52, marginTop: 8, opacity: 0.7 }} disabled>
+                {PAYMENTS_DISABLED_LABEL}
+              </button>
+              {/* 画面上部の告知と重複しないよう、ここは短い一文にとどめる。 */}
+              <span style={{ fontSize: 11.5, color: 'var(--ss-dim)', lineHeight: 1.8, textAlign: 'center' }}>
+                再開までしばらくお待ちください。
+              </span>
+            </>
+          )}
         </div>
       )}
     </div>

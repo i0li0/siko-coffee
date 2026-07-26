@@ -4,6 +4,8 @@ import Link from 'next/link'
 import { useEffect, useMemo, useState } from 'react'
 import Nav from '@/components/layout/Nav'
 import Footer from '@/components/layout/Footer'
+import SalesSuspendedNotice from '@/components/shop/SalesSuspendedNotice'
+import { PAYMENTS_DISABLED_LABEL } from '@/lib/payments'
 import type { RoastLevel } from '@/types/platform'
 
 interface CatalogBean {
@@ -57,7 +59,7 @@ const inputStyle = {
   boxSizing: 'border-box' as const,
 }
 
-export default function CatalogClient() {
+export default function CatalogClient({ paymentsEnabled }: { paymentsEnabled: boolean }) {
   const [beans, setBeans] = useState<CatalogBean[] | null>(null)
   const [error, setError] = useState<string | null>(null)
 
@@ -116,6 +118,8 @@ export default function CatalogClient() {
   }
 
   async function checkout() {
+    // 停止中はそもそも API を叩かない（叩いても 503 が返るが、503 を UI で見せないため）。
+    if (!paymentsEnabled) return
     if (!name.trim()) return setFormError('ブレンド名を入力してください')
     if (picks.length === 0) return setFormError('豆を1種類以上選んでください')
     if (picks.some((p) => p.ratioPct < 1)) return setFormError('各豆の比率は1%以上にしてください')
@@ -177,6 +181,8 @@ export default function CatalogClient() {
           <p style={{ fontSize: '12px', color: 'var(--dim)', margin: '0 0 24px', lineHeight: 1.7 }}>
             登録焙煎家の豆から最大{MAX_COMPONENTS}種を選び、比率を決めてあなたのブレンドをつくれます。価格は選んだ豆の比率で決まります。
           </p>
+
+          {!paymentsEnabled && <SalesSuspendedNotice style={{ marginBottom: '24px' }} />}
 
           {error && <p style={{ fontSize: '13px', color: '#e57373' }}>{error}</p>}
           {beans === null && !error && <p style={{ fontSize: '12px', color: 'var(--dim)', letterSpacing: '0.06em' }}>読み込み中...</p>}
@@ -297,22 +303,22 @@ export default function CatalogClient() {
               </div>
               <button
                 onClick={checkout}
-                disabled={busy || !balanced}
+                disabled={!paymentsEnabled || busy || !balanced}
                 style={{
                   flex: 1,
                   maxWidth: '260px',
                   background: 'transparent',
-                  border: `1px solid ${balanced ? 'var(--amber)' : 'var(--faint)'}`,
+                  border: `1px solid ${paymentsEnabled && balanced ? 'var(--amber)' : 'var(--faint)'}`,
                   borderRadius: '6px',
                   padding: '14px',
-                  color: balanced ? 'var(--amber)' : 'var(--dim)',
+                  color: paymentsEnabled && balanced ? 'var(--amber)' : 'var(--dim)',
                   fontSize: '13px',
                   letterSpacing: '0.1em',
-                  cursor: busy || !balanced ? 'not-allowed' : 'pointer',
+                  cursor: !paymentsEnabled || busy || !balanced ? 'not-allowed' : 'pointer',
                   opacity: busy ? 0.5 : 1,
                 }}
               >
-                {busy ? '準備中...' : '購入へ進む'}
+                {!paymentsEnabled ? PAYMENTS_DISABLED_LABEL : busy ? '準備中...' : '購入へ進む'}
               </button>
             </div>
           )}

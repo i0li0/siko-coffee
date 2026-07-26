@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
 import { BEANS, PRICE_PER_100G } from '@/components/shop/blend/data';
+import { isPaymentsEnabled } from '@/lib/payments';
 import ProductClient from './ProductClient';
 
 interface Props {
@@ -30,6 +31,9 @@ export default async function ProductPage({ params }: Props) {
   const bean = getBean(key);
   if (!bean) notFound();
 
+  // 販売停止中に InStock を出し続けると構造化データが実態と食い違う（検索結果に在庫ありと出る）。
+  const paymentsEnabled = isPaymentsEnabled();
+
   const structuredData = {
     '@context': 'https://schema.org',
     '@type': 'Product',
@@ -40,7 +44,9 @@ export default async function ProductPage({ params }: Props) {
       '@type': 'Offer',
       price: PRICE_PER_100G * 2,
       priceCurrency: 'JPY',
-      availability: 'https://schema.org/InStock',
+      availability: paymentsEnabled
+        ? 'https://schema.org/InStock'
+        : 'https://schema.org/OutOfStock',
       url: `https://www.sikocoffee.com/shop/product/${bean.key}`,
     },
   };
@@ -51,7 +57,7 @@ export default async function ProductPage({ params }: Props) {
         type="application/ld+json"
         dangerouslySetInnerHTML={{ __html: JSON.stringify(structuredData) }}
       />
-      <ProductClient beanKey={key} />
+      <ProductClient beanKey={key} paymentsEnabled={paymentsEnabled} />
     </>
   );
 }
