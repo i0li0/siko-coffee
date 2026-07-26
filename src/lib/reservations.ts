@@ -245,3 +245,101 @@ export async function findExpiredReservations(
   )
   return ((res.Items ?? []) as ReservationRecord[]).filter((r) => r.state === 'held')
 }
+
+// ───────────────────────────────────── 確保の照合（孤児 reservedG の自動修復）
+
+// 直近このミリ秒以内に更新されたロットは触らない。
+// 「確保レコードを読む → ロットを読む」の間に新しい確保が入ると、その確保ぶんは
+// expected に含まれないのに lot.reservedG には入っている＝**確保中の在庫を誤って開放**しかねない。
+// 進行中の注文（確保の寿命は 30分）が完全に落ち着いた古いドリフトだけを直す。
+export const RECONCILE_GRACE_MS = 60 * 60 * 1000
+
+export interface ReconcileResult {
+  checked: number   // reservedG > 0 で検査したロット数
+  repaired: number  // 実際に補正したロット数
+  freedG: number    // 解放した合計グラム数
+}
+
+// `reservedG` の孤児を検出して補正する（§11.2⑤の不変条件 availableG = onHandG − reservedG も同時に回復）。
+//
+// **なぜ必要か（2026-07-27 本番で実際に発生）**: `expireAt` は「失効判定」と「DynamoDB ネイティブTTL」を
+// 兼ねているため、TTL が先にレコードを消すと by-expire GSI から消え、`releaseReservation` の対象に
+// なりようがなくなる＝`reservedG` が永久に張り付いて在庫が死ぬ。sweep は「確保レコードが在ること」が
+// 前提なので、この状態は sweep では絶対に直らない。そこで**ロット側から**期待値を突き合わせて直す。
+//
+// Scan は使わない（[[feedback-dynamodb-scan]]）: ロットは GSI `by-freshBy`（gsiPk='LOT'）、
+// 確保は GSI `by-expire`（gsiPk='RSV'）でどちらも Query で全件引ける。
+// ※ 単一パーティションを舐めるため件数増大には弱い。確保は TTL で短命・ロットも鮮度で退役する
+//    v1 の規模を前提とする。桁が変わったら日付シャーディングを検討すること。
+export async function reconcileLotReservations(limit = 200): Promise<ReconcileResult> {
+  // 順序が重要: **確保を先に読む**。逆順だと「ロット読取後に作られた確保」を
+  // 期待値から取りこぼし、有効な確保を開放してしまう。
+  const heldByLot = new Map<string, number>()
+  const rsv = await getDocClient().send(
+    new QueryCommand({
+      TableName: TABLE.RESERVATIONS,
+      IndexName: 'by-expire',
+      KeyConditionExpression: 'gsiPk = :pk',
+      ExpressionAttributeValues: { ':pk': 'RSV' },
+      Limit: limit,
+    }),
+  )
+  for (const r of (rsv.Items ?? []) as ReservationRecord[]) {
+    if (r.state !== 'held') continue
+    heldByLot.set(r.lotKey, (heldByLot.get(r.lotKey) ?? 0) + r.qtyG)
+  }
+
+  const lots = await getDocClient().send(
+    new QueryCommand({
+      TableName: TABLE.LOTS,
+      IndexName: 'by-freshBy',
+      KeyConditionExpression: 'gsiPk = :pk',
+      ExpressionAttributeValues: { ':pk': 'LOT' },
+      Limit: limit,
+    }),
+  )
+
+  const now = new Date()
+  const result: ReconcileResult = { checked: 0, repaired: 0, freedG: 0 }
+
+  for (const lot of (lots.Items ?? []) as LotRecord[]) {
+    const current = lot.reservedG ?? 0
+    if (current <= 0) continue
+    result.checked += 1
+
+    const expected = heldByLot.get(lotKeyOf(lot.beanId, lot.roastDate)) ?? 0
+    if (expected >= current) continue // 不足側は触らない（確保の取りこぼしを疑うべき状態）
+    if (now.getTime() - new Date(lot.updatedAt).getTime() < RECONCILE_GRACE_MS) continue
+
+    try {
+      await getDocClient().send(
+        new TransactWriteCommand({
+          TransactItems: [
+            {
+              Update: {
+                TableName: TABLE.LOTS,
+                Key: { beanId: lot.beanId, roastDate: lot.roastDate },
+                UpdateExpression:
+                  'SET reservedG = :expected, availableG = onHandG - :expected, updatedAt = :now',
+                // 読んだ値を条件にした CAS。並行更新があれば諦めて次回に回す（read-modify-write 禁止・§14.7）
+                ConditionExpression: 'reservedG = :current AND onHandG = :onHand',
+                ExpressionAttributeValues: {
+                  ':expected': expected,
+                  ':current': current,
+                  ':onHand': lot.onHandG,
+                  ':now': now.toISOString(),
+                },
+              },
+            },
+          ],
+        }),
+      )
+      result.repaired += 1
+      result.freedG += current - expected
+    } catch (err) {
+      if ((err as { name?: string }).name !== 'TransactionCanceledException') throw err
+    }
+  }
+
+  return result
+}
