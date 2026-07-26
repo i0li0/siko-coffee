@@ -7,19 +7,8 @@ import { stripe } from '@/lib/stripe'
 import { sendEmail, OWNER_EMAIL } from '@/lib/email'
 import { shippedNotice, deliveredNotice } from '@/lib/emailTemplates'
 import { buildTrackingUrl, carrierLabel, getCarrier } from '@/lib/carriers'
-import { signOrderToken } from '@/lib/orderToken'
+import { buildOrderUrl } from '@/lib/orderToken'
 import type { OrderRecord, OrderStatus } from '@/types/admin'
-
-const SITE_URL = process.env.SITE_URL || 'https://www.sikocoffee.com'
-
-async function buildOrderUrl(orderId: string): Promise<string | undefined> {
-  try {
-    const token = await signOrderToken(orderId)
-    return `${SITE_URL}/shop/order/${orderId}?t=${token}`
-  } catch {
-    return undefined
-  }
-}
 
 export const dynamic = 'force-dynamic'
 export const preferredRegion = ['hnd1']

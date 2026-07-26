@@ -5,7 +5,7 @@ import { getDocClient, TABLE } from '@/lib/db';
 import { stripe } from '@/lib/stripe';
 import { sendEmail, OWNER_EMAIL } from '@/lib/email';
 import { orderConfirmation, ownerNewOrder, type MailItem } from '@/lib/emailTemplates';
-import { signOrderToken } from '@/lib/orderToken';
+import { buildOrderUrl } from '@/lib/orderToken';
 import { BEANS } from '@/components/shop/blend/data';
 import { commitReservations, releaseReservationsForOrder } from '@/lib/reservations';
 import { addRoasterMetrics } from '@/lib/roasterMetrics';
@@ -14,8 +14,6 @@ import type Stripe from 'stripe';
 
 export const dynamic = 'force-dynamic';
 export const preferredRegion = ['hnd1'];
-
-const SITE_URL = process.env.SITE_URL || 'https://www.sikocoffee.com';
 
 interface OrderItem {
   name: string;
@@ -30,16 +28,6 @@ interface OrderItem {
 function addressText(addr: Stripe.Address | null | undefined): string {
   if (!addr) return '';
   return `${addr.postal_code ?? ''} ${addr.state ?? ''} ${addr.city ?? ''} ${addr.line1 ?? ''} ${addr.line2 ?? ''}`.trim();
-}
-
-// 注文照会リンクを生成する。
-async function buildOrderUrl(orderId: string): Promise<string | undefined> {
-  try {
-    const token = await signOrderToken(orderId);
-    return `${SITE_URL}/shop/order/${orderId}?t=${token}`;
-  } catch {
-    return undefined; // ORDER_TOKEN_SECRET 未設定でもメール本体は送る
-  }
 }
 
 // 冪等性の「占有」更新。指定属性が未設定のときだけ true をセットし、成功すれば true を返す。

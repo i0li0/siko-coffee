@@ -20,7 +20,7 @@ vi.mock('@/lib/email', () => ({
   OWNER_EMAIL: 'owner@example.com',
 }))
 vi.mock('@/lib/orderToken', () => ({
-  signOrderToken: vi.fn(),
+  buildOrderUrl: vi.fn(),
 }))
 vi.mock('@sentry/nextjs', () => ({
   captureException: vi.fn(),
@@ -30,7 +30,7 @@ vi.mock('@sentry/nextjs', () => ({
 import { POST } from '@/app/api/webhooks/stripe/route'
 import { stripe } from '@/lib/stripe'
 import { sendEmail } from '@/lib/email'
-import { signOrderToken } from '@/lib/orderToken'
+import { buildOrderUrl } from '@/lib/orderToken'
 import { NextRequest } from 'next/server'
 
 function makeRequest(body = 'raw-body', sig = 'sig_123'): NextRequest {
@@ -46,7 +46,9 @@ function makeRequest(body = 'raw-body', sig = 'sig_123'): NextRequest {
 beforeEach(() => {
   vi.clearAllMocks()
   vi.mocked(sendEmail).mockResolvedValue(undefined as never)
-  vi.mocked(signOrderToken).mockResolvedValue('mock-token')
+  vi.mocked(buildOrderUrl).mockImplementation(
+    async (orderId: string) => `https://www.sikocoffee.com/shop/order/${orderId}?t=mock-token`,
+  )
   process.env.STRIPE_WEBHOOK_SECRET = 'whsec_test'
   process.env.ORDER_TOKEN_SECRET = 'test-secret'
   process.env.SITE_URL = 'https://www.sikocoffee.com'
