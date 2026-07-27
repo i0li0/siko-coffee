@@ -299,19 +299,70 @@ AWS リソースはまだ1つも作っていない。ローカルで確かめら
 | `isDbConfigured()` が Lambda で真になるか | ✅ なる。**Lambda は実行ロールの資格情報を `AWS_ACCESS_KEY_ID` 等の同名環境変数として自動注入する**ため。この挙動に依存している点は要記憶 |
 | canonical | ✅ `https://www.sikocoffee.com` を指しており、重複インデックスは実質的に抑止されている |
 
-##### 🔴 見つかった問題: `next/image` が最適化していない
+##### ✅ 解決済み: `next/image` が最適化していなかった（2026-07-28）
 
-**AWS 側は変換せず原本をそのまま返す。**
+**症状（2026-07-27）— AWS 側は変換せず原本をそのまま返していた。**
 
 | | `/_next/image?url=/images/logo/logo_siko8.png&w=256&q=75` |
 |---|---|
 | Vercel | **4,182 B** / `image/webp` |
-| AWS | **222,510 B** / `image/png`（＝原本と同一バイト数） |
+| AWS（修正前） | **222,510 B** / `image/png`（＝原本と同一バイト数） |
+| AWS（修正後） | **4,182 B** / `image/webp`（＝**Vercel とバイト単位で一致**） |
 
 - `w` を 64 / 256 / 1080 と変えても**応答サイズが変わらない**＝リサイズが効いていない。`Accept: image/webp` を送っても WebP にならない。
 - 一方 `w=16` は 400（`width is not allowed`）を返すので、**最適化 Lambda 自体は起動しパラメータ検証も動いている**。CloudWatch にも例外は無く、実行時間は 40〜57ms と変換にしては短すぎる＝**変換をスキップして原本を返している**。
-- 症状は SST [#6867](https://github.com/sst/sst/issues/6867)（Next 16.2.6 で `next/image` のローカル public 画像が壊れる）と一致するが、根本原因は未特定。
-- **影響**: 当該ロゴで約 **53倍**の転送量。本プロジェクトは Lighthouse Performance が 49 と元々弱く、**本番切替前に必ず解消が必要**。
+- **影響**: 当該ロゴで約 **53倍**の転送量。本プロジェクトは Lighthouse Performance が 49 と元々弱く、**本番切替前に必ず解消が必要**だった。
+
+###### 根本原因（3段の無言failure が重なっていた）
+
+デプロイ済み Lambda のコードを実際に取り出して確定させた
+（`aws lambda get-function` → `Code.Location` の zip を展開）。
+
+1. **同梱された sharp が macOS バイナリだった。**
+   zip の中身は `node_modules/sharp/build/Release/sharp-darwin-arm64v8.node` ただ1つ
+   ＝ **Linux arm64 の Lambda に macOS 用バイナリ**が入っていた。
+   OpenNext 4.1.0 の既定 sharp は **0.32.6** で、0.32 系はネイティブバイナリを
+   インストール時に prebuild-install が取得する方式。その判定材料は `npm_config_platform`
+   だが、OpenNext が渡すのは `--os=linux`（npm の optional 依存フィルタ用の別物）。
+   結果ビルドマシン（macOS）向けが選ばれる。`--platform=linux` を足しても解消しないことを実測。
+2. **sharp 0.35 系に上げるだけでは足りない。**
+   0.33 以降は `@img/sharp-<os>-<cpu>` の optional 依存で解決されるが、これらは
+   `libc: glibc` を宣言している。**npm 10 は `--libc` を解釈しない**ため macOS からは選べず、
+   黙って `@img/sharp-wasm32` にフォールバックする。`--libc` が効くのは **npm 11 以降**。
+   実測: npm 10.9.2 → `sharp-wasm32` / npm 11.18.0 → `sharp-linux-arm64` + `sharp-libvips-linux-arm64`。
+3. **Next.js が失敗を握りつぶしていたので、どこにもログが出なかった。**
+   `next/dist/server/image-optimizer.js` の変換部は `catch` で
+   「If we fail to optimize, fallback to the original image」として**原本をそのまま返す**（ログ出力なし）。
+   そのため sharp が require できなくても CloudWatch には何も残らず、パラメータ検証だけは
+   正常に動くため「Lambda は動いている」ように見えていた。
+   なお失敗経路は `maxAge` に `minimumCacheTTL` を使う。修正前の応答が
+   `cache-control: max-age=14400`（Next 16 の既定値そのもの）で、修正後は `max-age=86400` に
+   変わったことが、フォールバックしていた確かな指紋になっている。
+
+※ 当初 SST [#6867](https://github.com/sst/sst/issues/6867) と症状が一致すると見ていたが、
+   実際の原因は上記のとおり **sharp のクロスプラットフォーム install 条件**であり、Next のバージョンとは無関係。
+
+###### 対処
+
+- `open-next.config.ts` の `imageOptimization.install` で sharp のインストール条件を明示上書き
+  （`sharp@^0.35.3` / `os: linux` / `arch: arm64` / `libc: glibc` / `nodeVersion: 24`）。
+- 🔴 **ビルドに使う npm は 11 以降が必須**。10 系だと wasm32 に落ちたまま**デプロイは成功してしまう**
+  （OpenNext の `installDependencies` は npm install の失敗をログに出すだけでビルドを止めない）。
+- そのため `npm run verify:image-optimizer`（`scripts/check-image-optimizer.mjs`）を追加した。
+  ビルド成果物に `@img/sharp-linux-arm64` があるか、wasm32 フォールバックや非 Linux バイナリが
+  混ざっていないかを機械的に検査する。**`sst deploy` の直後に必ず実行する**。
+
+###### 検証結果（stage dev・2026-07-28）
+
+| w | 修正前 | 修正後 |
+|---|---|---|
+| 64 | 222,510 B / png | 632 B / webp |
+| 256 | 222,510 B / png | 4,182 B / webp（Vercel と一致） |
+| 640 | 222,510 B / png | 17,076 B / webp（Vercel と一致） |
+| 1080 | 222,510 B / png | 41,624 B / webp |
+
+`Accept` に webp を含めない場合は png のまま 2,153 B にリサイズされる（＝正しい挙動）。
+ブラウザから取得して `createImageBitmap` で復号し、96×96 に実際にリサイズされていることも確認済み。
 
 もう1つの既知 issue [#6894](https://github.com/sst/sst/issues/6894)（CloudFront KeyValueStore が初回デプロイ後に空になり CFF が 503）は、**今回は再現しなかった**（全ルート 200）。
 
