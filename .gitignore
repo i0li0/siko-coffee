@@ -35,6 +35,10 @@ yarn-error.log*
 # env files
 .env*
 !.env.example
+# `sst secret load` に渡す一時ファイル。`.env*` は「.env で始まる」パターンなので
+# `secrets.dev.env` のような名前を捕捉できない。多層防御として末尾一致も塞ぐ。
+# （そもそもリポジトリ外に置いて使用後に削除するのが望ましい）
+*.env
 
 # vercel
 .vercel

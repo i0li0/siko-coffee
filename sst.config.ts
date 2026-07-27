@@ -37,6 +37,41 @@ export default $config({
   async run() {
     const isProd = $app.stage === 'production'
 
+    // ── シークレット ────────────────────────────────────────────
+    // 値はコードにもリポジトリにも一切書かない。投入は CLI:
+    //   sst secret set <NAME> <VALUE> --stage dev
+    //   sst secret load ./secrets.dev.env --stage dev   （一括）
+    //
+    // ⚠️ **ここに列挙した名前は全て値が入っていないと `sst deploy` が失敗する。**
+    //    使わない機能の変数は列挙しないこと（下の「任意」を参照）。
+    // ⚠️ **本番と同じ値を dev に入れないこと。** dev の CloudFront URL は公開されており、
+    //    dev 側の漏洩が本番の侵害に直結してはならない。乱数系は stage ごとに作り直す。
+    const SECRET_NAMES = [
+      'AUTH_SECRET',          // NextAuth。無いとログイン系が例外
+      'ORDER_TOKEN_SECRET',   // 注文照会リンクの HMAC
+      'CRON_SECRET',          // cron の Bearer 認可
+      'REVALIDATE_SECRET',    // オンデマンド再検証
+      'MAIL_FROM',            // SES 送信元
+      'ADMIN_PASSWORD_HASH',  // admin ログイン
+      'ADMIN_SESSION_SECRET', // admin セッション署名
+      // ── 任意（その機能を dev で検証したくなったら追加する）──
+      // 'ADMIN_TOTP_SECRET', 'ADMIN_TOTP_REQUIRED',
+      // 'SLACK_WEBHOOK_URL', 'INSTAGRAM_ACCESS_TOKEN',
+      // 'SENTRY_ORG', 'SENTRY_PROJECT', 'SENTRY_AUTH_TOKEN', 'NEXT_PUBLIC_SENTRY_DSN',
+      // 'GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET',   ※ OAuth 側にリダイレクトURI登録が別途必要
+      // 'LINE_CLIENT_ID', 'LINE_CLIENT_SECRET',       ※ 同上
+      //
+      // ── 意図的に入れないもの ──
+      // STRIPE_* / PAYMENTS_ENABLED … 決済停止中（Phase 0 を維持）
+      // NEXT_PUBLIC_GA_MEASUREMENT_ID … dev のアクセスが本番 GA に混ざるため
+      // BLOB_* … Vercel 固有。Phase 2 で S3 に置き換える
+      // WEBAUTHN_RP_ID / WEBAUTHN_ORIGIN … 未設定ならリクエスト元から自動導出されるので dev では不要
+    ] as const
+
+    const secretEnv = Object.fromEntries(
+      SECRET_NAMES.map((name) => [name, new sst.Secret(name).value]),
+    )
+
     new sst.aws.Nextjs('Web', {
       // ⚠️ 必須のピン留め。SST の既定は OpenNext **3.9.14**（Next.js 15 想定）で、
       // 本プロジェクトの Next 16.2.11 は OpenNext **4.1.0** 以上でないとビルドできない
@@ -94,6 +129,15 @@ export default $config({
         // ⚠️ `PAYMENTS_ENABLED` も **意図的に置かない**＝決済は停止のまま
         // （AWS移行 Phase 0）。再開は Phase 4 で、手順は docs を参照。
         NODE_ENV: 'production',
+
+        // 🔴 **AWS では必須**。NextAuth v5 は Vercel だと `VERCEL` 環境変数から
+        // ホストを信頼できると判断するが、Lambda + CloudFront では判断できず
+        // `UntrustedHost` で認証系が全滅する。`src/lib/auth.ts` に trustHost の
+        // 指定が無いため、ここで明示する。
+        AUTH_TRUST_HOST: 'true',
+
+        // 投入済みシークレット（値は SSM 由来。ここには現れない）
+        ...secretEnv,
 
         // ⚠️ **暫定措置**: `src/lib/db.ts` はテーブル名の接頭辞を `VERCEL_ENV === 'preview'`
         // で決めている。AWS には VERCEL_ENV が無いので、放っておくと非本番ステージが
