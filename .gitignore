@@ -53,3 +53,7 @@ CLAUDE.dev.md
 # Sentry example pages (自動生成、不要)
 src/app/sentry-example-page/
 src/app/api/sentry-example-api/
+
+# AWS 移行（OpenNext / SST）のビルド成果物・ローカル状態
+/.open-next/
+/.sst/

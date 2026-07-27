@@ -1,0 +1,126 @@
+// SST が生成する型はこの三重スラッシュ参照でしか供給されない（import 形式は不可）ため、
+// このファイルに限りルールを無効化する。
+/* eslint-disable-next-line @typescript-eslint/triple-slash-reference */
+/// <reference path="./.sst/platform/config.d.ts" />
+
+// SST v4 による AWS 移行の IaC（docs/aws-migration-feasibility.md Phase 1）。
+//
+// ⚠️ この設定はまだ **一度もデプロイしていない**。Phase 1 の目的は
+// 「本番に影響を与えずプレビュー環境だけ AWS に立てて学ぶ」こと。
+// 実デプロイ前に下の「デプロイ前に必須の作業」を必ず消化すること。
+//
+// 型チェック: `$config` / `sst` は `.sst/platform/config.d.ts`（`sst install` で生成・
+// gitignore 対象）が供給する。CI にはそれが無いため `tsconfig.json` の exclude に
+// このファイルを入れてある。
+
+export default $config({
+  app(input) {
+    return {
+      name: 'siko-coffee',
+      // 本番ステージだけは誤削除を防ぐ。Phase 1 のプレビューは作り直す前提。
+      removal: input?.stage === 'production' ? 'retain' : 'remove',
+      protect: input?.stage === 'production',
+      home: 'aws',
+      providers: {
+        // DynamoDB / SES / S3 と同じリージョン。Vercel の hnd1 と等価。
+        aws: { region: 'ap-northeast-1' },
+      },
+    }
+  },
+
+  async run() {
+    const isProd = $app.stage === 'production'
+
+    new sst.aws.Nextjs('Web', {
+      // ⚠️ 必須のピン留め。SST の既定は OpenNext **3.9.14**（Next.js 15 想定）で、
+      // 本プロジェクトの Next 16.2.11 は OpenNext **4.1.0** 以上でないとビルドできない
+      // （4.1.0 の peer は `>=15.5.21 <16 || >=16.2.11`）。
+      // SST 4.17.1 が読む出力（origins default/imageOptimizer/s3・edgeFunctions・
+      // additionalProps.revalidationFunction/initializationFunction）は
+      // OpenNext 4.1.0 の出力と一致することを実物で照合済み。
+      // buildId は output JSON ではなく `.next/BUILD_ID` から読まれるため欠落は問題にならない。
+      openNextVersion: '4.1.0',
+
+      // Lambda 実行ロールに与える権限。**静的 AWS キーを一切置かないための要**。
+      // アプリは既定の認証情報チェーンで DynamoDB / SES / Rekognition を叩くので、
+      // ここで権限を与えれば `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` は不要になる
+      // （＝移行における最大のセキュリティ改善。docs の項目12）。
+      permissions: [
+        {
+          actions: [
+            'dynamodb:GetItem',
+            'dynamodb:PutItem',
+            'dynamodb:UpdateItem',
+            'dynamodb:DeleteItem',
+            'dynamodb:Query',
+            'dynamodb:Scan',
+            'dynamodb:BatchGetItem',
+            'dynamodb:BatchWriteItem',
+            'dynamodb:TransactWriteItems',
+            'dynamodb:TransactGetItems',
+          ],
+          // Phase 1 はプレビュー用テーブルだけに絞る（本番テーブルには触らせない）。
+          resources: isProd
+            ? ['arn:aws:dynamodb:ap-northeast-1:654512230021:table/siko-coffee-*']
+            : [
+                'arn:aws:dynamodb:ap-northeast-1:654512230021:table/siko-coffee-preview-*',
+                'arn:aws:dynamodb:ap-northeast-1:654512230021:table/siko-coffee-preview-*/index/*',
+              ],
+        },
+        {
+          actions: ['ses:SendEmail', 'ses:SendRawEmail'],
+          resources: ['*'],
+        },
+        {
+          actions: ['rekognition:DetectModerationLabels'],
+          resources: ['*'],
+        },
+      ],
+
+      environment: {
+        // ⚠️ `AWS_REGION` は **Lambda の予約環境変数**でここから設定できない
+        // （関数のリージョンが自動で入る）。アプリ側は process.env.AWS_REGION を
+        // 読むだけなので、ap-northeast-1 にデプロイする限りそのまま動く。
+        //
+        // ⚠️ `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` は **意図的に置かない**
+        // （上の permissions による実行ロールへ置き換えるのが移行の目的）。
+        //
+        // ⚠️ `PAYMENTS_ENABLED` も **意図的に置かない**＝決済は停止のまま
+        // （AWS移行 Phase 0）。再開は Phase 4 で、手順は docs を参照。
+        NODE_ENV: 'production',
+      },
+
+      server: {
+        // 本番相当の余裕を持たせつつ、Hobby 並みのトラフィックに合わせた控えめな値。
+        memory: '1024 MB',
+        timeout: '30 seconds',
+      },
+    })
+  },
+})
+
+// ─────────────────────────────────────────────────────────────
+// デプロイ前に必須の作業（Phase 1・未着手）
+//
+// 1. シークレットの投入。`sst secret set <NAME> <VALUE> --stage <stage>` で入れ、
+//    environment ではなく Secret 経由で参照するよう本ファイルを更新する。
+//    最低限必要: AUTH_SECRET / ORDER_TOKEN_SECRET / CRON_SECRET / REVALIDATE_SECRET /
+//    MAIL_FROM / ADMIN_PASSWORD_HASH / ADMIN_SESSION_SECRET / ADMIN_TOTP_SECRET /
+//    ADMIN_TOTP_REQUIRED / WEBAUTHN_RP_ID / WEBAUTHN_ORIGIN /
+//    GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET / LINE_CLIENT_ID / LINE_CLIENT_SECRET /
+//    SLACK_WEBHOOK_URL / SENTRY_* / NEXT_PUBLIC_SENTRY_DSN / NEXT_PUBLIC_GA_MEASUREMENT_ID /
+//    INSTAGRAM_ACCESS_TOKEN / STRIPE_SECRET_KEY / STRIPE_WEBHOOK_SECRET
+//    （Stripe は決済停止中のため Phase 4 まで未設定でよい）
+//
+// 2. Vercel Blob の置き換え。`BLOB_*` は Vercel 固有で AWS には無い。
+//    S3 バケットを作って `src/lib` のアップロード実装を差し替え、
+//    `next.config.ts` の remotePatterns から `**.public.blob.vercel-storage.com` を外す。
+//
+// 3. cron 4本を EventBridge Scheduler へ。Vercel Hobby の「日次まで」制約が外れるので、
+//    release-reservations は 10分毎に戻せる（docs の項目22・blend-platform-plan §14.3）。
+//
+// 4. WAF 3ルールの再構築（rate limit / bot challenge / geo≠JP deny）。
+//
+// 5. apex 正規化を CloudFront Function へ移設し、next.config.ts の redirects() を削除
+//    （OpenNext #1202 の恒久対処。現在は明示アンカーで暫定回避している）。
+// ─────────────────────────────────────────────────────────────
