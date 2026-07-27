@@ -282,7 +282,44 @@ AWS リソースはまだ1つも作っていない。ローカルで確かめら
 
 **デプロイ前に必須の残作業**（`sst.config.ts` 末尾にも列挙）: ①シークレット投入（`sst secret set`）②Vercel Blob → S3 の置き換え ③cron → EventBridge ④WAF 3ルール ⑤apex 正規化の CloudFront Function 移設。
 
-⚠️ **既知のリスク（未検証）**: SST 側に Next 16 関連の未解決 issue が2件ある — [#6894](https://github.com/sst/sst/issues/6894)（CloudFront KeyValueStore が初回デプロイ後に空になり CFF が 503）と [#6867](https://github.com/sst/sst/issues/6867)（Next 16.2.6 で `next/image` のローカル public 画像が壊れる）。**本プロジェクトは `/images/logo/logo_siko8.png` などを `next/image` で使っており #6867 に該当しうる**（当方は 16.2.11 なので修正済みの可能性もある）。初回デプロイ時に真っ先に確認すること。
+#### 🚀 初回デプロイ実施（2026-07-27・stage `dev`）
+
+**`npx sst deploy --stage dev` が成功。** URL: `https://d3ejmruzea0u7a.cloudfront.net`
+
+作成されたもの: CloudFront Distribution / CloudFront Function(request) / KeyValueStore / Lambda 3本（server・image-optimizer・revalidation subscriber）＋各 LogGroup・IAM Role / S3(assets) / SQS / DynamoDB(ISR) / Lambda Function URL。所要は約5分（KeyValueStore 82秒・CDN 伝播待ち 145秒が大半）。
+
+**認証情報の罠**: `aws sts get-caller-identity` は通るのに `sst deploy` が「AWS credentials are not configured」で落ちた。原因は `~/.aws/config` の **`login_session`（`aws login` 独自のセッション認証）は aws CLI しか解釈できず、SST(Pulumi の Go SDK) からは解決できない**こと。回避策＝`eval "$(aws configure export-credentials --profile default --format env)"` で環境変数に展開してから `sst deploy` を実行する。
+
+##### ✅ 検証できたこと
+
+| 項目 | 結果 |
+|---|---|
+| `/` `/shop` `/shop/catalog` `/api/health` `/api/menu` `/api/beans` `/api/blends` | **すべて 200** |
+| **静的 AWS キー無しで DynamoDB に到達できるか** | ✅ **実証済み**。preview テーブルにテスト用の焙煎者＋豆を投入したところ `/api/beans` が正しく返した（GSI `list-index` の Query ＋ `roasters` の BatchGet が実行ロールだけで成功）。同時に本番 Vercel は `[]` を返し、**preview と本番のテーブル分離も確認**（検証後にテストデータは削除済み） |
+| `isDbConfigured()` が Lambda で真になるか | ✅ なる。**Lambda は実行ロールの資格情報を `AWS_ACCESS_KEY_ID` 等の同名環境変数として自動注入する**ため。この挙動に依存している点は要記憶 |
+| canonical | ✅ `https://www.sikocoffee.com` を指しており、重複インデックスは実質的に抑止されている |
+
+##### 🔴 見つかった問題: `next/image` が最適化していない
+
+**AWS 側は変換せず原本をそのまま返す。**
+
+| | `/_next/image?url=/images/logo/logo_siko8.png&w=256&q=75` |
+|---|---|
+| Vercel | **4,182 B** / `image/webp` |
+| AWS | **222,510 B** / `image/png`（＝原本と同一バイト数） |
+
+- `w` を 64 / 256 / 1080 と変えても**応答サイズが変わらない**＝リサイズが効いていない。`Accept: image/webp` を送っても WebP にならない。
+- 一方 `w=16` は 400（`width is not allowed`）を返すので、**最適化 Lambda 自体は起動しパラメータ検証も動いている**。CloudWatch にも例外は無く、実行時間は 40〜57ms と変換にしては短すぎる＝**変換をスキップして原本を返している**。
+- 症状は SST [#6867](https://github.com/sst/sst/issues/6867)（Next 16.2.6 で `next/image` のローカル public 画像が壊れる）と一致するが、根本原因は未特定。
+- **影響**: 当該ロゴで約 **53倍**の転送量。本プロジェクトは Lighthouse Performance が 49 と元々弱く、**本番切替前に必ず解消が必要**。
+
+もう1つの既知 issue [#6894](https://github.com/sst/sst/issues/6894)（CloudFront KeyValueStore が初回デプロイ後に空になり CFF が 503）は、**今回は再現しなかった**（全ルート 200）。
+
+##### Phase 2 へ持ち越す課題（今回の実デプロイで判明）
+
+- **`X-Robots-Tag: noindex` を非本番ステージに付ける**。`robots.txt` は `Allow: /` なので CloudFront URL がインデックスされうる。canonical が www を指すため実害は小さいが、`transform.cdn` で Response Headers Policy を当てるのが筋。
+- **`VERCEL_ENV` → `STAGE` の書き換え**（4ファイル）。現状は `sst.config.ts` で `VERCEL_ENV: 'preview'` を渡す暫定措置で凌いでいる。放置すると非本番が本番テーブルを向く（IAM で preview 限定にしてあるので AccessDenied で止まる＝フェイルクローズではある）。
+- シークレット未投入のため、認証・admin・Sentry・Instagram・メールは**未検証**。
 
 **Phase 2: 周辺サービスを AWS へ寄せる**
 - cron 4本 → EventBridge Scheduler（先に移せる。日次制限から解放される即効メリット）
