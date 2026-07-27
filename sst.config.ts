@@ -88,6 +88,18 @@ export default $config({
         // ⚠️ `PAYMENTS_ENABLED` も **意図的に置かない**＝決済は停止のまま
         // （AWS移行 Phase 0）。再開は Phase 4 で、手順は docs を参照。
         NODE_ENV: 'production',
+
+        // ⚠️ **暫定措置**: `src/lib/db.ts` はテーブル名の接頭辞を `VERCEL_ENV === 'preview'`
+        // で決めている。AWS には VERCEL_ENV が無いので、放っておくと非本番ステージが
+        // **本番テーブル `siko-coffee-*` を向く**（上の permissions が preview 限定なので
+        // AccessDenied で止まる＝フェイルクローズではあるが、意図としては誤り）。
+        // Phase 2 の「VERCEL_ENV → STAGE 書き換え（4ファイル）」が済むまで、ここで値を与える。
+        ...(isProd ? {} : { VERCEL_ENV: 'preview' }),
+
+        // 📌 `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` はここでは設定しない（予約変数）が、
+        // **Lambda は実行ロールの資格情報を同名の環境変数として自動注入する**。
+        // `src/lib/db.ts` の `isDbConfigured()` はその存在を見て判定しているため、
+        // 静的キーを剥がしても DynamoDB 呼び出しはスキップされない。この挙動に依存している。
       },
 
       server: {
