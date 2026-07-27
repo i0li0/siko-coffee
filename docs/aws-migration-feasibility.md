@@ -101,28 +101,46 @@
 
 OpenNext の `routeHasMatcher` は `next.config` の `has.value` を**アンカーなしの正規表現**として評価する。Next.js 本体は `^value$` でアンカーする。
 
-現在の [next.config.ts](../next.config.ts) の設定:
+問題のあった設定（`value` が素の文字列）:
 
 ```ts
-{
-  source: '/:path*',
-  has: [{ type: 'host', value: 'sikocoffee.com' }],
-  destination: 'https://www.sikocoffee.com/:path*',
-  permanent: true,
-}
+has: [{ type: 'host', value: 'sikocoffee.com' }]
 ```
 
 アンカーなしだと `/sikocoffee.com/.test("www.sikocoffee.com")` が **true** になる。つまり正規ホストである `www.sikocoffee.com` へのアクセスが、自分自身へ 308 リダイレクトし続ける = **サイト全停止**。
 
 報告者は Cloudflare 版でこれを踏み、2026-07-23 に本番が完全停止している。
 
-**対処**: `next.config` の `redirects()` に依存せず、**apex → www の正規化を CloudFront / Route53 側で行う**。AWS ではそちらが本来の作法であり、回避と設計改善が一致する。HSTS を配信層で付与できるため、現在この redirect を使っている理由（リダイレクト応答にも完全な HSTS を乗せる）も同時に解消される。
+#### ✅ 対処済み（2026-07-27）— 明示アンカーで両エンジン対応
+
+issue #1202 自身が案内している回避策（`value` を手動でアンカーする）を採用し、[next.config.ts](../next.config.ts) を修正した:
+
+```ts
+has: [{ type: 'host', value: '^sikocoffee\\.com$' }]
+```
+
+**なぜこれで両方正しいか**: Next.js は `new RegExp('^' + value + '$')` と自前で包むため `^^sikocoffee\.com$$` になるが、`^`/`$` はゼロ幅アサーションなので重複しても意味は変わらない。OpenNext は包まないので、明示アンカーがそのまま効く。実測:
+
+| value | Next.js(Vercel) が www に一致 | OpenNext(AWS) が www に一致 |
+|---|---|---|
+| `sikocoffee.com` | false | **true ← 無限ループ** |
+| `^sikocoffee\.com$` | false | false |
+
+**Vercel 上の現在の挙動は一切変わらない**（どちらも false）＝移行前にリスクなしで先行適用できる。ドットもエスケープし、任意1文字として振る舞わないようにした。`siko-coffee.vercel.app` 側の規則にも同じ処置を施している。
+
+この不変条件は [src/\_\_tests\_\_/hostRedirects.test.ts](../src/__tests__/hostRedirects.test.ts) が**両エンジンの意味論を再現して**検証する（`next.config.ts` を直接読むので設定と乖離しない）。再混入は CI で落ちる。
+
+#### 移行時の最終形（Phase 2〜3）
+
+上記はあくまで**移行前の安全化**であり、最終的には `next.config` の `redirects()` に依存せず **apex → www の正規化を CloudFront Function / Route53 側で行う**。AWS ではそちらが本来の作法で、HSTS を配信層（Response Headers Policy）で付与できるため、現在この redirect を使っている理由（リダイレクト応答にも完全な HSTS を乗せる）も同時に解消される。移設が済んだら `redirects()` の2規則と上記テストは削除してよい。
 
 ### 🟡 地雷2: Next.js のバージョン追随が Vercel より遅れる
 
 OpenNext 4.1.0 の peer range は `>=16.2.11`。Next.js のマイナーアップデートが出ても、**OpenNext が追随するまで上げられない**期間が発生する。Vercel は本家なので常に即日対応。
 
 現在 16.2.11 ちょうどで動いている＝追随が最新である証拠ではあるが、今後は「Next を上げる前に OpenNext の対応を確認する」手順が恒久的に加わる。
+
+⚠️ **付随して発見（2026-07-27）**: `package.json` と `package-lock.json` は 16.2.11 だが、**ローカルの `node_modules` は 16.2.6 のまま**だった（バージョン上げ後に `npm ci` していない）。CI と Vercel は lockfile から入れるので本番は 16.2.11 で正しい＝ローカル検証だけが実態とズレる。OpenNext の peer 下限は 16.2.11 なので、**ローカルで OpenNext を試す前に必ず `npm ci` すること**（16.2.6 のままだと peer 不一致で誤った結論を出す）。
 
 なお [Next.js 公式の Adapter API](https://nextjs.org/blog/nextjs-across-platforms) が 16.2 で安定化し、公式仕様に基づく AWS アダプタが**2026年内にリリース予定**。これが verified adapter になればこの懸念は解消される見込み。
 
