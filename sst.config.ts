@@ -5,9 +5,15 @@
 
 // SST v4 による AWS 移行の IaC（docs/aws-migration-feasibility.md Phase 1）。
 //
-// ⚠️ この設定はまだ **一度もデプロイしていない**。Phase 1 の目的は
-// 「本番に影響を与えずプレビュー環境だけ AWS に立てて学ぶ」こと。
-// 実デプロイ前に下の「デプロイ前に必須の作業」を必ず消化すること。
+// ✅ stage `dev` へデプロイ済み（2026-07-27）: https://d3ejmruzea0u7a.cloudfront.net
+// Phase 1 の目的は「本番に影響を与えずプレビュー環境だけ AWS に立てて学ぶ」こと。
+// **本番ステージはまだ作っていない**。下の「本番切替前に必須の作業」を消化してから。
+//
+// デプロイ手順（`login_session` の罠に注意）:
+//   eval "$(aws configure export-credentials --profile default --format env)"
+//   npx sst deploy --stage dev
+// ※ `aws sts get-caller-identity` が通っても SST は落ちる。`~/.aws/config` の
+//   `login_session` は aws CLI 独自で、SST(Pulumi の Go SDK) は解釈できないため。
 //
 // 型チェック: `$config` / `sst` は `.sst/platform/config.d.ts`（`sst install` で生成・
 // gitignore 対象）が供給する。CI にはそれが無いため `tsconfig.json` の exclude に
@@ -112,7 +118,12 @@ export default $config({
 })
 
 // ─────────────────────────────────────────────────────────────
-// デプロイ前に必須の作業（Phase 1・未着手）
+// 本番切替前に必須の作業（stage dev では未実施のまま動かしている）
+//
+// 0. 🔴 **next/image が最適化されない**（2026-07-27 実測）。w を変えても応答が
+//    原本のまま（Vercel 4KB/webp に対し AWS 222KB/png ＝約53倍）。Lambda は起動し
+//    パラメータ検証も効いており例外も無い＝変換をスキップしている。SST #6867 と
+//    症状が一致。Lighthouse Perf 49 の本プロジェクトでは切替前に必須の解消項目。
 //
 // 1. シークレットの投入。`sst secret set <NAME> <VALUE> --stage <stage>` で入れ、
 //    environment ではなく Secret 経由で参照するよう本ファイルを更新する。
