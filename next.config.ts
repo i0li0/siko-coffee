@@ -57,7 +57,15 @@ const securityHeaders = [
       "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
       "font-src 'self' https://fonts.gstatic.com",
       "img-src 'self' data: blob: https://*.cdninstagram.com https://cdninstagram.com https://www.google-analytics.com https://*.public.blob.vercel-storage.com",
-      "connect-src 'self' https://www.google-analytics.com https://region1.google-analytics.com",
+      // Sentry の ingest を許可する。これが無いとブラウザ側の Sentry イベントは
+      // CSP で全てブロックされる（2026-07-27 に本番でも起きていたことを実測）。
+      // DSN は src/instrumentation-client.ts にハードコードされており、送信自体は
+      // 常に試みられていたため、**クライアント由来のエラーだけが静かに失われていた**。
+      // ホストは DSN 固定なのでワイルドカードにせず限定する。
+      "connect-src 'self' https://www.google-analytics.com https://region1.google-analytics.com https://o4511541920858112.ingest.us.sentry.io",
+      // Sentry Session Replay は blob: から Worker を生成する。worker-src 未指定だと
+      // script-src にフォールバックし blob: が無いためブロックされる。
+      "worker-src 'self' blob:",
       "frame-ancestors 'none'",
       "base-uri 'self'",
       "form-action 'self'",

@@ -38,34 +38,29 @@ export default function DashboardPage() {
   const [loadError, setLoadError] = useState(false)
 
   useEffect(() => {
+    // 集約エンドポイントに1回だけ問い合わせる。
+    // 以前は 27本（今月分3 ＋ 12ヶ月×2）を同時発火していたが、AWS では
+    // Lambda の同時実行上限を超えて 429 になり画面全体が落ちた（2026-07-27）。
     async function load() {
-      const months = getMonthList(currentYear)
+      const res = await fetch(`/api/admin/dashboard?month=${currentMonth}`)
+      // **ステータスを必ず見る**。以前は r.ok を確認せず r.json() の結果を配列として
+      // 扱っていたため、401/429/500 が「.reduce is not a function」という
+      // 原因の分からない TypeError に化けていた。
+      if (!res.ok) throw new Error(`dashboard fetch failed: ${res.status}`)
+      const data = await res.json()
 
-      const [salesRes, expensesRes, inventoryRes, ...yearData] = await Promise.all([
-        fetch(`/api/admin/sales?month=${currentMonth}`).then(r => r.json()),
-        fetch(`/api/admin/expenses?yearMonth=${currentMonth}`).then(r => r.json()),
-        fetch('/api/admin/inventory').then(r => r.json()),
-        ...months.flatMap(m => [
-          fetch(`/api/admin/sales?month=${m}`).then(r => r.json().then((d: SaleItem[]) => ({ m, type: 'sales', data: d }))),
-          fetch(`/api/admin/expenses?yearMonth=${m}`).then(r => r.json().then((d: ExpenseItem[]) => ({ m, type: 'expenses', data: d }))),
-        ]),
-      ])
-
-      setMonthSales(Array.isArray(salesRes) ? salesRes : [])
-      setMonthExpenses(Array.isArray(expensesRes) ? expensesRes : [])
-      setInventory(Array.isArray(inventoryRes) ? inventoryRes : [])
-
-      const ys: Record<string, SaleItem[]> = {}
-      const ye: Record<string, ExpenseItem[]> = {}
-      for (const item of yearData as { m: string; type: string; data: SaleItem[] & ExpenseItem[] }[]) {
-        if (item.type === 'sales') ys[item.m] = item.data
-        else ye[item.m] = item.data
-      }
-      setYearSales(ys)
-      setYearExpenses(ye)
+      setMonthSales(Array.isArray(data.monthSales) ? data.monthSales : [])
+      setMonthExpenses(Array.isArray(data.monthExpenses) ? data.monthExpenses : [])
+      setInventory(Array.isArray(data.inventory) ? data.inventory : [])
+      setYearSales(data.yearSales ?? {})
+      setYearExpenses(data.yearExpenses ?? {})
       setLoading(false)
     }
-    load().catch(() => { setLoading(false); setLoadError(true) })
+    load().catch((err) => {
+      console.error(err)
+      setLoading(false)
+      setLoadError(true)
+    })
   }, [currentMonth, currentYear])
 
   const monthRevenue = useMemo(
