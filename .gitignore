@@ -48,7 +48,12 @@ yarn-error.log*
 next-env.d.ts
 
 # Claude Code (AI assistant config — contains business/design context)
-.claude
+# 公開リポジトリなので allowlist 方式で運用する。`.claude/*` で全部除外した上で、
+# 業務文脈を含まないと確認できたファイルだけ `!` で個別に通す。
+# 除外したままにするもの: worktrees/（実チェックアウト・数GB）、settings.local.json（個人用）
+.claude/*
+!.claude/settings.json
+!.claude/launch.json
 CLAUDE.md
 CLAUDE.business.md
 CLAUDE.design.md
