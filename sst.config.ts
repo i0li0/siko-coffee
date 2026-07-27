@@ -7,7 +7,10 @@
 //
 // ✅ stage `dev` へデプロイ済み（2026-07-27）: https://d3ejmruzea0u7a.cloudfront.net
 // Phase 1 の目的は「本番に影響を与えずプレビュー環境だけ AWS に立てて学ぶ」こと。
-// **本番ステージはまだ作っていない**。下の「本番切替前に必須の作業」を消化してから。
+// **本番ステージはまだ作っていない**。ファイル末尾の「本番切替までの作業順」を消化してから。
+//
+// この移行の呼称は **「Pour Over（ポアオーバー）」**。順序と依存関係の正本は
+// docs/aws-migration-feasibility.md「Pour Over 実行順」、実装者向けの索引は本ファイル末尾。
 //
 // デプロイ手順（`login_session` の罠に注意）:
 //   eval "$(aws configure export-credentials --profile default --format env)"
@@ -159,8 +162,14 @@ export default $config({
       },
 
       server: {
-        // 本番相当の余裕を持たせつつ、Hobby 並みのトラフィックに合わせた控えめな値。
+        // ⚠️ **本番切替前に 2048 MB へ上げる**（末尾の作業順 7）。
+        // Lambda の CPU はメモリに比例し **1769 MB で 1 vCPU 相当**。つまり現行 1024 MB は
+        // 約 0.58 vCPU で、**Vercel Hobby の 1 vCPU / 2 GB に対して6割**しかない。
+        // GB-秒課金なので、メモリを上げて実行時間が縮めば費用はおおむね相殺される。
         memory: '1024 MB',
+        // 📌 実効の上限はここではなく **CloudFront のオリジン ReadTimeout（SST 既定 20秒）**。
+        // Vercel は関数に 300 秒くれていたので、HTTP 経由の実行予算は **1/15 に縮む**。
+        // 長い処理（cron・管理系の集約）は CloudFront を経由させない設計にすること（作業順 8）。
         timeout: '30 seconds',
       },
     })
@@ -168,35 +177,75 @@ export default $config({
 })
 
 // ─────────────────────────────────────────────────────────────
-// 本番切替前に必須の作業（stage dev では未実施のまま動かしている）
+// 本番切替までの作業順（プロジェクト「Pour Over」・2026-07-28 改訂・全16項目）
 //
-// 0. ✅ **next/image が最適化されない問題は解決済み**（2026-07-28）。
-//    原因は OpenNext 既定の sharp@0.32.6 が**ビルドマシン（macOS）向けバイナリ**を
-//    同梱していたこと＋npm 10 が `--libc` を解釈せず wasm32 に落ちること。
-//    Next.js 側が変換失敗を握りつぶして原本を返すため、どこにもログが出ていなかった。
-//    対処は open-next.config.ts の imageOptimization.install（＋npm 11 必須）。
-//    詳細は docs/aws-migration-feasibility.md、検証は `npm run verify:image-optimizer`。
-//    実測: w=256 が 222,510B/png → 4,182B/webp（Vercel とバイト単位で一致）。
+// 正本は docs/aws-migration-feasibility.md「Pour Over 実行順」。ここは実装者向けの索引。
+// ✅ 完了: next/image の最適化（sharp のクロスビルド。open-next.config.ts 参照）
 //
-// 1. シークレットの投入。`sst secret set <NAME> <VALUE> --stage <stage>` で入れ、
-//    environment ではなく Secret 経由で参照するよう本ファイルを更新する。
-//    最低限必要: AUTH_SECRET / ORDER_TOKEN_SECRET / CRON_SECRET / REVALIDATE_SECRET /
-//    MAIL_FROM / ADMIN_PASSWORD_HASH / ADMIN_SESSION_SECRET / ADMIN_TOTP_SECRET /
-//    ADMIN_TOTP_REQUIRED / WEBAUTHN_RP_ID / WEBAUTHN_ORIGIN /
-//    GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET / LINE_CLIENT_ID / LINE_CLIENT_SECRET /
-//    SLACK_WEBHOOK_URL / SENTRY_* / NEXT_PUBLIC_SENTRY_DSN / NEXT_PUBLIC_GA_MEASUREMENT_ID /
-//    INSTAGRAM_ACCESS_TOKEN / STRIPE_SECRET_KEY / STRIPE_WEBHOOK_SECRET
-//    （Stripe は決済停止中のため Phase 4 まで未設定でよい）
+// ── 第1群｜下ごしらえ（本番無影響・並行可）────────────────────────
+//  1. VERCEL_ENV → STAGE。本ファイルに `STAGE: $app.stage` を足し、暫定の VERCEL_ENV 注入を消す。
+//     コード側4ファイル: src/lib/db.ts / sentry.server.config.ts / sentry.client.config.ts /
+//     scripts/integration/platform-flow.test.ts。
+//     ⚠️ db.ts は判定の**向きを反転**する（現行は未設定だと本番テーブルを向くフェイルオープン）。
+//     ⚠️ sentry.*.config.ts は `tracesSampleRate: VERCEL_ENV==='production' ? 0.1 : 0` のため、
+//        直さないと **AWS 本番で Performance が完全に無効**のまま切り替わる。
+//     📌 Vercel にカスタム環境は無く VERCEL_ENV は3値だけ＝`STAGE==='production' ? 本番 : preview` で足りる。
+//  2. cron 4ルートの catch に console.error を足す（EventBridge 後は CloudWatch が唯一の観測手段）。
+//  3. Vercel 専用スクリプト（@vercel/analytics・@vercel/speed-insights）を条件付きレンダーにする。
+//  4. Vercel Blob → S3。**presigned S3 PUT で実装すること**（理由は 5 の 1MB 制限）。
+//     移送すべきデータは無い（本番の avatarUrl 保持ユーザーは0件・Blob ストアも空）＝コード置換のみ。
+//     next.config.ts の remotePatterns と CSP img-src を**両方**更新する。
 //
-// 2. Vercel Blob の置き換え。`BLOB_*` は Vercel 固有で AWS には無い。
-//    S3 バケットを作って `src/lib` のアップロード実装を差し替え、
-//    `next.config.ts` の remotePatterns から `**.public.blob.vercel-storage.com` を外す。
+// ── 第2群｜AWS の防御と実行基盤（dev で検証）────────────────────
+//  5. 🔴 **Function URL の保護**。OpenNext/SST は server Lambda の Function URL をオリジンにするが
+//     AuthType=NONE・Principal=* で**全公開**。実測で直アクセスできる（/ =200, /admin =307）。
+//     このままだと 6 の WAF も 11 の apex 正規化も 9 の noindex も**全部迂回される**。
+//     → SsrSite の `protection` を **"oac-with-edge-signing"** にする。
+//     "oac" は POST に x-amz-content-sha256 を要求し、Stripe webhook・NextAuth・フォーム送信が
+//     壊れるため**採用不可**（本プロジェクトは POST ルートが20本以上）。
+//  6. WAF 3ルール（rate limit / bot challenge / geo≠JP deny）を AWS WAF で再構築。
+//     **CLOUDFRONT スコープ＝us-east-1 固定**。`transform.cdn` で `webAclArn` を渡す（直接の引数は無い）。
+//     ⚠️ 対象パスは現行どおり /admin* と /api/admin/* に限定する。全パスに広げると 8 の cron を自分で止める。
+//     費用は $5/ACL + $1/rule×3 = **月$8**＝移行後の AWS コストの大半がこれ。
+//  7. server.memory を 1024 MB → **2048 MB** へ。Lambda の CPU はメモリ比例で 1769MB＝1vCPU 相当のため、
+//     現行 1024MB は約0.58vCPU ＝ **Vercel(1vCPU/2GB) の6割**。GB-秒課金なので実行時間が縮めば費用は相殺。
+//  8. cron 4本 → `sst.aws.Cron`（実体は EventBridge Scheduler）＋中継 Lambda。
+//     ⚠️ Scheduler のターゲットは AWS API 操作のみで **HTTPS を直接叩けない**ため中継 Lambda が要る。
+//     ⚠️ 中継先は CloudFront ではなく **Function URL を直接**（CloudFront のオリジン ReadTimeout は
+//        20秒しかなく、Vercel の 300秒 から大幅に縮む）。5 で IAM 認証にするなら実行ロールで SigV4 署名する。
+//     Hobby の日次制限が外れるので release-reservations は 10分毎に戻す。
+//     📌 そもそも Vercel では release-reservations が**登録済みなのに実行されていなかった**（2026-07-28 実測）。
+//  9. 非本番ステージに X-Robots-Tag: noindex（`edge.viewerResponse.injection`）＋アクセス制限。
+//     Vercel は Deployment Protection で dev URL を守っていたが **AWS に同等機能は無い**。
 //
-// 3. cron 4本を EventBridge Scheduler へ。Vercel Hobby の「日次まで」制約が外れるので、
-//    release-reservations は 10分毎に戻せる（docs の項目22・blend-platform-plan §14.3）。
+// ── 第3群｜切替準備 ──────────────────────────────────────────
+// 10. CloudWatch Alarms を先に用意する（切替後ではなく切替前。観測できない状態で切り替えない）。
+// 11. Route53 の TTL を 60s へ。**切替の24時間以上前**（現行 www=500s / apex=300s）。
+// 12. `domain` を設定（name: www.sikocoffee.com / aliases に apex）＋ apex→www の 308 と HSTS を
+//     `edge.viewerRequest.injection` で出す。
+//     ⚠️ **`domain.redirects` を使ってはいけない**。SST の HttpsRedirect は S3 website リダイレクトで
+//        **HSTS ヘッダが付かず**、現行設計（リダイレクト応答にも完全な HSTS を乗せる）を壊す。
+//     ⚠️ CloudFront Function は**1ビヘイビアに1つ**しか付かない。SST 生成の関数に injection が
+//        合成される仕組みなので、独立した関数を足そうとしないこと。
+//     📌 証明書は Route53 が同一アカウントにあるため **SST が us-east-1 に自動作成し DNS 検証まで自動**。
 //
-// 4. WAF 3ルールの再構築（rate limit / bot challenge / geo≠JP deny）。
+// ── 第4群｜切替と観測 ────────────────────────────────────────
+// 13. production ステージへデプロイ → 検証 → DNS 切替。
+//     シークレットは Vercel 本番の30本と突合済み（AWSキー3本は廃止・BLOB3本は不要）。
+// 14. soak 期間。**Vercel は main 自動デプロイのまま生かしておく**＝ロールバック先が常に最新に保たれる。
+//     この期間、Vercel の設定には一切触らない。
 //
-// 5. apex 正規化を CloudFront Function へ移設し、next.config.ts の redirects() を削除
-//    （OpenNext #1202 の恒久対処。現在は明示アンカーで暫定回避している）。
+// ── 第5群｜後始末 ────────────────────────────────────────────
+// 15. Vercel 解約 ＋ 決済再開（①Stripe 新キー投入 →②PAYMENTS_ENABLED=true →③再デプロイ の順厳守）。
+// 16. next.config.ts の redirects() / vercel.json / src/__tests__/hostRedirects.test.ts を削除。
+//     ⚠️ 12 が動いてからにすること。先に消すと apex が無正規化になる。テストも同時に消さないと CI が落ちる。
+//
+// ── 🔴 動かせない依存 ────────────────────────────────────────
+//  A. 5 → 6      : Function URL を閉じないと WAF は迂回されるので無意味
+//  B. 5 と 4     : 5 の Lambda@Edge はボディ 1MB 上限。だから 4 は presigned S3 PUT で作る
+//  C. 6 → 13     : WAF 不在で切り替えると admin の防御が丸ごと消える
+//  D. 1 → 13     : Sentry が無効のままだと切替後に何を観測しても信用できない
+//  E. 8 → 15     : Instagram の長期トークンは月次 cron で延長。60日止まると恒久失効し手動再認証が要る
+//  F. 11 → 13    : 24時間以上前でないと旧 TTL が失効せず引き下げが効かない
+//  G. 12 → 16    : 先に redirects() を消すと apex が無正規化になる
 // ─────────────────────────────────────────────────────────────
