@@ -69,5 +69,6 @@
       "mcp__aws-pricing__analyze_*",
       "mcp__aws-mcp"
     ]
-  }
+  },
+  "enabledMcpjsonServers": ["aws-mcp", "aws-docs", "aws-pricing", "aws-iac"]
 }

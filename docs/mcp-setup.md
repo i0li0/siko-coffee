@@ -54,8 +54,16 @@ uvx <パッケージ>==<新バージョン> --help
 
 | ファイル | 用途 | git |
 |---|---|---|
-| `.claude/settings.json` | 共有する権限（AWS 読み取り系・MCP 読み取り系） | 追跡する |
+| `.claude/settings.json` | 共有する権限（AWS 読み取り系・MCP 読み取り系）と `.mcp.json` の承認 | 追跡する |
 | `.claude/settings.local.json` | 個人用・一時的な許可 | 追跡しない |
+
+`.mcp.json` の4サーバは `settings.json` の `enabledMcpjsonServers` で承認済みにしてある。
+これが無いと、worktree を作るたび・clone するたびに承認プロンプトが出る
+（承認を対話的に答えると `settings.local.json` に書かれ、その worktree 限りになる）。
+
+⚠️ **`enabledMcpjsonServers` はフォルダを trust していないと無視される。** clone 直後は
+一度 `claude` を起動して workspace trust のダイアログを承認する必要がある。それまで
+サーバは `⏸ Pending approval` のままになる。
 
 `.gitignore` は `.claude/*` + 個別再包含の **allowlist 方式**。
 公開リポジトリなので、`.claude/` に何か追加したときは
