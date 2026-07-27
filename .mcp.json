@@ -14,12 +14,12 @@
     },
     "aws-docs": {
       "command": "uvx",
-      "args": ["awslabs.aws-documentation-mcp-server@latest"],
+      "args": ["awslabs.aws-documentation-mcp-server==1.1.27"],
       "env": {}
     },
     "aws-pricing": {
       "command": "uvx",
-      "args": ["awslabs.aws-pricing-mcp-server@latest"],
+      "args": ["awslabs.aws-pricing-mcp-server==1.0.31"],
       "env": {
         "AWS_REGION": "ap-northeast-1",
         "AWS_PROFILE": "default"
@@ -27,7 +27,7 @@
     },
     "aws-iac": {
       "command": "uvx",
-      "args": ["awslabs.aws-iac-mcp-server@latest"],
+      "args": ["awslabs.aws-iac-mcp-server==1.0.21"],
       "env": {
         "AWS_REGION": "ap-northeast-1",
         "AWS_PROFILE": "default"
