@@ -12,8 +12,14 @@
 // デプロイ手順（`login_session` の罠に注意）:
 //   eval "$(aws configure export-credentials --profile default --format env)"
 //   npx sst deploy --stage dev
+//   npm run verify:image-optimizer      # ← 省略しないこと（理由は下記）
 // ※ `aws sts get-caller-identity` が通っても SST は落ちる。`~/.aws/config` の
 //   `login_session` は aws CLI 独自で、SST(Pulumi の Go SDK) は解釈できないため。
+// ※ 🔴 **npm は 11 以降が必須**（`npm --version` で確認）。10 系だと OpenNext が
+//   image-optimization Lambda に入れる sharp が wasm32 フォールバックに落ち、
+//   next/image が**無言で最適化されなくなる**（デプロイは成功する）。
+//   詳細は open-next.config.ts の imageOptimization.install のコメント。
+//   `verify:image-optimizer` はこれをビルド成果物から検出するためのもの。
 //
 // 型チェック: `$config` / `sst` は `.sst/platform/config.d.ts`（`sst install` で生成・
 // gitignore 対象）が供給する。CI にはそれが無いため `tsconfig.json` の exclude に
@@ -164,10 +170,13 @@ export default $config({
 // ─────────────────────────────────────────────────────────────
 // 本番切替前に必須の作業（stage dev では未実施のまま動かしている）
 //
-// 0. 🔴 **next/image が最適化されない**（2026-07-27 実測）。w を変えても応答が
-//    原本のまま（Vercel 4KB/webp に対し AWS 222KB/png ＝約53倍）。Lambda は起動し
-//    パラメータ検証も効いており例外も無い＝変換をスキップしている。SST #6867 と
-//    症状が一致。Lighthouse Perf 49 の本プロジェクトでは切替前に必須の解消項目。
+// 0. ✅ **next/image が最適化されない問題は解決済み**（2026-07-28）。
+//    原因は OpenNext 既定の sharp@0.32.6 が**ビルドマシン（macOS）向けバイナリ**を
+//    同梱していたこと＋npm 10 が `--libc` を解釈せず wasm32 に落ちること。
+//    Next.js 側が変換失敗を握りつぶして原本を返すため、どこにもログが出ていなかった。
+//    対処は open-next.config.ts の imageOptimization.install（＋npm 11 必須）。
+//    詳細は docs/aws-migration-feasibility.md、検証は `npm run verify:image-optimizer`。
+//    実測: w=256 が 222,510B/png → 4,182B/webp（Vercel とバイト単位で一致）。
 //
 // 1. シークレットの投入。`sst secret set <NAME> <VALUE> --stage <stage>` で入れ、
 //    environment ではなく Secret 経由で参照するよう本ファイルを更新する。

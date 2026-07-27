@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "next dev",
     "check:cron": "node scripts/check-cron-schedule.mjs",
+    "verify:image-optimizer": "node scripts/check-image-optimizer.mjs",
     "prebuild": "node scripts/check-cron-schedule.mjs",
     "build": "next build",
     "start": "next start",
