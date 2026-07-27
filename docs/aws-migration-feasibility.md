@@ -256,7 +256,33 @@ OpenNext 4.1.0 の peer range は `>=16.2.11`。Next.js のマイナーアップ
 **判断済み**: 決済を止めるため **Vercel Pro への昇格は不要**。Hobby のまま進める。
 
 **Phase 1: AWS 側にプレビュー環境だけを構築（本番は Vercel のまま）**
-SST v3 で stage `dev` を立て、既存のプレビュー用テーブル `siko-coffee-preview-*` に接続する。ここで OpenNext の挙動・ISR・画像最適化・middleware をすべて検証する。**本番への影響ゼロで学習できる期間**。
+SST で stage を立て、既存のプレビュー用テーブル `siko-coffee-preview-*` に接続する。ここで OpenNext の挙動・ISR・画像最適化・middleware をすべて検証する。**本番への影響ゼロで学習できる期間**。
+
+#### Phase 1 の準備状況（2026-07-27・**デプロイ手前まで完了**）
+
+AWS リソースはまだ1つも作っていない。ローカルで確かめられることだけを済ませた段階。
+
+| 確認事項 | 結果 |
+|---|---|
+| **SST の版** | 「SST v3」は古い呼称で、現行は **4.17.1**（v4 系）。本リポジトリに devDependency として導入済み |
+| **OpenNext 4.1.0 が Next 16.2.11 でビルドできるか** | ✅ **成功**。`npx @opennextjs/aws build` が server / image-optimization / revalidation / warmer の各 Lambda と assets・cache を生成 |
+| 生成物のサイズ | server 37MB / image-optimization 31MB＝**Lambda の 250MB 上限内** |
+| **SST の既定 OpenNext 版** | ⚠️ **3.9.14**（Next 15 想定）。Next 16 はビルドできないため `openNextVersion: "4.1.0"` の**ピン留めが必須** |
+| **SST 4.17.1 が OpenNext 4.1.0 の出力を読めるか** | ✅ 実物で照合。SST が参照する `origins.default` / `origins.imageOptimizer` / `origins.s3` / `edgeFunctions` / `additionalProps.revalidationFunction` は**すべて存在**する |
+| `open-next.output.json` に `buildId` が無い件 | 問題なし。SST は `loadBuildId()` で **`.next/BUILD_ID` から読む**（生成済みを確認） |
+| `additionalProps.initializationFunction` の値 | 問題なし。SST は `.open-next/dynamodb-provider` へ**上書きする**実装で、OpenNext 4.1.0 が出す値と**一致** |
+
+作成したファイル: [open-next.config.ts](../open-next.config.ts)（生成物の内訳をコメントで明示・値は型で検証済み）／[sst.config.ts](../sst.config.ts)（未デプロイ）。
+
+`sst.config.ts` に入れた要点:
+- **`AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` を置かない** — `permissions` で Lambda 実行ロールに DynamoDB / SES / Rekognition を許可する。これが項目12「今回の移行で最大の改善」の実体。
+- ⚠️ **`AWS_REGION` は Lambda の予約環境変数**で IaC から設定できない（関数のリージョンが自動で入る）。ap-northeast-1 に置く限りアプリ側の `process.env.AWS_REGION` はそのまま動く。
+- 非本番ステージの DynamoDB 権限は **`siko-coffee-preview-*` だけに限定**（本番テーブルに触らせない）。
+- `PAYMENTS_ENABLED` は**意図的に未設定**＝決済は停止のまま（Phase 0 を維持）。
+
+**デプロイ前に必須の残作業**（`sst.config.ts` 末尾にも列挙）: ①シークレット投入（`sst secret set`）②Vercel Blob → S3 の置き換え ③cron → EventBridge ④WAF 3ルール ⑤apex 正規化の CloudFront Function 移設。
+
+⚠️ **既知のリスク（未検証）**: SST 側に Next 16 関連の未解決 issue が2件ある — [#6894](https://github.com/sst/sst/issues/6894)（CloudFront KeyValueStore が初回デプロイ後に空になり CFF が 503）と [#6867](https://github.com/sst/sst/issues/6867)（Next 16.2.6 で `next/image` のローカル public 画像が壊れる）。**本プロジェクトは `/images/logo/logo_siko8.png` などを `next/image` で使っており #6867 に該当しうる**（当方は 16.2.11 なので修正済みの可能性もある）。初回デプロイ時に真っ先に確認すること。
 
 **Phase 2: 周辺サービスを AWS へ寄せる**
 - cron 4本 → EventBridge Scheduler（先に移せる。日次制限から解放される即効メリット）

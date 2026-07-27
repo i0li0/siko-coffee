@@ -12,6 +12,10 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // AWS 移行（OpenNext / SST）のビルド成果物とベンダーコード。
+    // 自分たちが書いたコードではないうえ巨大で、lint するとノイズと時間だけが増える。
+    ".open-next/**",
+    ".sst/**",
   ]),
 ]);
 
