@@ -16,6 +16,8 @@ const eslintConfig = defineConfig([
     // 自分たちが書いたコードではないうえ巨大で、lint するとノイズと時間だけが増える。
     ".open-next/**",
     ".sst/**",
+    // SST がデプロイのたびに再生成する型定義（gitignore 済み・ローカルにだけ存在する）
+    "sst-env.d.ts",
   ]),
 ]);
 
