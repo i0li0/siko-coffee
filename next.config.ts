@@ -95,18 +95,27 @@ const nextConfig: NextConfig = {
   // かつドメイン正規化の設定をコード一箇所に集約できる。
   // - apex(sikocoffee.com): HSTS preload 要件を満たすため必須。
   // - siko-coffee.vercel.app: 検索エンジンへの重複インデックスを防止。
-  // host は完全一致のため、デプロイ毎の一意URL(<hash>.vercel.app)には影響しない。
+  //
+  // ⚠️ value は必ず `^...$` で明示的にアンカーすること（OpenNext issue #1202）。
+  // Next.js 本体は `new RegExp('^' + value + '$')` と**自前でアンカーする**ため素の
+  // 'sikocoffee.com' でも apex だけに一致するが、OpenNext(AWS) は
+  // `new RegExp(value).test(host)` と**アンカーせずに**評価するため、同じ値が
+  // 'www.sikocoffee.com' にも部分一致し **apex 正規化が www を自分自身へ 308 で送り続ける
+  // ＝サイト全体が無限リダイレクトで停止する**。明示アンカーは Next.js 側では
+  // `^^...$$`（ゼロ幅アサーションの重複＝無害）になるだけなので、両方で正しく動く。
+  // ドットもエスケープし、任意1文字として振る舞わないようにする。
+  // この不変条件は src/__tests__/hostRedirects.test.ts が両エンジンの意味論で検証している。
   async redirects() {
     return [
       {
         source: '/:path*',
-        has: [{ type: 'host', value: 'sikocoffee.com' }],
+        has: [{ type: 'host', value: '^sikocoffee\\.com$' }],
         destination: 'https://www.sikocoffee.com/:path*',
         permanent: true,
       },
       {
         source: '/:path*',
-        has: [{ type: 'host', value: 'siko-coffee.vercel.app' }],
+        has: [{ type: 'host', value: '^siko-coffee\\.vercel\\.app$' }],
         destination: 'https://www.sikocoffee.com/:path*',
         permanent: true,
       },
