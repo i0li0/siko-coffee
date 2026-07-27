@@ -62,7 +62,12 @@
       "Bash(aws cloudformation describe-*)",
       "Bash(aws cloudformation list-*)",
       "Bash(aws servicequotas list-*)",
-      "Bash(aws servicequotas get-*)"
+      "Bash(aws servicequotas get-*)",
+      "mcp__aws-docs",
+      "mcp__aws-iac",
+      "mcp__aws-pricing__get_*",
+      "mcp__aws-pricing__analyze_*",
+      "mcp__aws-mcp"
     ]
   }
 }
