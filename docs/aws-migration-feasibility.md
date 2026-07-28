@@ -680,19 +680,35 @@ server Lambda のインラインポリシーは DynamoDB を `siko-coffee-previe
 |---|---|---|
 | **R-1** | **CloudFront Response Headers Policy を付ける** | 上の**パリティ退行**の直接の対処。静的な5つ（HSTS / X-Content-Type-Options / X-Frame-Options / Referrer-Policy / Permissions-Policy）を RHP に置き、**CSP はアプリ側に残す**（`docs/csp-nonce-migration-plan.md` で将来リクエスト毎になるため）。🔗 **12 の「apex 308 に HSTS を乗せる」問題も RHP で解ける**＝ `HttpsRedirect` が RHP を付けない件への正攻法。CloudFront 生成のエラーページにも乗る |
 | **R-2** | **CloudWatch RUM を入れる** | パリティ表で唯一 ✕ の Speed Insights の**直接の代替**。ap-northeast-1 で利用可能を確認済み。実ユーザーの Core Web Vitals が取れ、「モバイルのスコアが取れていない」問題を移行後に解消できる。⚠️ JS スニペット方式なので **CSP の `connect-src`/`script-src` 更新が必須** |
-| **R-3** | **CloudFront 継続的デプロイ（staging distribution）** | 「移行で劣化する」の筆頭＝**即時ロールバック**への答え。重み付けで staging に流し、問題なければ promote。🔴 **HTTP/3 と併用不可**（AWS 公式の制約）＝ **R-8 の HTTP/3 と排他**。現行は `http2` なので今は問題ない |
+| ~~**R-3**~~ | ~~CloudFront 継続的デプロイ（staging distribution）~~ → **❌ 不採用を推奨** | 当初「即時ロールバックへの答え」と評価したが**過大評価だった**（下の注記を参照）。ロールバックの実際の答えは **14（soak 中は Vercel を生かす）＋ R-4 の Route53 ヘルスチェック／フェイルオーバー** |
 | **R-4** | **観測の土台を作る** | **SNS トピックがまず必要**（10 の前提）。加えて CloudFront standard logging v2 / SQS の DLQ / **Synthetics canary による外形監視**（Vercel にも無い＝純増）/ Route53 ヘルスチェック＋フェイルオーバー |
 | **R-5** | **SES を運用できる状態にする** | SPF・DMARC・MX の追加、custom MAIL FROM、**configuration set + event destination → SNS**。コスト非制約なら VDM も。注文フローの生命線 |
-| **R-6** | **コールドスタート3秒を潰す** | warmer 有効化（安価）か provisioned concurrency（確実）。⚠️ **Lambda@Edge は provisioned concurrency 非対応**なので 5 の署名関数には効かない |
+| **R-6** 🔺 | **コールドスタート3秒を潰す** | 🔑 **SST の Nextjs コンポーネントに `warm` プロパティがある**（server 関数を暖めておくインスタンス数。実体は数分ごとに n 並列でリクエストする serverless cron）＝ **`sst.config.ts` に1行**で効く。実測 TTFB 3.11s → 0.24s の改善が見込め、**手間に対する効果が最も大きい**ため優先度を上げた。確実さを買うなら provisioned concurrency だが、まず `warm` で足りるか測るのが順当。⚠️ **Lambda@Edge は provisioned concurrency 非対応**なので 5 の署名関数には効かない |
 | **R-7** | **実行ロールと同時実行を絞る** | `ses:*` と `cloudfront:CreateInvalidation` の `Resource: "*"` を限定。server に**予約同時実行の上限**を設定 |
-| **R-8** | **配信まわりの小改善** | IPv6 有効化 / **Origin Shield**（画像は Cache Writes > Reads でヒット率が低い）/ CustomErrorResponses でブランドされたエラーページ / **CF の ReadTimeout を Lambda より長く** / ACM 後に TLSv1.2_2021 / HTTP/3（⚠️ R-3 と排他） |
+| **R-8** | **配信まわりの小改善** | IPv6 有効化 / **Origin Shield**（画像は Cache Writes > Reads でヒット率が低い）/ CustomErrorResponses でブランドされたエラーページ / **CF の ReadTimeout を Lambda より長く** / ACM 後に TLSv1.2_2021 / **HTTP/3**（R-3 を採らないので排他は解消。`transform.cdn` で設定。実測では **Vercel も HTTP/3 を広告していない**ため、パリティ回復ではなく**上積み**になる。効果を測れるよう **R-2 の RUM を先に**入れるのが順当） |
 | **R-9** | **アカウントのガバナンス** | **費用ゼロで今すぐ**: IAM Access Analyzer・パスワードポリシー。有料: GuardDuty / Config / Security Hub。最終ゴールは静的キー廃止＝ IAM Identity Center 化（15 と同方向） |
 | **R-10** | **掃除** | Amplify（＝12 の前提でもある）/ 不要 IAM ロール4本 / 空バケット `siko-coffee` / 孤児 ACM 検証 CNAME 2本 / `/aws/amplify/*` ロググループ（保持期間**無期限**） |
 
-> 🔴 **判断が要る点: R-3（継続的デプロイ）と R-8 の HTTP/3 は排他。**
-> 移行の動機が学習であること、モバイル性能の実測が空白であることを踏まえると、
-> **まず R-3 でロールバック体制を取り、R-2 の RUM でモバイルの実測を得てから
-> HTTP/3 を検討する**順が筋が通る。
+> ❌ **R-3（CloudFront 継続的デプロイ）は不採用を推奨する。**
+> 当初は「即時ロールバックの劣化を埋める機構」と評価したが、AWS 公式の
+> quotas/considerations と SST のドキュメントで裏を取ったところ**過大評価だった**。
+> - 🔴 **staging へ流せるのは最大 15%**（重み付け時）＝ **切り戻しスイッチではなくカナリア**。
+>   100% を戻す用途には使えない。
+> - 🔴 **WAF と衝突する。** 継続的デプロイが有効だと web ACL の**初回の関連付けができず、
+>   関連付け解除もできない**。行うには継続的デプロイポリシーの削除（＝staging も消える）が要る。
+>   **作業 6（WAF）と真正面から競合する。**
+> - 🔴 **非決定的。** CloudFront **サービス全体**の繁忙時は、ポリシーに関係なく全リクエストが primary へ行く。
+> - 🔴 **SST の Nextjs コンポーネントが非対応**（`transform.cdn` にも該当プロパティ無し）＝
+>   Pulumi 管理の外での手作業になる。
+> - OAC 利用時は staging 用に S3 バケットポリシーの追加が要る。
+>
+> **ロールバックの実際の答えは 14（soak 中は Vercel を main 自動デプロイのまま生かす）**
+> ＋ **R-4 の Route53 ヘルスチェック／フェイルオーバー**である。TTL を 60s（作業 11）に
+> 下げてあれば切り戻しは1分台で済む。
+> ⚠️ ただし**この手段は 15（Vercel 解約）で失われる**。解約までに R-4 の canary とアラームで
+> 「壊れたことに早く気づく」体制へ移行しておくこと。
+>
+> 📌 **これにより「R-3 と HTTP/3 が排他」というトレードオフは消滅する。** 両者は独立に判断してよい。
 
 ---
 
