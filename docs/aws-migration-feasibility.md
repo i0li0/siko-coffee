@@ -90,7 +90,7 @@
 |---|---|---|---|---|
 | 27 | push で自動デプロイ | GitHub Actions + SST | ○ | 既存 `ci.yml` を拡張 |
 | 28 | PR ごとのプレビュー環境 | SST の stage 機能 | △ | 実現可能。stage ごとに全リソースを作るため工数・コスト増 |
-| 29 | `VERCEL_ENV` によるテーブル prefix 切替 | 独自 `STAGE` 環境変数へ書換 | ○ | **必須作業**。`src/lib/db.ts:23`、Sentry config 2ファイル、統合テスト 1ファイル |
+| 29 | `VERCEL_ENV` によるテーブル prefix 切替 | 独自 `STAGE` 環境変数へ書換 | ✅ | **完了（2026-07-29・実行順の 1）**。判定は `src/lib/stage.ts` に集約（`STAGE ?? VERCEL_ENV` の併存＝soak 対応、削除は 16⑥）。`src/lib/db.ts` はフェイルクローズに反転、`sentry.server`／`sentry.edge` を是正、死にコードの `sentry.client.config.ts` は削除。統合テストの `VERCEL_ENV=preview` ガードはフォールバックによりそのまま有効 |
 | 30 | 即時ロールバック | Lambda alias + CloudFront 切替を自前構築 | △ | **Vercel のワンクリック復旧には工数を払っても届きにくい**。移行で最も劣化する項目 |
 | 31 | プレビューのアクセス保護 | Lambda@Edge Basic 認証 / CloudFront 署名 | △ | 手作り |
 | 32 | 環境変数の UI 管理 | SSM / Secrets Manager | ○ | GUI は劣るが IaC で宣言的に管理でき、再現性は上がる |
@@ -373,7 +373,7 @@ AWS リソースはまだ1つも作っていない。ローカルで確かめら
 ##### Phase 2 へ持ち越す課題（今回の実デプロイで判明）
 
 - **`X-Robots-Tag: noindex` を非本番ステージに付ける**。`robots.txt` は `Allow: /` なので CloudFront URL がインデックスされうる。canonical が www を指すため実害は小さいが、`transform.cdn` で Response Headers Policy を当てるのが筋。
-- **`VERCEL_ENV` → `STAGE` の書き換え**（4ファイル）。現状は `sst.config.ts` で `VERCEL_ENV: 'preview'` を渡す暫定措置で凌いでいる。放置すると非本番が本番テーブルを向く（IAM で preview 限定にしてあるので AccessDenied で止まる＝フェイルクローズではある）。
+- ✅ **`VERCEL_ENV` → `STAGE` の書き換え** → **完了（2026-07-29・実行順の 1）**。判定は `src/lib/stage.ts` に集約し、`sst.config.ts` は `STAGE: $app.stage` を注入（`VERCEL_ENV: 'preview'` の暫定措置は撤去）。`src/lib/db.ts` はフェイルクローズに反転済み。
 - シークレット未投入のため、認証・admin・Sentry・Instagram・メールは**未検証**。
 
 **Phase 2〜4 の具体化 → 下記「Pour Over 実行順」を正本とする。**
@@ -736,8 +736,11 @@ cron の実行時刻（18:00–19:00 UTC）は取得範囲外。「cron のロ�
 
 ### そのほか
 
-- ⚠️ **`sentry.edge.config.ts` だけ環境無条件**で `tracesSampleRate: 1`・`sendDefaultPii: true`。
-  1 で他の Sentry 設定を触るときに一緒に見ること（middleware がここを通る）。
+- ✅ **`sentry.edge.config.ts` だけ環境無条件**だった件 → **1 で `environment` を補って解消**（2026-07-29）。
+  🔑 **この行は正しく、メモリ側の「server と edge が VERCEL_ENV を見ている」が誤りだった。**
+  実際に `VERCEL_ENV` を見ていたのは server と **client**（client は Next 16 の死にコードで、1 で削除）。
+  ⚠️ **`tracesSampleRate: 1`・`sendDefaultPii: true` は据え置き**。サンプリング率の是正は
+  Sentry のクォータ方針の判断を伴うため 1 の範囲外とした（別途決める）。
 - ⚠️ **Vercel チームに放置プロジェクトが2つ**（`modest-burnell-e74583` / `thirsty-hoover-1c2347`）。
   どちらも `live: false`・独自ドメインなし・デプロイ1回きりで**害は無い**。15 の解約で消える。
 - 📌 **作業場所はメインリポジトリに固定する。** `.sst/` と `node_modules/` が使い捨て worktree
