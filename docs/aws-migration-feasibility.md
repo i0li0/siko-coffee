@@ -394,10 +394,15 @@ AWS リソースはまだ1つも作っていない。ローカルで確かめら
 
 | # | 作業 | 状態 |
 |---|---|---|
-| 0-a | **npm 11 の恒久化** — `engines` に明記し、`scripts/check-build-toolchain.mjs` で **デプロイ経路にゲート**を置く（`npm run sst:deploy`） | ✅ 完了 |
-| 0-b | **CAA に `0 issue "amazon.com"` を追加** → 直後に ACM で試験発行し、12 の不確実性をここで消す | ⬜ 未 |
+| 0-a | **デプロイ経路の一本化** — `scripts/deploy.sh` に①npm 11 検査 ②資格情報の展開 ③`sst deploy` ④画像最適化の検証 を閉じ込め、`npm run sst:deploy -- --stage <stage>` を唯一の入口にする | ✅ 完了 |
+| 0-b | **CAA に `0 issue "amazon.com"` を追加** → 直後に ACM で試験発行し、12 の不確実性をここで消す | ✅ 完了（CAA 5件・INSYNC・伝播確認済み。**依存 H 解消**。試験発行は未） |
 | 0-c | **Amplify の domain association → app → `AmplifyServiceRole` → 孤児 CNAME を削除** | ✅ 完了 |
 | 0-d | **予算アラートの閾値見直し**（$0.01 通知 → 適正値 / 上限 $10 → $20） | ⬜ 未 |
+
+> 🔑 **0-a は「npm を上げる」ではなく「手順を消す」タスクである。** 素の `npx sst deploy` には
+> 忘れると壊れる前後処理が3つ（npm 11・`login_session` の展開・画像最適化の事後検証）あり、
+> どれも**忘れても成功したように見える**のが厄介だった。`scripts/deploy.sh` に閉じ込めて
+> **`npm run sst:deploy` を唯一の入口**にすることで、手順書を読まなくても正しくなる。
 
 > 🔴 **0-a を最初に置く理由**: `#96` で直した sharp のクロスビルドは、**npm 10 でビルドした瞬間に
 > 無言で退行し、しかもデプロイは成功する**。`package.json` に `engines` が無く、実際に

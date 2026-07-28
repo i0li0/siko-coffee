@@ -12,17 +12,17 @@
 // この移行の呼称は **「Pour Over（ポアオーバー）」**。順序と依存関係の正本は
 // docs/aws-migration-feasibility.md「Pour Over 実行順」、実装者向けの索引は本ファイル末尾。
 //
-// デプロイ手順（`login_session` の罠に注意）:
-//   eval "$(aws configure export-credentials --profile default --format env)"
-//   npx sst deploy --stage dev
-//   npm run verify:image-optimizer      # ← 省略しないこと（理由は下記）
-// ※ `aws sts get-caller-identity` が通っても SST は落ちる。`~/.aws/config` の
-//   `login_session` は aws CLI 独自で、SST(Pulumi の Go SDK) は解釈できないため。
-// ※ 🔴 **npm は 11 以降が必須**（`npm --version` で確認）。10 系だと OpenNext が
-//   image-optimization Lambda に入れる sharp が wasm32 フォールバックに落ち、
-//   next/image が**無言で最適化されなくなる**（デプロイは成功する）。
-//   詳細は open-next.config.ts の imageOptimization.install のコメント。
-//   `verify:image-optimizer` はこれをビルド成果物から検出するためのもの。
+// デプロイ手順:
+//   npm run sst:deploy -- --stage dev
+//
+// 🔴 **素の `npx sst deploy` を直接打たないこと。** 忘れると壊れる前後処理が3つあり、
+//    `scripts/deploy.sh` にまとめてある（打てば正しい状態になるようにしてある）:
+//   ① npm 11 以降の確認 — 10 系だと OpenNext が image-optimization Lambda に入れる sharp が
+//      wasm32 フォールバックに落ち、next/image が**無言で最適化されなくなる**（デプロイは成功する）。
+//      詳細は open-next.config.ts の imageOptimization.install のコメント。
+//   ② AWS 資格情報の環境変数への展開 — `aws sts get-caller-identity` が通っても SST は落ちる。
+//      `~/.aws/config` の `login_session` は aws CLI 独自で、SST(Pulumi の Go SDK) は解釈できないため。
+//   ③ デプロイ後の `verify:image-optimizer` — ①をすり抜けた場合の最後の網。
 //
 // 型チェック: `$config` / `sst` は `.sst/platform/config.d.ts`（`sst install` で生成・
 // gitignore 対象）が供給する。CI にはそれが無いため `tsconfig.json` の exclude に
