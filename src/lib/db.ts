@@ -1,5 +1,6 @@
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
+import { isProductionStage } from '@/lib/stage';
 
 const REGION = 'ap-northeast-1';
 
@@ -18,9 +19,13 @@ export function isDbConfigured(): boolean {
   return Boolean(process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY);
 }
 
-// Preview デプロイは別テーブルを使い、本番データへの誤書き込みを防ぐ。
-// VERCEL_ENV: 'production' | 'preview' | 'development'
-const prefix = process.env.VERCEL_ENV === 'preview' ? 'siko-coffee-preview-' : 'siko-coffee-';
+// 本番以外のステージは別テーブルを使い、本番データへの誤書き込みを防ぐ。
+//
+// 🔴 判定は**フェイルクローズ**（`src/lib/stage.ts`）。本番と明示されたときだけ
+// `siko-coffee-*` を向き、それ以外は全て `siko-coffee-preview-*` に倒す。
+// 以前は `VERCEL_ENV === 'preview'` のときだけ preview を向いていたため、
+// **環境変数が無い環境（AWS など）では本番テーブルを向いていた**。
+const prefix = isProductionStage() ? 'siko-coffee-' : 'siko-coffee-preview-';
 
 export const TABLE = {
   PRODUCTS:  `${prefix}products`,

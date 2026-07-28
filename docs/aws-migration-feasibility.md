@@ -401,7 +401,10 @@ AWS リソースはまだ1つも作っていない。ローカルで確かめら
 | 0-a | **デプロイ経路の一本化** — `scripts/deploy.sh` に①npm 11 検査 ②資格情報の展開 ③`sst deploy` ④画像最適化の検証 を閉じ込め、`npm run sst:deploy -- --stage <stage>` を唯一の入口にする | ✅ 完了 |
 | 0-b | **CAA に `0 issue "amazon.com"` を追加** → 直後に ACM で試験発行し、12 の不確実性をここで消す | ✅ 完了（**この試験発行で 12 を止める地雷を発見・解決した**。下記） |
 | 0-c | **Amplify の domain association → app → `AmplifyServiceRole` → 孤児 CNAME を削除** | ✅ 完了 |
-| 0-d | **予算アラートの閾値見直し**（$0.01 通知 → 適正値 / 上限 $10 → $20） | ⬜ 未 |
+| 0-d | **予算アラートの閾値見直し**（$0.01 通知 → 適正値 / 上限 $10 → $20） | ✅ 完了（上限 **$20** / 通知 **ACTUAL > $12**・2026-07-29 に AWS 実測で確認） |
+
+> ✅ **第0群は 4/4 完了。** 解消した依存は **H**（CAA → 12）と **I**（Amplify 削除 → 12）、
+> 追加した依存は **J**（0-a → 以降のすべてのデプロイ）・**K**（9.5 → 14）・**L**（Instagram トークン）。
 
 > ## 🔴🔴 0-b の試験発行で判明: **`www` の証明書は Vercel の CAA に阻まれて発行できない**
 >
@@ -454,8 +457,11 @@ AWS リソースはまだ1つも作っていない。ローカルで確かめら
 >   0-c で「孤児」として一度削除したが、**現在はワイルドカード証明書の検証レコードとして生きている**
 >   （ACM の検証トークンはドメイン＋アカウントに対して決定的で、同じ名前が再利用される）。
 >   これを消すと更新が止まる。
-> - 🧹 後始末: 失敗した www 単独の証明書（`aea326a1-…`）と、その検証レコード
->   `_a4eb7ebc6bd0dd0df20316ef46257422.www.sikocoffee.com` は不要。削除してよい。
+> - 🧹 後始末: ✅ **完了**。失敗した www 単独の証明書（`aea326a1-…`）とその検証レコード
+>   `_a4eb7ebc6bd0dd0df20316ef46257422.www.sikocoffee.com` は削除済み。
+>   2026-07-29 の再確認で **us-east-1 の証明書はワイルドカード1枚のみ**（`ISSUED` / Issuer: Amazon /
+>   2027-02-11 まで / **`InUseBy` は空**＝まだ CloudFront に未接続＝12 待ち）、Route53 に残る
+>   `_` 始まりのレコードは **検証用 `_c84c…` 1本＋SES DKIM 3本だけ**であることを確認した。
 >
 > 🔑 **教訓**: CAA は「自分のゾーンだけ見ればよい」ものではない。**CNAME を張った先の CAA に従う。**
 > 移行元が DNS ホスティングも兼ねている場合、この形の依存が残る。
@@ -484,11 +490,30 @@ AWS リソースはまだ1つも作っていない。ローカルで確かめら
 
 | # | 作業 | 期待できる結果 |
 |---|---|---|
-| 1 | **`VERCEL_ENV` → `STAGE`**（4ファイル＋`sst.config.ts` に `STAGE: $app.stage` を注入） | AWS 本番でサーバ側 Sentry の Performance が実際に動く。現状 `tracesSampleRate: VERCEL_ENV==='production' ? 0.1 : 0` のため **AWS 本番では 0＝完全に無効**。「Speed Insights は Sentry Performance で代替」という前提がここで初めて成立する。あわせて `src/lib/db.ts` の判定を**反転**し、未設定時に preview へ倒れるフェイルクローズにする（現行は本番テーブルを向く） |
-| 2 | **cron 4ルートの観測性** | EventBridge 移行後は CloudWatch が唯一の観測手段になる。Sentry だけだと DSN 未設定や CSP で静かに消える。⚠️ **`instagram-refresh` には `catch` が無い**（DynamoDB Put も fetch も裸で、Sentry も入っていない）＝「catch に追記」ではなく **try/catch で包む**作業になる。依存 E の対象がまさにこのルートである点に注意 |
+| 1 | ✅ **`VERCEL_ENV` → `STAGE`**（判定を `src/lib/stage.ts` に集約＋`sst.config.ts` に `STAGE: $app.stage` を注入） | **完了（2026-07-29）**。AWS 本番でサーバ側 Sentry の Performance が実際に動くようになった（従来は `tracesSampleRate: VERCEL_ENV==='production' ? 0.1 : 0` のため **AWS 本番では 0＝完全に無効**だった）。「Speed Insights は Sentry Performance で代替」という前提がここで初めて成立する。`src/lib/db.ts` の判定も**反転**し、未設定時に preview へ倒れるフェイルクローズにした |
+| 2 | **cron 4ルートの観測性** | EventBridge 移行後は CloudWatch が唯一の観測手段になる。Sentry だけだと DSN 未設定や CSP で静かに消える。実測（2026-07-29）: `cleanup-pending` / `po-timeouts` / `release-reservations` は `catch` が **Sentry のみで `console.error` が無い**。`instagram-refresh` は逆に **Sentry が無く**、`catch` は**トークン取得の `GetCommand` を黙って握り潰す1つだけ**（`console.error` は fetch が非 200 のときの1本のみ）＝ **`fetch()` 自体の例外と `PutCommand` は裸**。よって「catch に追記」ではなく **try/catch で包む**作業になる。依存 E・L の対象がまさにこのルートである点に注意 |
 | 3 | **Vercel 専用スクリプトの条件化**（`@vercel/analytics` / `@vercel/speed-insights`） | `/_vercel/insights/script.js` と `/_vercel/speed-insights/script.js` の 404 が消える |
 | 4 | **Vercel Blob → S3**（**presigned S3 PUT で実装**） | 移送すべきデータは無い（本番の `avatarUrl` 保持ユーザー0件・Blob ストアも空）＝コード置換のみ。`next.config.ts` の `remotePatterns` と CSP `img-src` を**両方**更新する |
 
+> 🔴 **1 の実装で判明した罠: 単純な置換だと soak 期間に本番障害を起こす。**
+> 14（soak）の間は **AWS と Vercel の両方が本番を担う**。`VERCEL_ENV` を `STAGE` に
+> 置き換えるだけだと、**`STAGE` を持たない Vercel 本番が preview テーブルを向く**
+> （＝本番サイトが空のデータを読む）。そのため `src/lib/stage.ts` は
+> **`STAGE ?? VERCEL_ENV`** のフォールバックを持たせてある。
+> → **16（Vercel 依存の撤去）でこの一行を消す**こと。4点セットに続く5点目として扱う。
+>
+> 📌 **1 の調査で分かった記述の誤り**（従来「`sentry.server.config.ts` と
+> `sentry.edge.config.ts` が `VERCEL_ENV` を見ている」としていた）:
+> 実際に `VERCEL_ENV` を見ていたのは **`sentry.server.config.ts` と `sentry.client.config.ts`** で、
+> **`sentry.edge.config.ts` は `environment` 自体を持っていなかった**（Sentry ウィザードの
+> 生成物のままで DSN もハードコード、`tracesSampleRate` は全ステージ **100%**）。
+> environment のみ補い、**サンプリング率の是正は Sentry のクォータ方針の判断を伴うため分離**した。
+> また **`sentry.client.config.ts` は Next 16 では死にコード**（実体は
+> `src/instrumentation-client.ts`。参照ゼロを確認）だったため削除した。
+> ⚠️ 残る既知のギャップ: **`src/instrumentation-client.ts` には `environment` が無い**ので
+> **クライアント側のイベントは今もステージ未タグ**。クライアントは `STAGE` を読めない
+> （ビルド時に焼き込む `NEXT_PUBLIC_*` が要る）ため、別タスクとして扱う。
+>
 > **なぜ 4 は presigned なのか**: 5 で入れる `oac-with-edge-signing` は Lambda@Edge 経由のため
 > **ボディが 1MB 上限**。現行の `MAX_FILE_SIZE` は 2MB で衝突する。サーバ経由アップロードをやめれば
 > 大きなボディが CloudFront/Lambda を通らなくなり、衝突自体が消える。
@@ -634,6 +659,8 @@ AWS リソースはまだ1つも作っていない。ローカルで確かめら
 > ① `next.config.ts` の `redirects()` ② `vercel.json` ③ `scripts/check-cron-schedule.mjs` と
 > `prebuild` フックと `check:cron` スクリプト ④ CI の該当ステップ
 > ⑤ `src/__tests__/hostRedirects.test.ts`（②と同時に消さないと CI が落ちる）
+> ⑥ 🆕 **`src/lib/stage.ts` の `?? process.env.VERCEL_ENV` フォールバック**（1 で soak 期間の
+> Vercel 本番を守るために入れたもの。⑥は `src/__tests__/stage.test.ts` の該当ケースと同時に消す）
 
 ### 🔴 動かせない依存
 

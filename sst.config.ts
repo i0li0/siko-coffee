@@ -148,12 +148,11 @@ export default $config({
         // 投入済みシークレット（値は SSM 由来。ここには現れない）
         ...secretEnv,
 
-        // ⚠️ **暫定措置**: `src/lib/db.ts` はテーブル名の接頭辞を `VERCEL_ENV === 'preview'`
-        // で決めている。AWS には VERCEL_ENV が無いので、放っておくと非本番ステージが
-        // **本番テーブル `siko-coffee-*` を向く**（上の permissions が preview 限定なので
-        // AccessDenied で止まる＝フェイルクローズではあるが、意図としては誤り）。
-        // Phase 2 の「VERCEL_ENV → STAGE 書き換え（4ファイル）」が済むまで、ここで値を与える。
-        ...(isProd ? {} : { VERCEL_ENV: 'preview' }),
+        // ステージ判定の入力（Pour Over 1 で `VERCEL_ENV` から移行済み）。
+        // `src/lib/stage.ts` がこれを読み、`src/lib/db.ts` のテーブル接頭辞と
+        // `sentry.*.config.ts` の environment / tracesSampleRate を決める。
+        // 判定はフェイルクローズなので、**本番ステージ以外では preview テーブルを向く**。
+        STAGE: $app.stage,
 
         // 📌 `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` はここでは設定しない（予約変数）が、
         // **Lambda は実行ロールの資格情報を同名の環境変数として自動注入する**。
@@ -193,19 +192,28 @@ export default $config({
 //      **デプロイ経路にゲート**を置いた。以後の入口は `npm run sst:deploy -- --stage <stage>`。
 //      🔴 npm 10 でビルドすると sharp が wasm32 に落ち、next/image が無言で壊れたまま
 //         デプロイは成功する。CI は next build のみなのでゲートを入れていない。
-// 0-b. ⬜ CAA に `0 issue "amazon.com"` を追加 → 直後に ACM で試験発行し 12 の不確実性を消す。
+// 0-b. ✅ CAA に `0 issue "amazon.com"` を追加。試験発行で **www 単独の証明書は
+//      Vercel 側の CAA に阻まれて発行できない**ことが判明し、`sikocoffee.com` +
+//      `*.sikocoffee.com` のワイルドカード証明書で解決した。**依存 H は解消**。
+//      🔴 12 では SST に証明書を作らせず、この ARN を `domain.cert` に渡すこと:
+//         arn:aws:acm:us-east-1:654512230021:certificate/01195002-424e-44b1-9425-aff38c879765
 // 0-c. ✅ Amplify を削除（association → app → AmplifyServiceRole → 孤児 CNAME 2本）。
 //      公開コピーは停止、本番 DNS は無傷を確認済み。**依存 I は解消**。
-// 0-d. ⬜ 予算アラートの閾値見直し（$0.01 通知 → 適正値 / 上限 $10 → $20）。
+// 0-d. ✅ 予算アラートの閾値見直し（上限 $10 → $20 / 通知 $0.01 → $12）。
 //
 // ── 第1群｜下ごしらえ（本番無影響・並行可）────────────────────────
-//  1. VERCEL_ENV → STAGE。本ファイルに `STAGE: $app.stage` を足し、暫定の VERCEL_ENV 注入を消す。
-//     コード側4ファイル: src/lib/db.ts / sentry.server.config.ts / sentry.client.config.ts /
-//     scripts/integration/platform-flow.test.ts。
-//     ⚠️ db.ts は判定の**向きを反転**する（現行は未設定だと本番テーブルを向くフェイルオープン）。
-//     ⚠️ sentry.*.config.ts は `tracesSampleRate: VERCEL_ENV==='production' ? 0.1 : 0` のため、
-//        直さないと **AWS 本番で Performance が完全に無効**のまま切り替わる。
-//     📌 Vercel にカスタム環境は無く VERCEL_ENV は3値だけ＝`STAGE==='production' ? 本番 : preview` で足りる。
+//  1. ✅ VERCEL_ENV → STAGE。本ファイルで `STAGE: $app.stage` を注入し、暫定の VERCEL_ENV 注入は撤去。
+//     判定は `src/lib/stage.ts` に集約し、`src/lib/db.ts` と `sentry.server/edge.config.ts` が使う。
+//     ⚠️ **soak 期間（14）は AWS と Vercel の両方が本番を担う**ため、stage.ts は
+//        `STAGE ?? VERCEL_ENV` のフォールバックを持つ。**Vercel 解約（15〜16）でこの一行を消す**。
+//        単純置換にすると Vercel 本番が preview テーブルを向いて本番障害になる。
+//     ✅ db.ts は判定の向きを反転済み（未設定なら preview に倒すフェイルクローズ）。
+//     📌 実地調査で判明した差分: sentry.edge.config.ts は VERCEL_ENV ではなく
+//        **environment 自体が無かった**（ウィザード既定のまま・DSN もハードコード・
+//        tracesSampleRate は全ステージ 100%）。environment のみ補い、サンプリング率は別途判断。
+//        sentry.client.config.ts は Next 16 では**死にコード**（実体は src/instrumentation-client.ts）
+//        だったため削除した。scripts/integration/platform-flow.test.ts の VERCEL_ENV=preview
+//        ガードは stage.ts のフォールバックによりそのまま有効。
 //  2. cron 4ルートの catch に console.error を足す（EventBridge 後は CloudWatch が唯一の観測手段）。
 //  3. Vercel 専用スクリプト（@vercel/analytics・@vercel/speed-insights）を条件付きレンダーにする。
 //  4. Vercel Blob → S3。**presigned S3 PUT で実装すること**（理由は 5 の 1MB 制限）。
