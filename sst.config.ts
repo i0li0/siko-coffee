@@ -167,9 +167,15 @@ export default $config({
         // 約 0.58 vCPU で、**Vercel Hobby の 1 vCPU / 2 GB に対して6割**しかない。
         // GB-秒課金なので、メモリを上げて実行時間が縮めば費用はおおむね相殺される。
         memory: '1024 MB',
-        // 📌 実効の上限はここではなく **CloudFront のオリジン ReadTimeout（SST 既定 20秒）**。
-        // Vercel は関数に 300 秒くれていたので、HTTP 経由の実行予算は **1/15 に縮む**。
+        // 📌 実効の上限はここではなく **CloudFront のオリジン ReadTimeout（実測 30秒）**。
+        // 値はディストリビューションではなく **KVS の metadata**（`origin.timeouts.readTimeout`）にあり、
+        // CloudFront Function の `setUrlOrigin()` が `cf.updateRequestOrigin()` で毎リクエスト適用する。
+        // ディストリビューション側に見える 20 秒は `placeholder.sst.dev` オリジンのもので、
+        // KVS の metadata を読めなかったときしか使われない。
+        // Vercel は関数に 300 秒くれていたので、HTTP 経由の実行予算は **1/10 に縮む**。
         // 長い処理（cron・管理系の集約）は CloudFront を経由させない設計にすること（作業順 8）。
+        // ⚠️ 下の 30 秒は **CloudFront の 30 秒と同値**。同時に切れるため、504 が返ったときに
+        // 「関数が落ちた」のか「CF が切った」のかを区別できない。CF 側を長くするのが望ましい。
         timeout: '30 seconds',
       },
     })
@@ -212,7 +218,7 @@ export default $config({
 //  8. cron 4本 → `sst.aws.Cron`（実体は EventBridge Scheduler）＋中継 Lambda。
 //     ⚠️ Scheduler のターゲットは AWS API 操作のみで **HTTPS を直接叩けない**ため中継 Lambda が要る。
 //     ⚠️ 中継先は CloudFront ではなく **Function URL を直接**（CloudFront のオリジン ReadTimeout は
-//        20秒しかなく、Vercel の 300秒 から大幅に縮む）。5 で IAM 認証にするなら実行ロールで SigV4 署名する。
+//        実測30秒しかなく、Vercel の 300秒 から大幅に縮む）。5 で IAM 認証にするなら実行ロールで SigV4 署名する。
 //     Hobby の日次制限が外れるので release-reservations は 10分毎に戻す。
 //     📌 そもそも Vercel では release-reservations が**登録済みなのに実行されていなかった**（2026-07-28 実測）。
 //  9. 非本番ステージに X-Robots-Tag: noindex（`edge.viewerResponse.injection`）＋アクセス制限。
@@ -228,6 +234,14 @@ export default $config({
 //     ⚠️ CloudFront Function は**1ビヘイビアに1つ**しか付かない。SST 生成の関数に injection が
 //        合成される仕組みなので、独立した関数を足そうとしないこと。
 //     📌 証明書は Route53 が同一アカウントにあるため **SST が us-east-1 に自動作成し DNS 検証まで自動**。
+//     🔴 **ただし 12 には前提作業が2件ある**（2026-07-28 の AWS 実地調査で判明・番号は増やさない）:
+//        ① **CAA に `0 issue "amazon.com"` を追加する**。現行の CAA は globalsign/letsencrypt/
+//           pki.goog/sectigo しか許可しておらず、**Amazon CA が入っていないので ACM が発行できない**。
+//           上の「自動で通る」は CAA を直した後にのみ成立する。
+//        ② **Amplify の domain association とアプリを削除する**。棚卸しで「残骸」としていたが実際は
+//           main の autoBuild が有効で稼働中、かつ `sikocoffee.com` の association が AVAILABLE。
+//           SST が同じ Route53 レコードを作りに行くと衝突しうる。
+//        詳細は docs/aws-migration-feasibility.md「AWS 側 実地調査（2026-07-28）」。
 //
 // ── 第4群｜切替と観測 ────────────────────────────────────────
 // 13. production ステージへデプロイ → 検証 → DNS 切替。
@@ -248,4 +262,6 @@ export default $config({
 //  E. 8 → 15     : Instagram の長期トークンは月次 cron で延長。60日止まると恒久失効し手動再認証が要る
 //  F. 11 → 13    : 24時間以上前でないと旧 TTL が失効せず引き下げが効かない
 //  G. 12 → 16    : 先に redirects() を消すと apex が無正規化になる
+//  H. CAA修正 → 12 : Amazon CA が CAA で許可されていないと ACM が発行できない
+//  I. Amplify削除 → 12 : sikocoffee.com の domain association が生きたままだとレコードが衝突しうる
 // ─────────────────────────────────────────────────────────────

@@ -417,7 +417,12 @@ AWS リソースはまだ1つも作っていない。ローカルで確かめら
 > ① EventBridge Scheduler のターゲットは templated（AWS コアサービス）と universal（任意の AWS API 操作）だけで、
 > **任意の HTTPS エンドポイントを直接叩けない**。したがって中継 Lambda が要る。
 > ② 中継先は CloudFront ではなく **Function URL を直接**にする。**CloudFront のオリジン ReadTimeout は
-> SST 既定で 20 秒**しかなく、Vercel が関数にくれていた 300 秒から **1/15 に縮む**ため。
+> 実測 30 秒**しかなく、Vercel が関数にくれていた 300 秒から **1/10 に縮む**ため。
+> 📌 この 30 秒はディストリビューション設定ではなく **KVS の metadata**（`origin.timeouts.readTimeout`）にあり、
+> CloudFront Function の `setUrlOrigin()` が `cf.updateRequestOrigin()` で毎リクエスト適用している。
+> ディストリビューションに見える `OriginReadTimeout: 20` は `placeholder.sst.dev` オリジンのもので、
+> KVS の metadata 読み込みに失敗したときしか使われない（＝ SST #6894 の 503 経路）。
+> ⚠️ Lambda 側のタイムアウトも 30 秒で**同値**のため、両者が同時に切れて 504 の原因が切り分けられない。
 > 5 で IAM 認証にするなら中継 Lambda は実行ロールで SigV4 署名すればよく、`CRON_SECRET` と二重の防御になる。
 
 > ⚠️ **6 のスコープは現行どおり `/admin*` と `/api/admin/*` に限定する。**
@@ -433,6 +438,27 @@ AWS リソースはまだ1つも作っていない。ローカルで確かめら
 | 10 | **CloudWatch Alarms を先に用意** | 観測できない状態で切り替えない。Vercel に無い機構＝移行で明確に良くなる項目 |
 | 11 | **Route53 の TTL を 60s へ**（切替の**24時間以上前**） | 実測の権威 TTL は www=500s / apex=300s ＝切り戻しに5〜8分。60s なら1分台になる |
 | 12 | **`domain` を設定**（`name: www.sikocoffee.com` / `aliases` に apex）＋ apex→www の 308 と HSTS を `edge.viewerRequest.injection` で | 証明書は **Route53 が同一アカウントにあるため SST が us-east-1 に自動作成し DNS 検証まで自動**。手動の事前発行は不要 |
+
+> 🔴 **12 の前に必須の前提作業が2件ある**（2026-07-28 の AWS 側実地調査で判明）。
+> どちらも 12 を物理的に実行不能にするため、番号は増やさず**12 の前提**として扱う。
+>
+> **① CAA レコードに Amazon CA を追加する。**
+> `sikocoffee.com` の CAA は `0 issue` が **globalsign / letsencrypt / pki.goog / sectigo の4つだけ**
+> （Route53 の RRset と権威 NS への dig の両方で確認）。AWS 公式は
+> value に **`amazon.com` / `amazontrust.com` / `awstrust.com` / `amazonaws.com` のいずれか**を要求する。
+> ＝ **現状 Amazon CA は許可されておらず、SST が証明書を作っても発行が CAA エラーで落ちる。**
+> 上の「手動の事前発行は不要」は CAA を直した後にのみ成立する。
+> → **`0 issue "amazon.com"` を CAA に追加してから 12 に入る。**
+> 📌 Amplify 時代の証明書は取れているので、CAA はその後に追加されたとみられる。
+>
+> **② Amplify の domain association とアプリを削除する。**
+> 「旧構成の残骸」として棚卸しに載っている Amplify アプリは**残骸ではなく稼働中**だった。
+> ブランチ `main` の `enableAutoBuild` が有効で、**2026-07-28 にもビルドが成功している**
+> （通算122ジョブ）。ブランチの既定ドメインは **200 を返し、サイトの完全な公開コピーが動いている**
+> （`/shop` 200・`X-Robots-Tag` なし）。さらに **`sikocoffee.com` の domain association が
+> `AVAILABLE`**（www は verified）。実 DNS は Vercel を向いているので現時点の実害は無いが、
+> **12 で SST が同じ Route53 レコードを作りに行くと衝突しうる。**
+> Route53 に残る `acm-validations.aws` 宛の孤児 CNAME 2本もこれが出所。
 
 > ⚠️ **`domain.redirects` を使ってはいけない。** SST の `HttpsRedirect` は
 > **S3 website バケットの `redirectAllRequestsTo` ＋ CloudFront** で実装されており
@@ -472,6 +498,8 @@ AWS リソースはまだ1つも作っていない。ローカルで確かめら
 | E | **8 → 15** | Instagram の長期トークンは月次 cron で延長する方式。**60日止まると恒久失効**し手動再認証が要る |
 | F | **11 → 13** | 24時間以上前でないと旧 TTL が失効せず引き下げが効かない |
 | G | **12 → 16** | 先に `redirects()` を消すと apex が無正規化になる。テストも同時に消さないと CI が落ちる |
+| H | **CAA 修正 → 12** | Amazon CA が CAA で許可されていないと ACM が発行できず、`domain` 設定が完了しない |
+| I | **Amplify 削除 → 12** | `sikocoffee.com` の domain association が生きたままだと Route53 レコードが衝突しうる |
 
 ### Pour Over に含めないもの（分離実施）
 
@@ -499,6 +527,172 @@ AWS リソースはまだ1つも作っていない。ローカルで確かめら
 | **カスタム環境への対応** | Production/Preview/Development の3つのみ＝`STAGE==='production' ? 本番 : preview` で完全 |
 
 ---
+
+---
+
+## AWS 側 実地調査（2026-07-28）
+
+Vercel 側の棚卸しと対になる回。**stage `dev` の実デプロイとアカウント全体を実測**した結果のうち、
+上の記述を**訂正するもの**と**計画に無かったもの**を記録する。
+（🔴 CAA と Amplify の2件は「第3群」の 12 の前提として上に反映済み。）
+
+### 🔴 Function URL の露出は「地雷4」の記述より広い
+
+| | 記録 | 実測（2026-07-28 再検証） |
+|---|---|---|
+| 対象 | server の Function URL のみ | **image-optimizer の Function URL も `AuthType: NONE` / `Principal: *`**。直アクセスで 200 を返し画像を生成する＝無認証の変換コンピュートがもう1本開いている |
+| CORS | 記載なし | **両方とも全開**（`AllowOrigins`/`AllowMethods`/`AllowHeaders` が `*`）。任意 Origin に `Access-Control-Allow-Origin: *` を返し preflight も 200。`AllowCredentials: false` なので Cookie は乗らない |
+
+> 🔑 **リソースポリシーに世代の違う重複ステートメントが残る。**
+> server 側は5ステートメントあり、うち3つが公開許可。Sid の命名規則が2世代混在しており、
+> **SST はデプロイをまたいだ古い許可を掃除していない**。
+> → **5 で `protection` を有効化した後、`aws lambda get-policy` に `Principal: "*"` が
+> 残っていないことを必ず確認する。** 残っていれば URL は開いたままで、5・6・9・12 が全て無意味になる。
+
+> ⚠️ **予約同時実行がどの関数にも設定されていない。** 同時実行クォータが 1000 に戻っている今、
+> 公開された Function URL から 1000 並列を引ける。`protection` と併せて上限を設けるのが妥当。
+
+### ⚠️ オリジン ReadTimeout は 20 秒ではなく **30 秒**（訂正済み）
+
+第2群の 8 に書いていた「SST 既定で 20 秒」は誤り。詳細は当該箇所に反映した。要点のみ再掲:
+実効値は **KVS の metadata（`origin.timeouts.readTimeout`）にあり 30 秒**、
+CloudFront Function の `setUrlOrigin()` が `cf.updateRequestOrigin()` で毎リクエスト適用している。
+ディストリビューションに見える `OriginReadTimeout: 20` は `placeholder.sst.dev` オリジンのもので、
+metadata の読み込みに失敗したときしか使われない。
+⚠️ **Lambda 側も 30 秒で同値**のため両者が同時に切れ、504 の原因を切り分けられない。
+
+### ⚠️ セキュリティヘッダが静的アセットに乗らない（**パリティ退行**）
+
+ディストリビューションの `ResponseHeadersPolicyId` は `None`、アカウントにカスタム
+Response Headers Policy は **0 個**。ヘッダは Next.js 側で付けているため
+**server を経由するページにしか乗らない**。
+
+| リクエスト | Vercel 本番 | AWS（dev） |
+|---|---|---|
+| `/`（ページ） | CSP/HSTS/X-Frame/nosniff 全部 | 全部 |
+| `/_next/static/**.js` | **全部あり** | **`cache-control` のみ** |
+| `/_next/image?...` | HSTS/nosniff あり | **`cache-control` のみ** |
+
+S3 配信のアセットと画像最適化の応答でヘッダが丸ごと落ちる（特に `nosniff` の欠落）。
+→ 対処は R-1。
+
+### ⚠️ コールドスタートが実測で効いている
+
+CloudWatch Logs Insights（直近48h・server Lambda）と、キャッシュバスター付き `/shop` の TTFB 実測:
+
+| | 1回目（コールド） | 2回目以降 |
+|---|---|---|
+| AWS（dev） | **3.11s** | 0.24〜0.31s |
+| Vercel（本番） | 0.58s | 0.36s |
+
+**296 invocations / 55 コールド ＝ 18.6%**。`initDuration` は avg 164ms・max 200ms しかなく、
+主因は初回リクエストの実行そのもの（`duration` max **2,190ms**＝モジュール遅延ロードと
+DynamoDB 初回接続）。`open-next.config.ts` の warmer は `'dummy'` で無効のまま。
+＝ **温まっていれば AWS の方が速いが、コールド経路は約3秒**。
+
+> 🔑 **`maxMemoryUsed` は 231MB / 1024MB。** つまり作業 7 の 2048MB 化は
+> **メモリ不足の解消ではなく純粋な CPU 増強**である、という裏付けが取れた。RAM は余っている。
+
+### ⚠️ 4（Blob → S3）は画像モデレーションを黙って外してしまう
+
+`src/app/api/account/avatar/route.ts` は Rekognition `DetectModerationLabels` を
+**`Image: { Bytes: imageBytes }`＝サーバを通った生バイト**で呼んでいる
+（`MinConfidence: 70`、失敗時は `safe: false` でフェイルクローズ）。実行ロールにも当該権限がある。
+→ **presigned S3 PUT にすると画像が server Lambda を一切通らないため、この検閲が丸ごと消える。**
+**対処**: PUT 完了後に呼ぶ confirm エンドポイントで `Image: { S3Object: ... }` 形式で再検閲する
+（S3 参照なら 15MB まで可）。実行ロールに保存先バケットの `s3:GetObject` が要る。
+**4 の設計にこの一段を明記すること。**
+
+### ⚠️ 5 が使う Lambda@Edge の制約（AWS 公式で確認）
+
+`oac-with-edge-signing` の署名関数には以下が効く。
+- **us-east-1 限定** / **番号付きバージョン必須**（`$LATEST`・エイリアス不可）
+- **環境変数が使えない**（予約変数を除く）/ レイヤー不可 / X-Ray 不可 / VPC 不可 / DLQ 不可
+- **arm64 不可**（x86_64 のみ）/ ephemeral storage 512MB まで / **provisioned concurrency 不可**
+- 実行ロールは `lambda.amazonaws.com` と **`edgelambda.amazonaws.com` の両方**から assume 可能に
+- 📌 **ログはビューアに最も近いリージョンの CloudWatch に出る**。`ap-northeast-1` だけを見ていると
+  署名関数の障害を見落とす。10 のアラーム設計で考慮する。
+
+### ⚠️ メールの運用体制が無い（切替とは独立の既存ギャップ）
+
+SES 本体は健全（Production 有効・DKIM SUCCESS・上限 50,000通/日）だが、その周辺が空:
+- **SPF レコードが無い**（apex TXT は site verification のみ）/ **DMARC が無い** / **MX が無い**
+- SES の **custom MAIL FROM 未設定** ＝ エンベロープ MAIL FROM は `amazonses.com` のまま
+- **configuration set が 0 個** ＝ バウンス/苦情のイベント配信先が無い
+- `FeedbackForwardingStatus` は有効だが、転送先の `noreply@sikocoffee.com` は
+  **MX が無いので受信できない** ＝ **バウンス通知はどこにも届かない**
+
+DKIM が `d=sikocoffee.com` に整列するため認証自体は通る。問題は
+**注文確認メールが不達でも検知手段がゼロ**という点。Vercel 時代からの既存ギャップで移行では
+悪化しないが、AWS 一本化後は SES が唯一の送信路になる。→ R-5。
+
+### ⚠️ 実行ロールの権限が広い
+
+server Lambda のインラインポリシーは DynamoDB を `siko-coffee-preview-*` に限定しており**正しい**が:
+- **`ses:SendEmail` / `ses:SendRawEmail` が `Resource: "*"`** ＝ dev ステージから検証済み
+  アイデンティティ全部として送信できる。dev URL は公開・admin はパスワードのみなので踏み台の面がある
+- **`cloudfront:CreateInvalidation` が `Resource: "*"`** ＝ アカウント内の任意ディストリビューションを無効化できる
+- S3 の書き込み先が **CloudFront が `_assets` として配信しているバケットと同一**。
+  4 でアバターを置くなら**別バケット（または別プレフィクス＋厳格なポリシー）**にすること
+
+### 観測とガバナンスの現状（すべて 0 件）
+
+| 項目 | 状態 |
+|---|---|
+| CloudWatch Alarms / SNS トピック | **0 / 0** ＝ 10 に着手する前に**通知先そのものが無い** |
+| CloudFront アクセスログ | **無効** ＝ エッジのリクエスト可視性ゼロ |
+| SQS の DLQ / RedrivePolicy | **無し** ＝ ISR 再検証の失敗が4日後に黙って消える |
+| CloudFront CustomErrorResponses | **0 件** ＝ 5xx で CloudFront 素のエラーページが出る |
+| GuardDuty / Security Hub / Config / Access Analyzer | **0 / 未購読 / 0 / 0** |
+| IAM パスワードポリシー | **未設定** |
+| Route53 ヘルスチェック | **未設定** ＝ ロールバックは手動 DNS 変更のみ |
+
+良好だったもの: **ルート MFA 有効**、**CloudTrail は多リージョン＋改ざん検知で配信も継続中**、
+本番 DynamoDB は PITR 有効・削除保護有効を再確認、SST の state バケットはバージョニング有効＋
+パブリックブロック済み。
+
+### その他の実測
+
+- Function URL の `InvokeMode` は両方 **`BUFFERED`** ＝ レスポンスストリーミング無効、同期呼び出しの
+  **6MB レスポンス上限**が効く。ただし最大ページは 240KB、Suspense の使用も3ページのみ＝**現状は実害なし**。
+  将来 admin 集約 API が育ったときの天井として記憶しておく。
+- server Lambda は **x86_64 / 1024MB**、image-optimizer は **arm64 / 1536MB** と**アーキテクチャが不一致**。
+  7 でメモリを上げる際に arm64 へ揃える余地がある（sharp の件で arm64 ビルドは実証済み）。
+- IPv6 は**無効**だが **Vercel 側にも AAAA が無い**ため退行ではない。有効化は費用ゼロの改善。
+- `MinimumProtocolVersion` は `TLSv1`（既定証明書ゆえ強制）。12 で ACM 証明書を付けたら
+  **TLSv1.2_2021** にすること。
+- dev の CloudFront は既に**1日あたり3千件規模のリクエスト**を受けている（bot が公開 URL を発見済み）。
+  9（非本番のアクセス制限）の必要性を実測が裏付けている。
+- 本番の静的アクセスキーは **調査当日も DynamoDB へのアクセスに使われていた** ＝ Vercel 本番が現役で
+  使用中であり、**切替前には削除できない**ことが実測で確定。
+- 💰 費用の再見積り: CloudFront も Lambda も無料枠内、DynamoDB/S3 は誤差 ＝ **やはり WAF が支配的**。
+  ただし記録に無かった線が2本ある — **Lambda@Edge には無料枠が無い**（リクエスト課金＋GB-秒）と
+  **CloudWatch Logs の取り込み課金**。総額は月 **$9〜11** 見込みで、
+  既存の予算アラート（月$10上限・**$0.01 で通知**）を越える。**6 の前に閾値を上げること。**
+
+---
+
+## 推奨タスク（コスト非制約の前提・2026-07-28）
+
+上の16タスク＝「切替に必須」とは**別枠**の推奨。優先度順。着手判断はオーナー。
+
+| # | 内容 | 根拠 |
+|---|---|---|
+| **R-1** | **CloudFront Response Headers Policy を付ける** | 上の**パリティ退行**の直接の対処。静的な5つ（HSTS / X-Content-Type-Options / X-Frame-Options / Referrer-Policy / Permissions-Policy）を RHP に置き、**CSP はアプリ側に残す**（`docs/csp-nonce-migration-plan.md` で将来リクエスト毎になるため）。🔗 **12 の「apex 308 に HSTS を乗せる」問題も RHP で解ける**＝ `HttpsRedirect` が RHP を付けない件への正攻法。CloudFront 生成のエラーページにも乗る |
+| **R-2** | **CloudWatch RUM を入れる** | パリティ表で唯一 ✕ の Speed Insights の**直接の代替**。ap-northeast-1 で利用可能を確認済み。実ユーザーの Core Web Vitals が取れ、「モバイルのスコアが取れていない」問題を移行後に解消できる。⚠️ JS スニペット方式なので **CSP の `connect-src`/`script-src` 更新が必須** |
+| **R-3** | **CloudFront 継続的デプロイ（staging distribution）** | 「移行で劣化する」の筆頭＝**即時ロールバック**への答え。重み付けで staging に流し、問題なければ promote。🔴 **HTTP/3 と併用不可**（AWS 公式の制約）＝ **R-8 の HTTP/3 と排他**。現行は `http2` なので今は問題ない |
+| **R-4** | **観測の土台を作る** | **SNS トピックがまず必要**（10 の前提）。加えて CloudFront standard logging v2 / SQS の DLQ / **Synthetics canary による外形監視**（Vercel にも無い＝純増）/ Route53 ヘルスチェック＋フェイルオーバー |
+| **R-5** | **SES を運用できる状態にする** | SPF・DMARC・MX の追加、custom MAIL FROM、**configuration set + event destination → SNS**。コスト非制約なら VDM も。注文フローの生命線 |
+| **R-6** | **コールドスタート3秒を潰す** | warmer 有効化（安価）か provisioned concurrency（確実）。⚠️ **Lambda@Edge は provisioned concurrency 非対応**なので 5 の署名関数には効かない |
+| **R-7** | **実行ロールと同時実行を絞る** | `ses:*` と `cloudfront:CreateInvalidation` の `Resource: "*"` を限定。server に**予約同時実行の上限**を設定 |
+| **R-8** | **配信まわりの小改善** | IPv6 有効化 / **Origin Shield**（画像は Cache Writes > Reads でヒット率が低い）/ CustomErrorResponses でブランドされたエラーページ / **CF の ReadTimeout を Lambda より長く** / ACM 後に TLSv1.2_2021 / HTTP/3（⚠️ R-3 と排他） |
+| **R-9** | **アカウントのガバナンス** | **費用ゼロで今すぐ**: IAM Access Analyzer・パスワードポリシー。有料: GuardDuty / Config / Security Hub。最終ゴールは静的キー廃止＝ IAM Identity Center 化（15 と同方向） |
+| **R-10** | **掃除** | Amplify（＝12 の前提でもある）/ 不要 IAM ロール4本 / 空バケット `siko-coffee` / 孤児 ACM 検証 CNAME 2本 / `/aws/amplify/*` ロググループ（保持期間**無期限**） |
+
+> 🔴 **判断が要る点: R-3（継続的デプロイ）と R-8 の HTTP/3 は排他。**
+> 移行の動機が学習であること、モバイル性能の実測が空白であることを踏まえると、
+> **まず R-3 でロールバック体制を取り、R-2 の RUM でモバイルの実測を得てから
+> HTTP/3 を検討する**順が筋が通る。
 
 ---
 
@@ -533,6 +727,12 @@ AWS リソースはまだ1つも作っていない。ローカルで確かめら
 ### 旧構成の残骸（移行前に整理対象）
 
 Amplify アプリ `siko-coffee`（`d3059a6gcvih7x`）、`AmplifyServiceRole`、`AWSServiceRoleForRDS`、`rds-monitoring-role`、`siko-coffee-lambda-role`、`http-function-url-tutorial-test-siko-role-*`。実体（RDS/EC2）は既に無いため課金影響はほぼ無いが、IAM ロールは整理しておくと移行後の見通しが良くなる。
+
+> 🔴 **訂正（2026-07-28）: Amplify アプリは残骸ではなく稼働中だった。**
+> ブランチ `main` の `enableAutoBuild` が有効で、調査当日もビルドが成功している（通算122ジョブ）。
+> ブランチの既定ドメインは 200 を返し**サイトの完全な公開コピーが動いている**。
+> さらに **`sikocoffee.com` の domain association が `AVAILABLE`**。
+> ＝ 単なる整理対象ではなく、**作業 12 の前提として削除が必要**。詳細は「AWS 側 実地調査」を参照。
 
 ### 推奨対応順
 
