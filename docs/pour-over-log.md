@@ -90,6 +90,39 @@
 死にコードだった `sentry.client.config.ts` を削除し、`sentry.edge.config.ts` に `environment` を補った。
 回帰テスト `src/__tests__/stage.test.ts` を追加（219 テスト green / lint clean）。
 
+### 2026-07-29 — 第1群 2（cron 4ルートの観測性）
+
+**なぜ要るか**: 8（`sst.aws.Cron` への移行）を終えると Vercel のダッシュボードは使えなくなり、
+**CloudWatch Logs が唯一の観測手段**になる。着手前の実測どおり、3ルートは `catch` が
+**Sentry だけ**で `console.error` が無く、`instagram-refresh` は逆に **Sentry が無い**うえ
+`fetch()` の例外と `PutCommand` が裸だった。＝ DSN 未設定やネットワーク遮断で
+**失敗が痕跡なく消える**状態だった。
+
+**実施したこと**: 観測を `src/lib/cronLog.ts` に集約し、4ルートすべてを同じ形にした。
+
+| 関数 | 出力 | 用途 |
+|---|---|---|
+| `cronStart` | `console.log` `[cron] <route> start` | 「実行されたか」を CloudWatch で判定する |
+| `cronDone` | `console.log` `... done <ms> {件数}` | **「動いたが 0 件」と「動いていない」を区別する** |
+| `cronFail` | `console.error` ＋ `captureException` | 例外 |
+| `cronWarn` | `console.warn` ＋ `captureMessage(warning)` | 失敗ではないが黙って進めたくない状態 |
+| `cronAlert` | `console.error` ＋ `captureMessage(error)` | 例外は無いが失敗（外部 API が非 200 等） |
+
+Sentry の `tags.route` は既存の値（`cron/...`）をそのまま維持した（変えると既存の検索が外れる）。
+
+**握り潰しを2か所とも開けた**:
+- `cleanup-pending` の `DeleteCommand`: `ConditionalCheckFailedException`（＝すでに paid）だけを
+  `skipped` として数え、**それ以外（スロットリング等）は報告する**。従来はどちらも同じ `catch {}` で
+  消えており、「毎回 `deleted:0`」の理由が分からなくなる形だった。
+- `instagram-refresh` の `GetCommand`: 項目なしは例外にならないので、**例外が出ている時点で異常**。
+  env var へ退避しつつ `cronWarn` を出す。
+
+**依存 E・L への手当て**: このルートが静かに止まるとトークンは**恒久失効**する。そこで
+①失敗地点を `phase`（`token-read` / `refresh` / `persist`）として Sentry の extra に載せ、
+②リフレッシュ後の残りが 14 日を切ったら `cronWarn` する、を追加した。
+回帰テスト `src/__tests__/cron-observability.test.ts`（16 ケース）は
+**「Sentry へ送ったか」ではなく「console にも出たか」を固定する**（235 テスト green / lint clean）。
+
 ---
 
 ## 教訓
@@ -198,3 +231,36 @@ Vercel の runtime ログで cron の実行有無を追おうとしたが、**`s
 → **着手前に、記録ではなく実環境に問い合わせる。** 今回は予算・CAA・Amplify・証明書を
 `aws` CLI と `dig` で数分で確認できた。**状態は書いた場所の数だけ古くなる**ので、
 完了を書くときは正本1か所に寄せ、他所からは参照させる。
+
+### 11. 観測は「2系統に出す」まで含めて1つの機能
+
+タスク2 で開けてみると、cron 4本の失敗は**どれも1系統にしか出ていなかった**。3本は Sentry だけ
+（DSN 未設定・ネットワーク遮断・CSP のどれかで消える）、`instagram-refresh` は `console.error` だけ
+（しかも fetch が非 200 のときの1本のみで、`fetch()` の例外と `PutCommand` は裸）。
+**どちらも「観測している」と書けてしまう**のに、片方が落ちた瞬間に無音になる。
+
+→ **失敗の通知先は必ず2系統**（プロセスの標準出力＋外部サービス）。外部サービスは
+環境変数1本で無効化されうる前提で書く。この教訓は移行に固有ではないので
+メモリ側（`feedback-error-visibility`）にも寄せてある。
+
+### 12. 「実行されたか」と「実行されて0件か」は別の情報
+
+`release-reservations` の件は、**データ側の副作用（`reservedG` が変わらない）から
+「実行されていない」を逆算する**しかなかった。ログに「開始した」「終わって0件だった」が
+出ていれば数秒で切り分けられた話で、逆算に費やした調査は丸ごと不要だった。
+
+→ **定期実行するものは、成功時こそ件数つきで記録する。** 異常時だけ書くログは
+「異常が無かった」と「動いていなかった」を同じ姿（無言）にしてしまう。
+タスク2 の `cronDone` はこのために入れた（EventBridge 移行後は CloudWatch だけで判別できる）。
+
+### 13. 握り潰す `catch` は「想定内の失敗」を名指しで許す
+
+`cleanup-pending` の `catch {}` は「条件不一致（すでに paid）はスキップ」のつもりだったが、
+実際には**スロットリングも権限不足も同じ穴に落ちて**いた。結果は「毎回 `deleted: 0`」で、
+正常なのか壊れているのかを区別できない。`instagram-refresh` の `GetCommand` も同じ形で、
+こちらは「項目なし」を想定していたが**項目なしは例外にならない**ため、
+握り潰していたのは**本物の異常だけ**だった。
+
+→ **`catch` で無視してよいのは、名前で特定できる想定内の失敗だけ**
+（今回は `ConditionalCheckFailedException`）。それ以外は必ず報告に回す。
+「想定していたケースが、そもそも例外にならない」というズレも同時に疑う。

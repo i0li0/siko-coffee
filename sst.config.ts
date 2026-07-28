@@ -214,7 +214,13 @@ export default $config({
 //        sentry.client.config.ts は Next 16 では**死にコード**（実体は src/instrumentation-client.ts）
 //        だったため削除した。scripts/integration/platform-flow.test.ts の VERCEL_ENV=preview
 //        ガードは stage.ts のフォールバックによりそのまま有効。
-//  2. cron 4ルートの catch に console.error を足す（EventBridge 後は CloudWatch が唯一の観測手段）。
+//  2. ✅ cron 4ルートの観測性。`src/lib/cronLog.ts` に集約（cronStart / cronDone / cronFail /
+//     cronWarn / cronAlert）し、**console と Sentry の両方**へ出す。EventBridge 移行（8）後は
+//     CloudWatch Logs が唯一の観測手段になるため、Sentry だけに寄せない。
+//     `cronDone` が件数を出すので **「動いたが0件」と「動いていない」を区別できる**
+//     （＝ release-reservations の件を CloudWatch だけで切り分けられる）。
+//     Sentry の tags.route は既存値（`cron/...`）を維持。回帰テストは
+//     src/__tests__/cron-observability.test.ts。
 //  3. Vercel 専用スクリプト（@vercel/analytics・@vercel/speed-insights）を条件付きレンダーにする。
 //  4. Vercel Blob → S3。**presigned S3 PUT で実装すること**（理由は 5 の 1MB 制限）。
 //     移送すべきデータは無い（本番の avatarUrl 保持ユーザーは0件・Blob ストアも空）＝コード置換のみ。

@@ -1,7 +1,9 @@
 import { NextResponse } from 'next/server'
-import * as Sentry from '@sentry/nextjs'
 import { verifyBearer } from '@/lib/safeCompare'
+import { cronStart, cronDone, cronFail } from '@/lib/cronLog'
 import { reconcileLotReservations, sweepExpiredReservations } from '@/lib/reservations'
+
+const ROUTE = 'cron/release-reservations'
 
 export const dynamic = 'force-dynamic'
 export const preferredRegion = ['hnd1']
@@ -17,14 +19,16 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
+  const startedAt = cronStart(ROUTE)
   try {
     const released = await sweepExpiredReservations()
     // sweep のあとに照合をかける。sweep は「確保レコードが在ること」が前提なので、
     // TTL に先に消された孤児 reservedG は sweep では直らない（2026-07-27 に本番で発生）。
     const reconciled = await reconcileLotReservations()
+    cronDone(ROUTE, startedAt, { released, reconciled })
     return NextResponse.json({ released, reconciled })
   } catch (err) {
-    Sentry.captureException(err, { tags: { route: 'cron/release-reservations' } })
+    cronFail(ROUTE, startedAt, err)
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
   }
 }

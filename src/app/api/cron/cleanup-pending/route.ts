@@ -1,10 +1,12 @@
 import { ScanCommand, DeleteCommand } from '@aws-sdk/lib-dynamodb';
 import { NextResponse } from 'next/server';
-import * as Sentry from '@sentry/nextjs';
 import { getDocClient, TABLE } from '@/lib/db';
 import { verifyBearer } from '@/lib/safeCompare';
+import { cronStart, cronDone, cronFail } from '@/lib/cronLog';
 
 export const preferredRegion = ['hnd1'];
+
+const ROUTE = 'cron/cleanup-pending';
 
 // 24時間以上前の pending（決済未完了）注文を掃除するバックストップ。
 // 通常は checkout.session.expired webhook が削除するが、取りこぼし対策として日次実行する。
@@ -16,9 +18,11 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
+  const startedAt = cronStart(ROUTE);
   const db = getDocClient();
   const cutoff = Date.now() - MAX_AGE_MS;
   let deleted = 0;
+  let skipped = 0;
 
   try {
     const result = await db.send(new ScanCommand({
@@ -43,14 +47,21 @@ export async function GET(req: Request) {
           ExpressionAttributeValues: { ':pending': 'pending' },
         }));
         deleted++;
-      } catch {
-        // 条件不一致（paid 等に更新済み）はスキップ
+      } catch (err) {
+        // 条件不一致（paid 等に更新済み）はスキップ＝正常。それ以外（スロットリング・
+        // 権限不足など）まで黙って捨てると「毎回 deleted:0」の理由が分からなくなる。
+        if ((err as { name?: string })?.name === 'ConditionalCheckFailedException') {
+          skipped++;
+        } else {
+          cronFail(ROUTE, startedAt, err, { orderId: o.id, phase: 'delete' });
+        }
       }
     }
   } catch (err) {
-    Sentry.captureException(err, { tags: { route: 'cron/cleanup-pending' } });
+    cronFail(ROUTE, startedAt, err, { phase: 'scan' });
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 
+  cronDone(ROUTE, startedAt, { deleted, skipped });
   return NextResponse.json({ deleted });
 }
