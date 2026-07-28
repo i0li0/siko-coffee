@@ -12,17 +12,17 @@
 // この移行の呼称は **「Pour Over（ポアオーバー）」**。順序と依存関係の正本は
 // docs/aws-migration-feasibility.md「Pour Over 実行順」、実装者向けの索引は本ファイル末尾。
 //
-// デプロイ手順（`login_session` の罠に注意）:
-//   eval "$(aws configure export-credentials --profile default --format env)"
-//   npx sst deploy --stage dev
-//   npm run verify:image-optimizer      # ← 省略しないこと（理由は下記）
-// ※ `aws sts get-caller-identity` が通っても SST は落ちる。`~/.aws/config` の
-//   `login_session` は aws CLI 独自で、SST(Pulumi の Go SDK) は解釈できないため。
-// ※ 🔴 **npm は 11 以降が必須**（`npm --version` で確認）。10 系だと OpenNext が
-//   image-optimization Lambda に入れる sharp が wasm32 フォールバックに落ち、
-//   next/image が**無言で最適化されなくなる**（デプロイは成功する）。
-//   詳細は open-next.config.ts の imageOptimization.install のコメント。
-//   `verify:image-optimizer` はこれをビルド成果物から検出するためのもの。
+// デプロイ手順:
+//   npm run sst:deploy -- --stage dev
+//
+// 🔴 **素の `npx sst deploy` を直接打たないこと。** 忘れると壊れる前後処理が3つあり、
+//    `scripts/deploy.sh` にまとめてある（打てば正しい状態になるようにしてある）:
+//   ① npm 11 以降の確認 — 10 系だと OpenNext が image-optimization Lambda に入れる sharp が
+//      wasm32 フォールバックに落ち、next/image が**無言で最適化されなくなる**（デプロイは成功する）。
+//      詳細は open-next.config.ts の imageOptimization.install のコメント。
+//   ② AWS 資格情報の環境変数への展開 — `aws sts get-caller-identity` が通っても SST は落ちる。
+//      `~/.aws/config` の `login_session` は aws CLI 独自で、SST(Pulumi の Go SDK) は解釈できないため。
+//   ③ デプロイ後の `verify:image-optimizer` — ①をすり抜けた場合の最後の網。
 //
 // 型チェック: `$config` / `sst` は `.sst/platform/config.d.ts`（`sst install` で生成・
 // gitignore 対象）が供給する。CI にはそれが無いため `tsconfig.json` の exclude に
@@ -183,10 +183,20 @@ export default $config({
 })
 
 // ─────────────────────────────────────────────────────────────
-// 本番切替までの作業順（プロジェクト「Pour Over」・2026-07-28 改訂・全16項目）
+// 本番切替までの作業順（プロジェクト「Pour Over」・2026-07-28 再監査・全20項目）
 //
 // 正本は docs/aws-migration-feasibility.md「Pour Over 実行順」。ここは実装者向けの索引。
 // ✅ 完了: next/image の最適化（sharp のクロスビルド。open-next.config.ts 参照）
+//
+// ── 第0群｜地ならし（本番影響ゼロ・依存なし）────────────────────
+// 0-a. ✅ npm 11 の恒久化。package.json の engines ＋ scripts/check-build-toolchain.mjs で
+//      **デプロイ経路にゲート**を置いた。以後の入口は `npm run sst:deploy -- --stage <stage>`。
+//      🔴 npm 10 でビルドすると sharp が wasm32 に落ち、next/image が無言で壊れたまま
+//         デプロイは成功する。CI は next build のみなのでゲートを入れていない。
+// 0-b. ⬜ CAA に `0 issue "amazon.com"` を追加 → 直後に ACM で試験発行し 12 の不確実性を消す。
+// 0-c. ✅ Amplify を削除（association → app → AmplifyServiceRole → 孤児 CNAME 2本）。
+//      公開コピーは停止、本番 DNS は無傷を確認済み。**依存 I は解消**。
+// 0-d. ⬜ 予算アラートの閾値見直し（$0.01 通知 → 適正値 / 上限 $10 → $20）。
 //
 // ── 第1群｜下ごしらえ（本番無影響・並行可）────────────────────────
 //  1. VERCEL_ENV → STAGE。本ファイルに `STAGE: $app.stage` を足し、暫定の VERCEL_ENV 注入を消す。
@@ -206,7 +216,13 @@ export default $config({
 //  5. 🔴 **Function URL の保護**。OpenNext/SST は server Lambda の Function URL をオリジンにするが
 //     AuthType=NONE・Principal=* で**全公開**。実測で直アクセスできる（/ =200, /admin =307）。
 //     このままだと 6 の WAF も 11 の apex 正規化も 9 の noindex も**全部迂回される**。
+//     さらに直叩きでは CFF を通らないため **x-forwarded-host を偽装できる**。
 //     → SsrSite の `protection` を **"oac-with-edge-signing"** にする。
+//     ✅ host 依存ロジック（CSRF/NextAuth/passkey/checkout）は**壊れない**。ORP は元から
+//        Managed-AllViewerExceptHostHeader で、CFF が x-forwarded-host に退避している（検証済み）。
+//     ⚠️ 完了判定は `get-function-url-config` の **AuthType: AWS_IAM**。公開ステートメントは
+//        すべて AuthType=NONE 条件付きなので、切替時点で自動的に不発になる（残骸は無害な汚れ）。
+//        protection は server と image-optimizer の**両方**を iam に切り替える。
 //     "oac" は POST に x-amz-content-sha256 を要求し、Stripe webhook・NextAuth・フォーム送信が
 //     壊れるため**採用不可**（本プロジェクトは POST ルートが20本以上）。
 //  6. WAF 3ルール（rate limit / bot challenge / geo≠JP deny）を AWS WAF で再構築。
@@ -215,8 +231,11 @@ export default $config({
 //     費用は $5/ACL + $1/rule×3 = **月$8**＝移行後の AWS コストの大半がこれ。
 //  7. server.memory を 1024 MB → **2048 MB** へ。Lambda の CPU はメモリ比例で 1769MB＝1vCPU 相当のため、
 //     現行 1024MB は約0.58vCPU ＝ **Vercel(1vCPU/2GB) の6割**。GB-秒課金なので実行時間が縮めば費用は相殺。
-//  8. cron 4本 → `sst.aws.Cron`（実体は EventBridge Scheduler）＋中継 Lambda。
-//     ⚠️ Scheduler のターゲットは AWS API 操作のみで **HTTPS を直接叩けない**ため中継 Lambda が要る。
+//  8. cron 4本 → `sst.aws.Cron`（実体は **EventBridge Rules**。Scheduler ではない・4.17.1 で確認）
+//     ＋中継 Lambda。
+//     ⚠️ Rules は API Destinations で HTTPS を叩けるが **SigV4 非対応**。5 で IAM 認証にする以上
+//        中継 Lambda が要る。同一アカウントなので中継側の**アイデンティティポリシーに
+//        lambda:InvokeFunctionUrl** を与えれば足りる（対象は `web.nodes.server.url`）。
 //     ⚠️ 中継先は CloudFront ではなく **Function URL を直接**（CloudFront のオリジン ReadTimeout は
 //        実測30秒しかなく、Vercel の 300秒 から大幅に縮む）。5 で IAM 認証にするなら実行ロールで SigV4 署名する。
 //     Hobby の日次制限が外れるので release-reservations は 10分毎に戻す。
@@ -225,7 +244,10 @@ export default $config({
 //     Vercel は Deployment Protection で dev URL を守っていたが **AWS に同等機能は無い**。
 //
 // ── 第3群｜切替準備 ──────────────────────────────────────────
+// 9.5 🆕 GitHub Actions ＋ OIDC ロールで `sst deploy` を自動化する（16項目の版で抜けていた）。
+//     無いと 14 の soak 中に main へ push するたび **Vercel だけが更新され AWS が取り残される**。
 // 10. CloudWatch Alarms を先に用意する（切替後ではなく切替前。観測できない状態で切り替えない）。
+//     ⚠️ SNS トピックが 0 個＝通知先そのものが無い。トピック作成から。
 // 11. Route53 の TTL を 60s へ。**切替の24時間以上前**（現行 www=500s / apex=300s）。
 // 12. `domain` を設定（name: www.sikocoffee.com / aliases に apex）＋ apex→www の 308 と HSTS を
 //     `edge.viewerRequest.injection` で出す。
@@ -233,15 +255,18 @@ export default $config({
 //        **HSTS ヘッダが付かず**、現行設計（リダイレクト応答にも完全な HSTS を乗せる）を壊す。
 //     ⚠️ CloudFront Function は**1ビヘイビアに1つ**しか付かない。SST 生成の関数に injection が
 //        合成される仕組みなので、独立した関数を足そうとしないこと。
-//     📌 証明書は Route53 が同一アカウントにあるため **SST が us-east-1 に自動作成し DNS 検証まで自動**。
-//     🔴 **ただし 12 には前提作業が2件ある**（2026-07-28 の AWS 実地調査で判明・番号は増やさない）:
-//        ① **CAA に `0 issue "amazon.com"` を追加する**。現行の CAA は globalsign/letsencrypt/
-//           pki.goog/sectigo しか許可しておらず、**Amazon CA が入っていないので ACM が発行できない**。
-//           上の「自動で通る」は CAA を直した後にのみ成立する。
-//        ② **Amplify の domain association とアプリを削除する**。棚卸しで「残骸」としていたが実際は
-//           main の autoBuild が有効で稼働中、かつ `sikocoffee.com` の association が AVAILABLE。
-//           SST が同じ Route53 レコードを作りに行くと衝突しうる。
-//        詳細は docs/aws-migration-feasibility.md「AWS 側 実地調査（2026-07-28）」。
+//     🔴 **証明書は SST に自動作成させないこと。`domain.cert` に下記 ARN を渡す。**
+//        arn:aws:acm:us-east-1:654512230021:certificate/01195002-424e-44b1-9425-aff38c879765
+//        （sikocoffee.com + *.sikocoffee.com / Issuer: Amazon / 2027-02-11 まで）
+//        理由: `www.sikocoffee.com` は Vercel への CNAME で、RFC 8659 により CA は
+//        **CNAME 先の CAA** を見る。その先（724b9301c41a7c8f.vercel-dns-017.com）は
+//        sectigo/globalsign/letsencrypt/pki.goog しか許可しておらず **amazon.com が無い**ため、
+//        www 単独の証明書は自ゾーンの CAA を直しても **CAA_ERROR で発行できない**（0-b で実証）。
+//        ワイルドカードなら評価が sikocoffee.com から始まるので通る。
+//        ⚠️ 検証レコード `_c84c530444dc328407ddf8a6cf46916b.sikocoffee.com` を消さないこと
+//           （このワイルドカード証明書の更新に使われている）。
+//     ✅ 12 の前提だった2件は解消済み: ① CAA に amazon.com を追加（0-b）② Amplify の削除（0-c）。
+//        詳細は docs/aws-migration-feasibility.md の第0群。
 //
 // ── 第4群｜切替と観測 ────────────────────────────────────────
 // 13. production ステージへデプロイ → 検証 → DNS 切替。
@@ -251,8 +276,11 @@ export default $config({
 //
 // ── 第5群｜後始末 ────────────────────────────────────────────
 // 15. Vercel 解約 ＋ 決済再開（①Stripe 新キー投入 →②PAYMENTS_ENABLED=true →③再デプロイ の順厳守）。
-// 16. next.config.ts の redirects() / vercel.json / src/__tests__/hostRedirects.test.ts を削除。
-//     ⚠️ 12 が動いてからにすること。先に消すと apex が無正規化になる。テストも同時に消さないと CI が落ちる。
+// 16. Vercel 依存の撤去。🔴 **vercel.json だけ消すと build が全環境で落ちる**
+//     （prebuild → scripts/check-cron-schedule.mjs が vercel.json を読めず exit 1。CI にも同ステップ）。
+//     4点セットで消すこと: ①redirects() ②vercel.json ③check-cron-schedule.mjs + prebuild + check:cron
+//     ④CI の該当ステップ ⑤src/__tests__/hostRedirects.test.ts
+//     ⚠️ 12 が動いてからにすること。先に消すと apex が無正規化になる。
 //
 // ── 🔴 動かせない依存 ────────────────────────────────────────
 //  A. 5 → 6      : Function URL を閉じないと WAF は迂回されるので無意味
@@ -262,6 +290,10 @@ export default $config({
 //  E. 8 → 15     : Instagram の長期トークンは月次 cron で延長。60日止まると恒久失効し手動再認証が要る
 //  F. 11 → 13    : 24時間以上前でないと旧 TTL が失効せず引き下げが効かない
 //  G. 12 → 16    : 先に redirects() を消すと apex が無正規化になる
-//  H. CAA修正 → 12 : Amazon CA が CAA で許可されていないと ACM が発行できない
-//  I. Amplify削除 → 12 : sikocoffee.com の domain association が生きたままだとレコードが衝突しうる
+//  H. 0-b(CAA修正) → 12 : Amazon CA が CAA で許可されていないと ACM が発行できない
+//  I. ✅ 解消済（0-c で Amplify を削除した）
+//  J. 0-a → 以降の全デプロイ : npm 10 だと next/image が無言で壊れたままデプロイが成功する
+//  K. 9.5 → 14  : 無いと soak 中に AWS だけが古くなる
+//  L. Instagram トークン更新確認 → 15 : 実測 refreshedAt=2026-07-01 / 60日 ＝ **失効 2026-08-30**。
+//     次の更新機会は 2026-08-01 00:00 UTC。成否は siko-coffee-config の refreshedAt で判定できる。
 // ─────────────────────────────────────────────────────────────
