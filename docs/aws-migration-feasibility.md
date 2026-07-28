@@ -395,9 +395,66 @@ AWS リソースはまだ1つも作っていない。ローカルで確かめら
 | # | 作業 | 状態 |
 |---|---|---|
 | 0-a | **デプロイ経路の一本化** — `scripts/deploy.sh` に①npm 11 検査 ②資格情報の展開 ③`sst deploy` ④画像最適化の検証 を閉じ込め、`npm run sst:deploy -- --stage <stage>` を唯一の入口にする | ✅ 完了 |
-| 0-b | **CAA に `0 issue "amazon.com"` を追加** → 直後に ACM で試験発行し、12 の不確実性をここで消す | ✅ 完了（CAA 5件・INSYNC・伝播確認済み。**依存 H 解消**。試験発行は未） |
+| 0-b | **CAA に `0 issue "amazon.com"` を追加** → 直後に ACM で試験発行し、12 の不確実性をここで消す | ✅ 完了（**この試験発行で 12 を止める地雷を発見・解決した**。下記） |
 | 0-c | **Amplify の domain association → app → `AmplifyServiceRole` → 孤児 CNAME を削除** | ✅ 完了 |
 | 0-d | **予算アラートの閾値見直し**（$0.01 通知 → 適正値 / 上限 $10 → $20） | ⬜ 未 |
+
+> ## 🔴🔴 0-b の試験発行で判明: **`www` の証明書は Vercel の CAA に阻まれて発行できない**
+>
+> **CAA に `amazon.com` を足しただけでは足りなかった。** 実際に ACM へ
+> `www.sikocoffee.com` + `sikocoffee.com` を要求したところ、
+> **apex は SUCCESS、www は FAILED（`FailureReason: CAA_ERROR`）** になった。
+> DNS 検証レコードは両方とも正しく引けており、原因は検証ではなく**発行時の CAA 判定**。
+>
+> **原因**: `www.sikocoffee.com` は **Vercel への CNAME**（`724b9301c41a7c8f.vercel-dns-017.com`）。
+> RFC 8659 は「検証対象がエイリアス（CNAME）なら、CA は CNAME を辿った先で CAA を評価する」と
+> 定めている。そして **その Vercel 側のホストが自前の CAA を publish している**:
+>
+> ```
+> dig CAA 724b9301c41a7c8f.vercel-dns-017.com
+>   0 issue "sectigo.com"  0 issue "globalsign.com"  0 issue "letsencrypt.org"  0 issue "pki.goog"
+>   ← amazon.com が無い
+> ```
+>
+> ＝ **www の CAA は我々のゾーンではなく Vercel のゾーンが決めている。** 自分の CAA をどう直しても
+> www 単独の証明書は取れない。apex が通ったのは A レコード（エイリアスではない）で、
+> 自ゾーンの CAA まで素直に遡れるため。
+>
+> 🔴 **これは 12 を確実に止める。** しかも 12 の時点では www はまだ Vercel を向いている必要がある
+> （CloudFront に証明書が無いと HTTPS を張れないので、先に DNS を切ることはできない＝鶏と卵）。
+> TTL 引き下げ・WAF・アラームを済ませた後で詰まるところだった。
+>
+> ### ✅ 解決策: **ワイルドカード証明書**（実証済み）
+>
+> `sikocoffee.com` + `*.sikocoffee.com` で要求すると、**`*.sikocoffee.com` はそれ自体が
+> エイリアスではない**ため CAA の評価は `sikocoffee.com` から始まり、我々の CAA（amazon.com を含む）
+> に当たる。`issuewild` を置いていないので `issue` がワイルドカードにも適用される。
+>
+> **結果: `ISSUED` / Issuer: Amazon / 有効期限 2027-02-11。**
+> しかも検証レコードは apex・ワイルドカードとも **`_c84c530444dc328407ddf8a6cf46916b.sikocoffee.com`
+> の1本を共用**するため、**追加の DNS レコードは一切不要**だった。
+>
+> ```
+> arn:aws:acm:us-east-1:654512230021:certificate/01195002-424e-44b1-9425-aff38c879765
+> ```
+>
+> ### 12 への反映（必須）
+>
+> - **SST に証明書を自動作成させてはいけない。** 既定では `domain.name` に対して証明書を作るため、
+>   `www.sikocoffee.com` で同じ CAA_ERROR を踏む。**上記 ARN を `domain.cert` に渡す**こと。
+>   SST の `cdn.ts` は `cert` が与えられていれば自作をスキップする（`dns` は有効のままでよい。
+>   `dns: false` にする必要があるのは非対応 DNS プロバイダの場合だけ）。
+> - 📌 **切替後は www が Route53 の ALIAS（A レコード）になり CNAME ではなくなる**ため、
+>   以後の更新は自ゾーンの CAA で評価される。それでもワイルドカードのまま運用するのが安全。
+> - ⚠️ **`_c84c530444dc328407ddf8a6cf46916b.sikocoffee.com` を削除しないこと。**
+>   0-c で「孤児」として一度削除したが、**現在はワイルドカード証明書の検証レコードとして生きている**
+>   （ACM の検証トークンはドメイン＋アカウントに対して決定的で、同じ名前が再利用される）。
+>   これを消すと更新が止まる。
+> - 🧹 後始末: 失敗した www 単独の証明書（`aea326a1-…`）と、その検証レコード
+>   `_a4eb7ebc6bd0dd0df20316ef46257422.www.sikocoffee.com` は不要。削除してよい。
+>
+> 🔑 **教訓**: CAA は「自分のゾーンだけ見ればよい」ものではない。**CNAME を張った先の CAA に従う。**
+> 移行元が DNS ホスティングも兼ねている場合、この形の依存が残る。
 
 > 🔑 **0-a は「npm を上げる」ではなく「手順を消す」タスクである。** 素の `npx sst deploy` には
 > 忘れると壊れる前後処理が3つ（npm 11・`login_session` の展開・画像最適化の事後検証）あり、
@@ -516,7 +573,7 @@ AWS リソースはまだ1つも作っていない。ローカルで確かめら
 | **9.5** | 🆕 **GitHub Actions ＋ OIDC で `sst deploy` を自動化** | **16項目の版で抜けていた**。パリティ表の項目27（push で自動デプロイ）に対応するタスクが実行順に存在しなかった。無いと 14（soak）で **main に push すると Vercel だけが更新され、本番を担う AWS は取り残される**。加えてデプロイが「npm 11 の入った特定のマシンから手打ち」に固定される。OIDC ロールにすれば静的キーも増えない（項目12と同方向） |
 | 10 | **CloudWatch Alarms を先に用意** | 観測できない状態で切り替えない。Vercel に無い機構＝移行で明確に良くなる項目。⚠️ **SNS トピックが0個＝通知先そのものが無い**ので、まずトピック作成から |
 | 11 | **Route53 の TTL を 60s へ**（切替の**24時間以上前**） | 実測の権威 TTL は www=500s / apex=300s ＝切り戻しに5〜8分。60s なら1分台になる |
-| 12 | **`domain` を設定**（`name: www.sikocoffee.com` / `aliases` に apex）＋ apex→www の 308 と HSTS を `edge.viewerRequest.injection` で | 証明書は **Route53 が同一アカウントにあるため SST が us-east-1 に自動作成し DNS 検証まで自動**。手動の事前発行は不要 |
+| 12 | **`domain` を設定**（`name: www.sikocoffee.com` / `aliases` に apex）＋ apex→www の 308 と HSTS を `edge.viewerRequest.injection` で | 🔴 **証明書は SST に自動作成させず、0-b で発行済みのワイルドカード証明書の ARN を `domain.cert` に渡す**。自動作成させると `www.sikocoffee.com` が Vercel への CNAME であるために **Vercel 側の CAA が効いて `CAA_ERROR` で発行できない**（0-b で実証）。〜〜手動の事前発行は不要〜〜 という当初の記述は**誤り**だった |
 
 > 🔴 **12 の前に必須の前提作業が2件ある**（2026-07-28 の AWS 側実地調査で判明）。
 > どちらも 12 を物理的に実行不能にするため、番号は増やさず**12 の前提**として扱う。

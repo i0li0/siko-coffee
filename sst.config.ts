@@ -255,15 +255,18 @@ export default $config({
 //        **HSTS ヘッダが付かず**、現行設計（リダイレクト応答にも完全な HSTS を乗せる）を壊す。
 //     ⚠️ CloudFront Function は**1ビヘイビアに1つ**しか付かない。SST 生成の関数に injection が
 //        合成される仕組みなので、独立した関数を足そうとしないこと。
-//     📌 証明書は Route53 が同一アカウントにあるため **SST が us-east-1 に自動作成し DNS 検証まで自動**。
-//     🔴 **ただし 12 には前提作業が2件ある**（2026-07-28 の AWS 実地調査で判明・番号は増やさない）:
-//        ① **CAA に `0 issue "amazon.com"` を追加する**。現行の CAA は globalsign/letsencrypt/
-//           pki.goog/sectigo しか許可しておらず、**Amazon CA が入っていないので ACM が発行できない**。
-//           上の「自動で通る」は CAA を直した後にのみ成立する。
-//        ② **Amplify の domain association とアプリを削除する**。棚卸しで「残骸」としていたが実際は
-//           main の autoBuild が有効で稼働中、かつ `sikocoffee.com` の association が AVAILABLE。
-//           SST が同じ Route53 レコードを作りに行くと衝突しうる。
-//        詳細は docs/aws-migration-feasibility.md「AWS 側 実地調査（2026-07-28）」。
+//     🔴 **証明書は SST に自動作成させないこと。`domain.cert` に下記 ARN を渡す。**
+//        arn:aws:acm:us-east-1:654512230021:certificate/01195002-424e-44b1-9425-aff38c879765
+//        （sikocoffee.com + *.sikocoffee.com / Issuer: Amazon / 2027-02-11 まで）
+//        理由: `www.sikocoffee.com` は Vercel への CNAME で、RFC 8659 により CA は
+//        **CNAME 先の CAA** を見る。その先（724b9301c41a7c8f.vercel-dns-017.com）は
+//        sectigo/globalsign/letsencrypt/pki.goog しか許可しておらず **amazon.com が無い**ため、
+//        www 単独の証明書は自ゾーンの CAA を直しても **CAA_ERROR で発行できない**（0-b で実証）。
+//        ワイルドカードなら評価が sikocoffee.com から始まるので通る。
+//        ⚠️ 検証レコード `_c84c530444dc328407ddf8a6cf46916b.sikocoffee.com` を消さないこと
+//           （このワイルドカード証明書の更新に使われている）。
+//     ✅ 12 の前提だった2件は解消済み: ① CAA に amazon.com を追加（0-b）② Amplify の削除（0-c）。
+//        詳細は docs/aws-migration-feasibility.md の第0群。
 //
 // ── 第4群｜切替と観測 ────────────────────────────────────────
 // 13. production ステージへデプロイ → 検証 → DNS 切替。
