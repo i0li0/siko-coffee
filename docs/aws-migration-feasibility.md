@@ -376,24 +376,68 @@ AWS リソースはまだ1つも作っていない。ローカルで確かめら
 
 ---
 
-## Pour Over 実行順（2026-07-28 改訂・全16項目）
+## Pour Over 実行順（2026-07-28 再監査・全20項目）
 
 この移行の呼称は **「Pour Over（ポアオーバー）」**。以下がタスクの正本で、
 `sst.config.ts` 末尾に実装者向けの索引がある。Phase 1（dev 環境構築）と
 `next/image` の最適化は完了済み。
+
+**2026-07-28 の再監査で16→20項目に改めた。** 背骨と依存関係は変わっていない。
+変更は ①リスクゼロで他に依存しない前準備を「第0群」として切り出し前倒ししたこと、
+②抜けていたデプロイ自動化（9.5）を足したこと、③既存項目の設計・記述を訂正したこと。
+根拠はコード全走査・AWS の実測・SST 4.17.1 のソース読解。
+
+### 第0群｜地ならし（本番影響ゼロ・依存なし・並行可）
+
+他のどのタスクにも依存せず、しかし後段で必ず詰まる要因を先に潰す群。
+12 の直前まで持ち越すと「そこで止まる」ため前倒しした。
+
+| # | 作業 | 状態 |
+|---|---|---|
+| 0-a | **npm 11 の恒久化** — `engines` に明記し、`scripts/check-build-toolchain.mjs` で **デプロイ経路にゲート**を置く（`npm run sst:deploy`） | ✅ 完了 |
+| 0-b | **CAA に `0 issue "amazon.com"` を追加** → 直後に ACM で試験発行し、12 の不確実性をここで消す | ⬜ 未 |
+| 0-c | **Amplify の domain association → app → `AmplifyServiceRole` → 孤児 CNAME を削除** | ✅ 完了 |
+| 0-d | **予算アラートの閾値見直し**（$0.01 通知 → 適正値 / 上限 $10 → $20） | ⬜ 未 |
+
+> 🔴 **0-a を最初に置く理由**: `#96` で直した sharp のクロスビルドは、**npm 10 でビルドした瞬間に
+> 無言で退行し、しかもデプロイは成功する**。`package.json` に `engines` が無く、実際に
+> 作業マシンの npm は 10.9.2 だった（2026-07-28 実測）＝ 再発の条件が揃っていた。
+> `verify:image-optimizer` は事後検査であり、実行を忘れれば素通りする。だから
+> **デプロイの手前で機械的に止める**。CI は `next build` のみで OpenNext ビルドを含まないため、
+> このゲートは意図的に CI へは入れない（入れると `npm ci` が落ちるだけで得がない）。
+
+> ✅ **0-c の実施記録（2026-07-28）**: association → app → role → 孤児 CNAME 2本の順で削除。
+> 公開コピー `main.d3059a6gcvih7x.amplifyapp.com` は停止、本番（www 200 / apex 308 / SES DKIM
+> SUCCESS）は無傷。⚠️ **domain association を消しても Amplify は検証 CNAME を自動削除しなかった**
+> ため手動で消した。順序自体は正しく、逆順だと消せない状態になっていた。
+> これにより **依存 I は解消**。同時に「main への push のたびに `AdministratorAccess-Amplify` を
+> 持つロールが動く」という統制上の穴も閉じた（通算124ジョブ・直近はすべてドキュメント PR）。
+> 📌 ロググループ `/aws/amplify/d3059a6gcvih7x`（375KB・保持期間**無期限**）だけは削除記録として残置。
 
 ### 第1群｜下ごしらえ（本番無影響・並行可）
 
 | # | 作業 | 期待できる結果 |
 |---|---|---|
 | 1 | **`VERCEL_ENV` → `STAGE`**（4ファイル＋`sst.config.ts` に `STAGE: $app.stage` を注入） | AWS 本番でサーバ側 Sentry の Performance が実際に動く。現状 `tracesSampleRate: VERCEL_ENV==='production' ? 0.1 : 0` のため **AWS 本番では 0＝完全に無効**。「Speed Insights は Sentry Performance で代替」という前提がここで初めて成立する。あわせて `src/lib/db.ts` の判定を**反転**し、未設定時に preview へ倒れるフェイルクローズにする（現行は本番テーブルを向く） |
-| 2 | **cron 4ルートの `catch` に `console.error`** | EventBridge 移行後は CloudWatch が唯一の観測手段になる。Sentry だけだと DSN 未設定や CSP で静かに消える |
+| 2 | **cron 4ルートの観測性** | EventBridge 移行後は CloudWatch が唯一の観測手段になる。Sentry だけだと DSN 未設定や CSP で静かに消える。⚠️ **`instagram-refresh` には `catch` が無い**（DynamoDB Put も fetch も裸で、Sentry も入っていない）＝「catch に追記」ではなく **try/catch で包む**作業になる。依存 E の対象がまさにこのルートである点に注意 |
 | 3 | **Vercel 専用スクリプトの条件化**（`@vercel/analytics` / `@vercel/speed-insights`） | `/_vercel/insights/script.js` と `/_vercel/speed-insights/script.js` の 404 が消える |
 | 4 | **Vercel Blob → S3**（**presigned S3 PUT で実装**） | 移送すべきデータは無い（本番の `avatarUrl` 保持ユーザー0件・Blob ストアも空）＝コード置換のみ。`next.config.ts` の `remotePatterns` と CSP `img-src` を**両方**更新する |
 
 > **なぜ 4 は presigned なのか**: 5 で入れる `oac-with-edge-signing` は Lambda@Edge 経由のため
 > **ボディが 1MB 上限**。現行の `MAX_FILE_SIZE` は 2MB で衝突する。サーバ経由アップロードをやめれば
 > 大きなボディが CloudFront/Lambda を通らなくなり、衝突自体が消える。
+> 📌 1MB を超えるボディを持つルートは**アバターだけ**（Server Actions は未使用、他の POST は
+> フォーム/JSON のみ）＝ 4 を presigned にすれば 5 との衝突は完全に消える、と確認済み。
+>
+> 🔴 **ただし素直に presigned にすると「無検閲の公開アップロード口」ができる。**
+> 現行 `api/account/avatar/route.ts` は **`Rekognition(Bytes)` に通ってから `put()`** の順で、
+> 検閲に落ちた画像は保存されない。presigned にすると **PUT が先・検閲が後**に逆転するため、
+> **confirm を呼ばなければ未検閲のオブジェクトが URL つきで残る**。
+> → **presign 先は公開されない `pending/` プレフィクス（または別バケット）にし、
+> confirm で `Image:{S3Object}` として検閲 → 合格時のみ公開先へ copy → pending を削除**する。
+> S3 ライフサイクルで pending を1日で自動削除。実行ロールには pending の `s3:GetObject` と
+> 公開先の `s3:PutObject` / `s3:DeleteObject` が要る。
+> ⚠️ 保存先は **CloudFront が `_assets` として配信している既存バケットとは別**にすること。
 
 ### 第2群｜AWS の防御と実行基盤（dev で検証）
 
@@ -403,7 +447,7 @@ AWS リソースはまだ1つも作っていない。ローカルで確かめら
 | 6 | **WAF 3ルール**を AWS WAF で再構築（**CLOUDFRONT スコープ＝us-east-1 固定**・`transform.cdn` で `webAclArn`） | 切替時に admin の防御層（rate limit / challenge / geo≠JP deny）が消えるのを防ぐ。現行しきい値をそのまま移せばよい（過去1時間の実測は Allowed 1.3k / Denied 1 / Challenged 0 / Rate Limited 0） |
 | 7 | **`server.memory` 1024 → 2048 MB** | Lambda の CPU はメモリ比例で **1769MB＝1vCPU 相当**。現行 1024MB は約 0.58vCPU ＝ **Vercel(1vCPU/2GB) の6割**。GB-秒課金なので実行時間が縮めば費用は相殺され、8 の実行予算にも効く |
 | 8 | **cron 4本 → `sst.aws.Cron`（EventBridge Scheduler）＋中継 Lambda** | Hobby の日次制限と ±59分のゆらぎから解放され、`release-reservations` を10分毎に戻せる |
-| 9 | **非本番に `X-Robots-Tag: noindex`＋アクセス制限**（`edge.viewerResponse.injection`） | dev の `robots.txt` は実測で `Allow: /`。加えて Vercel は Deployment Protection で dev URL を守っていたが **AWS に同等機能は無い** |
+| 9 | **非本番に `X-Robots-Tag: noindex`＋アクセス制限**（`edge.viewerResponse.injection`） | dev の `robots.txt` は実測で `Allow: /`。加えて Vercel は Deployment Protection で dev URL を守っていたが **AWS に同等機能は無い**。⚠️ **アクセス制限に WAF を使わないこと** — web ACL をもう1枚作ると **$5/月が上乗せ**され、移行後コストが月$13〜16 になる。**CloudFront Function のベーシック認証（無料）**にするか、6 の web ACL を dev のディストリビューションにも共有する |
 
 > 🔴 **5 が最優先である理由**: OpenNext/SST は server Lambda の **Function URL をオリジン**にするが、
 > その **AuthType は `NONE`**、リソースポリシーは **`Principal: *`／CloudFront 限定の条件なし**。
@@ -413,9 +457,38 @@ AWS リソースはまだ1つも作っていない。ローカルで確かめら
 > `"oac"` モードは POST に `x-amz-content-sha256` を要求し、Stripe webhook・NextAuth・ブラウザのフォーム送信が
 > 壊れるため**採用不可**（本プロジェクトは POST ルートが20本以上）。
 
+> ✅ **5 は host 依存ロジックを壊さない（2026-07-28 に検証。当初これを最大の懸念と見ていた）。**
+> OAC/SigV4 は Host ヘッダを origin のものへ書き換えるため、CSRF チェック（`src/middleware.ts:17` の
+> `new URL(request.url).origin`）・NextAuth・パスキーの `rpID` 導出・checkout のホスト許可が
+> 全部壊れるのではないかと疑ったが、**壊れない**。理由:
+> - オリジンリクエストポリシーは既に **`Managed-AllViewerExceptHostHeader`**＝ Host は元から転送していない
+> - SST の CloudFront Function が **`setForwardedHost()` で `x-forwarded-host` に本来のホストを退避**し、
+>   OpenNext はそちらから URL を再構成する（キャッシュポリシーも `x-forwarded-host` を含む）
+> - dev への実プローブで裏取り済み: `Origin: <CloudFront ドメイン>` の POST が **401**（CSRF 通過）、
+>   Origin なし／でたらめは **403**
+> 🔑 逆に言うと、**今は Function URL を直叩きすれば `x-forwarded-host` を偽装できる**。
+> CFF を経由しないため退避処理が走らないからで、**5 を最優先にする理由がもう1つ増えた**。
+
+> ⚠️ **5 の完了判定は `Principal:*` の掃除ではなく `AuthType` を見ること。**
+> リソースポリシーの公開ステートメントは5本あるが、**すべて
+> `Condition: lambda:FunctionUrlAuthType = NONE`（または `InvokedViaFunctionUrl`）付き**である
+> ことを実測で確認した。つまり **AuthType を `AWS_IAM` にした時点で5本とも不発になる**。
+> SST は世代違いの古いステートメントを掃除しないが、それは**無害な汚れ**であって
+> 「URL が開いたまま」ではない。
+> → 検証は `aws lambda get-function-url-config` の **`AuthType: AWS_IAM`** を主、
+>   `get-policy` の残骸確認を従とする。
+> 📌 SST 4.17.1 のソースを確認したところ、`protection` は **server と image-optimizer の
+>   両方**の Function URL を `authorization: "iam"` に切り替える（`ssr-site.ts`）。
+>   image-optimizer 側の露出も同じ1手で塞がる。
+
 > ⚠️ **8 の設計上の制約が2つある**。
-> ① EventBridge Scheduler のターゲットは templated（AWS コアサービス）と universal（任意の AWS API 操作）だけで、
-> **任意の HTTPS エンドポイントを直接叩けない**。したがって中継 Lambda が要る。
+> ① **`sst.aws.Cron` の実体は EventBridge Scheduler ではなく EventBridge Rules**（`cron.ts` は
+> `cloudwatch.EventRule` を作る。2026-07-28 にソースで確認・従来の記述は誤り）。
+> Rules は **API Destinations で任意の HTTPS を叩ける**が、認証は API key / Basic / OAuth のみで
+> **SigV4 に対応しない**。5 で Function URL を IAM 認証にする以上、**中継 Lambda は依然として必須**
+> （結論は変わらない）。中継 Lambda は同一アカウントなので、**実行ロールのアイデンティティ側ポリシーに
+> `lambda:InvokeFunctionUrl` を与えれば足りる**（リソースポリシーの追加は不要）。
+> 対象の URL は `web.nodes.server.url` から取れる。
 > ② 中継先は CloudFront ではなく **Function URL を直接**にする。**CloudFront のオリジン ReadTimeout は
 > 実測 30 秒**しかなく、Vercel が関数にくれていた 300 秒から **1/10 に縮む**ため。
 > 📌 この 30 秒はディストリビューション設定ではなく **KVS の metadata**（`origin.timeouts.readTimeout`）にあり、
@@ -435,7 +508,8 @@ AWS リソースはまだ1つも作っていない。ローカルで確かめら
 
 | # | 作業 | 期待できる結果 |
 |---|---|---|
-| 10 | **CloudWatch Alarms を先に用意** | 観測できない状態で切り替えない。Vercel に無い機構＝移行で明確に良くなる項目 |
+| **9.5** | 🆕 **GitHub Actions ＋ OIDC で `sst deploy` を自動化** | **16項目の版で抜けていた**。パリティ表の項目27（push で自動デプロイ）に対応するタスクが実行順に存在しなかった。無いと 14（soak）で **main に push すると Vercel だけが更新され、本番を担う AWS は取り残される**。加えてデプロイが「npm 11 の入った特定のマシンから手打ち」に固定される。OIDC ロールにすれば静的キーも増えない（項目12と同方向） |
+| 10 | **CloudWatch Alarms を先に用意** | 観測できない状態で切り替えない。Vercel に無い機構＝移行で明確に良くなる項目。⚠️ **SNS トピックが0個＝通知先そのものが無い**ので、まずトピック作成から |
 | 11 | **Route53 の TTL を 60s へ**（切替の**24時間以上前**） | 実測の権威 TTL は www=500s / apex=300s ＝切り戻しに5〜8分。60s なら1分台になる |
 | 12 | **`domain` を設定**（`name: www.sikocoffee.com` / `aliases` に apex）＋ apex→www の 308 と HSTS を `edge.viewerRequest.injection` で | 証明書は **Route53 が同一アカウントにあるため SST が us-east-1 に自動作成し DNS 検証まで自動**。手動の事前発行は不要 |
 
@@ -485,7 +559,15 @@ AWS リソースはまだ1つも作っていない。ローカルで確かめら
 | # | 作業 | 期待できる結果 |
 |---|---|---|
 | 15 | **Vercel 解約 ＋ 決済再開** | ①Stripe 新キー投入 →②`PAYMENTS_ENABLED=true` →③再デプロイ の順厳守 |
-| 16 | `next.config.ts` の `redirects()` / `vercel.json` / `src/__tests__/hostRedirects.test.ts` を削除 | OpenNext #1202 の暫定回避を撤去。`siko-coffee.vercel.app` 向けの2本目は解約で消えるため**移設不要＝削除のみ** |
+| 16 | **Vercel 依存の撤去（4点セット）** | OpenNext #1202 の暫定回避を撤去。`siko-coffee.vercel.app` 向けの2本目は解約で消えるため**移設不要＝削除のみ** |
+
+> 🔴 **16 は「`vercel.json` を消す」だけでは build が全環境で落ちる。** `package.json` の
+> **`prebuild` が `scripts/check-cron-schedule.mjs` を呼び、このスクリプトは `vercel.json` を
+> 読めないと `exit 1`** する。さらに `.github/workflows/ci.yml` にも `npm run check:cron` の
+> 独立ステップがある。→ 削除対象は以下の**4点セット**（＋テスト）:
+> ① `next.config.ts` の `redirects()` ② `vercel.json` ③ `scripts/check-cron-schedule.mjs` と
+> `prebuild` フックと `check:cron` スクリプト ④ CI の該当ステップ
+> ⑤ `src/__tests__/hostRedirects.test.ts`（②と同時に消さないと CI が落ちる）
 
 ### 🔴 動かせない依存
 
@@ -498,8 +580,11 @@ AWS リソースはまだ1つも作っていない。ローカルで確かめら
 | E | **8 → 15** | Instagram の長期トークンは月次 cron で延長する方式。**60日止まると恒久失効**し手動再認証が要る |
 | F | **11 → 13** | 24時間以上前でないと旧 TTL が失効せず引き下げが効かない |
 | G | **12 → 16** | 先に `redirects()` を消すと apex が無正規化になる。テストも同時に消さないと CI が落ちる |
-| H | **CAA 修正 → 12** | Amazon CA が CAA で許可されていないと ACM が発行できず、`domain` 設定が完了しない |
-| I | **Amplify 削除 → 12** | `sikocoffee.com` の domain association が生きたままだと Route53 レコードが衝突しうる |
+| H | **0-b（CAA 修正）→ 12** | Amazon CA が CAA で許可されていないと ACM が発行できず、`domain` 設定が完了しない |
+| ~~I~~ | ~~**Amplify 削除 → 12**~~ | ✅ **解消済（2026-07-28）**。0-c で association・app・role・孤児 CNAME を削除した |
+| **J** | **0-a → 以降のすべてのデプロイ** | npm 10 でビルドすると sharp が wasm32 に落ち、**next/image が無言で壊れたままデプロイが成功する** |
+| **K** | **9.5 → 14** | 無いと soak 中に main へ push するたび Vercel だけが進み、本番の AWS が取り残される |
+| **L** | **Instagram トークンの更新確認 → 15** | E の実体を絶対日付にしたもの。実測 `refreshedAt: 2026-07-01T00:51:23Z` / `expiresIn: 5184000`（60日）＝ **失効は 2026-08-30**。次の自動更新機会は **2026-08-01 00:00 UTC**（`0 0 1 * *`）。8/1 の成否は `siko-coffee-config` の `refreshedAt` を読めば判定できる（Vercel のログは不要）。落とすと恒久失効し手動再認証 |
 
 ### Pour Over に含めないもの（分離実施）
 
@@ -527,6 +612,48 @@ AWS リソースはまだ1つも作っていない。ローカルで確かめら
 | **カスタム環境への対応** | Production/Preview/Development の3つのみ＝`STAGE==='production' ? 本番 : preview` で完全 |
 
 ---
+
+## 再監査（2026-07-28・全体を通しで検証）
+
+「進んでから戻らない」ことを目的に、コード全走査・AWS 実測・SST 4.17.1 のソース読解で
+全項目を突き合わせた。**背骨と依存関係は正しかった**。上に反映済みでない事項のみここに残す。
+
+### 解消・更新された前提
+
+- ✅ **本番 lots の孤児 `reservedG=200` は解消済み**。現在 `reservedG: 0` /
+  `updatedAt: 2026-07-27T19:27:26Z`。時刻から見て Vercel の cron 一覧の **Run** を
+  押した結果と思われる。`reconcileLotReservations()` が実際に効く証拠でもある。
+- ✅ **`next/image` は現在も正常**（w=256 で 4,182 B / webp ＝ Vercel とバイト単位で一致）。
+- ✅ **GitHub に AWS の静的キーは無い**（secrets / variables ともに 0 件）。
+  静的キー `AKIA…ZCYG` の消費者は **Vercel 本番だけ**で確定（2026-07-28 も DynamoDB で使用中）。
+- ✅ **CAA に必要なのは4つのうち1つだけ**（ACM 公式）。`0 issue "amazon.com"` の1本追加で足り、
+  既存4件を残したまま追加できる。**Vercel の証明書更新にも影響しない**（Vercel は Let's Encrypt）。
+- ✅ **1MB 超のボディを持つルートはアバターのみ**。Server Actions は未使用。
+
+### `release-reservations` の件は Vercel API では決着しない
+
+Vercel コネクタで runtime ログを引いたところ、**`since=24h` と `since=1h` の結果が完全に一致**した
+（`/` 5 / `/api/menu` 2 / `/shop` 1 / `/api/beans` 1）。＝ **runtime ログの保持は約1時間**で、
+cron の実行時刻（18:00–19:00 UTC）は取得範囲外。「cron のログが無い」ことは証拠にならない。
+このコネクタに Cron Jobs の API は無い。
+→ **決着させるならダッシュボードの `View Logs` / `Run`。** ただし優先度は下がった:
+実害だった孤児 `reservedG` は解消済みで、仕組み自体は 8 で置き換わる。
+📌 「Hobby は cron 2本まで」という仮説は**外れ**（Vercel 公式は現在 **100本/プロジェクト・日次まで**）。
+📌 `instagram-refresh` は 7/1 00:51 UTC に実際に発火している＝ cron 機構そのものは生きている。
+
+### そのほか
+
+- ⚠️ **`sentry.edge.config.ts` だけ環境無条件**で `tracesSampleRate: 1`・`sendDefaultPii: true`。
+  1 で他の Sentry 設定を触るときに一緒に見ること（middleware がここを通る）。
+- ⚠️ **Vercel チームに放置プロジェクトが2つ**（`modest-burnell-e74583` / `thirsty-hoover-1c2347`）。
+  どちらも `live: false`・独自ドメインなし・デプロイ1回きりで**害は無い**。15 の解約で消える。
+- 📌 **作業場所はメインリポジトリに固定する。** `.sst/` と `node_modules/` が使い捨て worktree
+  （`next-image-optimization-b798fc`）にしか無く、消すと `npm ci` + `sst install` からやり直しになる。
+  state 自体は S3（`sst-state-…`・バージョニング有効）なので失われない。
+  **`sst deploy` と AWS 操作は main から**、コード変更は従来どおり worktree + PR、という分担にする。
+  `next.config.ts` の `repoRoot()` が worktree 用の探索分岐を持つ点でもメイン側が素直。
+- 📌 server Lambda は **x86_64 / 1024MB**、image-optimizer は **arm64 / 1536MB** で不一致。
+  7 でメモリを上げる際に arm64 へ揃える余地がある（sharp の arm64 ビルドは実証済み）。
 
 ---
 
