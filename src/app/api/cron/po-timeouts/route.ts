@@ -1,7 +1,9 @@
 import { NextResponse } from 'next/server'
-import * as Sentry from '@sentry/nextjs'
 import { verifyBearer } from '@/lib/safeCompare'
+import { cronStart, cronDone, cronFail } from '@/lib/cronLog'
 import { sweepPoTimeouts } from '@/lib/pos'
+
+const ROUTE = 'cron/po-timeouts'
 
 export const dynamic = 'force-dynamic'
 export const preferredRegion = ['hnd1']
@@ -16,10 +18,13 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
+  const startedAt = cronStart(ROUTE)
   try {
-    return NextResponse.json(await sweepPoTimeouts())
+    const result = await sweepPoTimeouts()
+    cronDone(ROUTE, startedAt, result)
+    return NextResponse.json(result)
   } catch (err) {
-    Sentry.captureException(err, { tags: { route: 'cron/po-timeouts' } })
+    cronFail(ROUTE, startedAt, err)
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
   }
 }

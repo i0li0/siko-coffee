@@ -90,6 +90,39 @@
 死にコードだった `sentry.client.config.ts` を削除し、`sentry.edge.config.ts` に `environment` を補った。
 回帰テスト `src/__tests__/stage.test.ts` を追加（219 テスト green / lint clean）。
 
+### 2026-07-29 — 第1群 2（cron 4ルートの観測性）
+
+**なぜ要るか**: 8（`sst.aws.Cron` への移行）を終えると Vercel のダッシュボードは使えなくなり、
+**CloudWatch Logs が唯一の観測手段**になる。着手前の実測どおり、3ルートは `catch` が
+**Sentry だけ**で `console.error` が無く、`instagram-refresh` は逆に **Sentry が無い**うえ
+`fetch()` の例外と `PutCommand` が裸だった。＝ DSN 未設定やネットワーク遮断で
+**失敗が痕跡なく消える**状態だった。
+
+**実施したこと**: 観測を `src/lib/cronLog.ts` に集約し、4ルートすべてを同じ形にした。
+
+| 関数 | 出力 | 用途 |
+|---|---|---|
+| `cronStart` | `console.log` `[cron] <route> start` | 「実行されたか」を CloudWatch で判定する |
+| `cronDone` | `console.log` `... done <ms> {件数}` | **「動いたが 0 件」と「動いていない」を区別する** |
+| `cronFail` | `console.error` ＋ `captureException` | 例外 |
+| `cronWarn` | `console.warn` ＋ `captureMessage(warning)` | 失敗ではないが黙って進めたくない状態 |
+| `cronAlert` | `console.error` ＋ `captureMessage(error)` | 例外は無いが失敗（外部 API が非 200 等） |
+
+Sentry の `tags.route` は既存の値（`cron/...`）をそのまま維持した（変えると既存の検索が外れる）。
+
+**握り潰しを2か所とも開けた**:
+- `cleanup-pending` の `DeleteCommand`: `ConditionalCheckFailedException`（＝すでに paid）だけを
+  `skipped` として数え、**それ以外（スロットリング等）は報告する**。従来はどちらも同じ `catch {}` で
+  消えており、「毎回 `deleted:0`」の理由が分からなくなる形だった。
+- `instagram-refresh` の `GetCommand`: 項目なしは例外にならないので、**例外が出ている時点で異常**。
+  env var へ退避しつつ `cronWarn` を出す。
+
+**依存 E・L への手当て**: このルートが静かに止まるとトークンは**恒久失効**する。そこで
+①失敗地点を `phase`（`token-read` / `refresh` / `persist`）として Sentry の extra に載せ、
+②リフレッシュ後の残りが 14 日を切ったら `cronWarn` する、を追加した。
+回帰テスト `src/__tests__/cron-observability.test.ts`（16 ケース）は
+**「Sentry へ送ったか」ではなく「console にも出たか」を固定する**（235 テスト green / lint clean）。
+
 ---
 
 ## 教訓
