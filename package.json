@@ -2,6 +2,9 @@
   "name": "siko-coffee",
   "version": "0.1.0",
   "private": true,
+  "engines": {
+    "npm": ">=11"
+  },
   "scripts": {
     "dev": "next dev",
     "check:cron": "node scripts/check-cron-schedule.mjs",
