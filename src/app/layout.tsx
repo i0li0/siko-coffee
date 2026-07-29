@@ -9,6 +9,7 @@ import { SpeedInsights } from '@vercel/speed-insights/next';
 import { Analytics } from '@vercel/analytics/next';
 import { GoogleAnalytics } from '@next/third-parties/google';
 import SessionProvider from '@/components/auth/SessionProvider';
+import { isVercelPlatform } from '@/lib/stage';
 import './globals.css';
 
 const cormorant = Cormorant_Garamond({
@@ -110,6 +111,11 @@ export default function RootLayout({
 }: {
   children: React.ReactNode;
 }) {
+  // Vercel の計測スクリプトは Vercel のインフラが配信するため、AWS では
+  // `/_vercel/insights/script.js` などが 404 になる（Pour Over 3）。
+  // Vercel 上でのみ描画する＝ Vercel 側の挙動は今までどおり変わらない。
+  const onVercel = isVercelPlatform();
+
   return (
     <html
       lang="ja"
@@ -125,8 +131,12 @@ export default function RootLayout({
         <SessionProvider>
           {children}
         </SessionProvider>
-        <Analytics />
-        <SpeedInsights />
+        {onVercel && (
+          <>
+            <Analytics />
+            <SpeedInsights />
+          </>
+        )}
       </body>
       {process.env.NEXT_PUBLIC_GA_MEASUREMENT_ID && (
         <GoogleAnalytics gaId={process.env.NEXT_PUBLIC_GA_MEASUREMENT_ID} />
