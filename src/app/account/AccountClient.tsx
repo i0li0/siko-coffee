@@ -162,13 +162,47 @@ export default function AccountClient({ user, emailVerified, initialAvatarPreset
     }
   }
 
+  // アップロードは3段（Pour Over 4）:
+  //   ① upload-url で署名付き URL をもらう
+  //   ② その URL へ **S3 へ直接** PUT する（サーバを経由しない＝2MB が通る）
+  //   ③ confirm で検閲を通し、通ったものだけが公開される
+  // ②が終わっただけでは何も公開されていないので、③まで届かなければ
+  // アップロードは無かったことになる（置き場は1日で自動削除）。
   async function handleUpload(file: File) {
     setAvatarSaving(true)
     setAvatarError(null)
-    const form = new FormData()
-    form.append('avatar', file)
     try {
-      const res = await fetch('/api/account/avatar', { method: 'PUT', body: form })
+      const urlRes = await fetch('/api/account/avatar/upload-url', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ contentType: file.type, size: file.size }),
+      })
+      if (urlRes.status === 429) {
+        setRateLimited(true)
+        setAvatarError('アイコンの変更は1日1回までです')
+        return
+      }
+      const urlData = await urlRes.json()
+      if (!urlRes.ok) {
+        setAvatarError(urlData.error ?? 'アップロードに失敗しました')
+        return
+      }
+
+      const putRes = await fetch(urlData.uploadUrl, {
+        method: 'PUT',
+        headers: { 'content-type': file.type },
+        body: file,
+      })
+      if (!putRes.ok) {
+        setAvatarError('アップロードに失敗しました')
+        return
+      }
+
+      const res = await fetch('/api/account/avatar/confirm', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ key: urlData.key }),
+      })
       if (res.status === 429) {
         setRateLimited(true)
         setAvatarError('アイコンの変更は1日1回までです')

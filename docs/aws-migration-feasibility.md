@@ -493,7 +493,7 @@ AWS リソースはまだ1つも作っていない。ローカルで確かめら
 | 1 | ✅ **`VERCEL_ENV` → `STAGE`**（判定を `src/lib/stage.ts` に集約＋`sst.config.ts` に `STAGE: $app.stage` を注入） | **完了（2026-07-29）**。AWS 本番でサーバ側 Sentry の Performance が実際に動くようになった（従来は `tracesSampleRate: VERCEL_ENV==='production' ? 0.1 : 0` のため **AWS 本番では 0＝完全に無効**だった）。「Speed Insights は Sentry Performance で代替」という前提がここで初めて成立する。`src/lib/db.ts` の判定も**反転**し、未設定時に preview へ倒れるフェイルクローズにした |
 | 2 | ✅ **cron 4ルートの観測性** | **完了（2026-07-29）**。観測を `src/lib/cronLog.ts` に集約し（`cronStart` / `cronDone` / `cronFail` / `cronWarn` / `cronAlert`）、4ルートを同じ形に揃えた。**console と Sentry の両方**へ出すので DSN 未設定でも消えない。`cronDone` が件数を出すため **「動いたが0件」と「動いていない」を CloudWatch だけで区別できる**（`release-reservations` の件に効く）。握り潰していた2か所も開けた: `cleanup-pending` の `DeleteCommand` は `ConditionalCheckFailedException` のみ `skipped` として数え他は報告、`instagram-refresh` の `GetCommand` は退避しつつ警告。依存 E・L 向けに失敗地点を `phase`（`token-read`/`refresh`/`persist`）で Sentry へ送り、残り14日を切ったら警告する。回帰テスト `src/__tests__/cron-observability.test.ts` |
 | 3 | ✅ **Vercel 専用スクリプトの条件化**（`@vercel/analytics` / `@vercel/speed-insights`） | **完了（2026-07-29）**。`src/lib/stage.ts` に `isVercelPlatform()` を足し、`src/app/layout.tsx` は Vercel 上でのみ両コンポーネントを描画する。AWS では `/_vercel/insights/script.js` と `/_vercel/speed-insights/script.js` の 404 が消え、**Vercel 側の挙動は変わらない**（soak 中も Speed Insights の比較材料を保てる）。回帰テストは `src/__tests__/stage.test.ts` に追加 |
-| 4 | **Vercel Blob → S3**（**presigned S3 PUT で実装**） | 移送すべきデータは無い（本番の `avatarUrl` 保持ユーザー0件・Blob ストアも空）＝コード置換のみ。`next.config.ts` の `remotePatterns` と CSP `img-src` を**両方**更新する |
+| 4 | ✅ **Vercel Blob → S3**（**presigned S3 PUT で実装**） | **完了（2026-07-29）**。S3/Rekognition 側は `src/lib/avatarStorage.ts`、DynamoDB 側は `src/lib/avatarAccount.ts`。アップロードは **upload-url → S3 へ直接 PUT → confirm** の3段。バケットは**2つ**（非公開のアップロード用＋CloudFront からのみ読める公開用）で、**検閲を通ったものだけ**が公開用へコピーされる。`next.config.ts` の `remotePatterns` と CSP `img-src` は両方更新済み。回帰テスト `src/__tests__/avatarStorage.test.ts` |
 
 > 🔴 **1 の実装で判明した罠: 単純な置換だと soak 期間に本番障害を起こす。**
 > 14（soak）の間は **AWS と Vercel の両方が本番を担う**。`VERCEL_ENV` を `STAGE` に
@@ -529,6 +529,29 @@ AWS リソースはまだ1つも作っていない。ローカルで確かめら
 > S3 ライフサイクルで pending を1日で自動削除。実行ロールには pending の `s3:GetObject` と
 > 公開先の `s3:PutObject` / `s3:DeleteObject` が要る。
 > ⚠️ 保存先は **CloudFront が `_assets` として配信している既存バケットとは別**にすること。
+>
+> ---
+>
+> 🔴 **4 の実装で判明した順序の問題（計画に書かれていなかった）。**
+> 4 は第1群＝ **13（切替）より前**に入るが、その時点で本番は Vercel 単独で、
+> **AWS の production ステージがまだ存在しない**。つまりアップロード先のバケットと
+> その公開配信経路を「サイト本体より先に」用意する必要がある。
+> → サイトの CloudFront に相乗りする案は使えず、**アバター専用の `sst.aws.Router`** を立てた
+> （CloudFront は無料枠の内側なので費用はほぼ増えない。13 の後に統合してもよい）。
+>
+> 🔴 **マージしただけでは本番のアバター画像アップロードは 503 になる。**
+> `AVATAR_UPLOAD_BUCKET` / `AVATAR_BUCKET` / `AVATAR_BASE_URL` の3本がそろわないと
+> フェイルクローズで止まる（プリセット選択は影響を受けない）。稼働させるには:
+> ① `npm run sst:deploy -- --stage <stage>` でバケットと Router を作る
+> ② その3本を **Vercel 側の環境変数にも**入れる（soak 期間は同じバケットを共有する）
+> ③ Vercel が使っている IAM ユーザーに、下記2ステートメント相当の S3 権限を足す
+>    （AWS 側は実行ロールに付与済みで静的キーは不要）
+> 影響範囲は小さい（本番で `avatarUrl` を持つユーザーは **0件**）が、
+> **①〜③を済ませるまでは新規アップロードだけができない**。
+>
+> ⚠️ **Rekognition は呼び出し元の権限で S3 を読む。** `Image: { S3Object }` に変えた以上、
+> アップロード用バケットの `s3:GetObject` が無いと検閲が全件失敗し、
+> フェイルクローズにより**すべて「アップロードできません」になる**（無言では壊れない）。
 
 ### 第2群｜AWS の防御と実行基盤（dev で検証）
 
