@@ -160,6 +160,48 @@ AWS ではどちらも未設定なので偽陽性は起きない。
 
 ---
 
+### 2026-07-29 — 第1群 4（Vercel Blob → S3）
+
+**なぜ presigned なのか**: 5（`oac-with-edge-signing`）は経路に Lambda@Edge が入るため
+**ボディ 1MB 上限**。アバターは 2MB まで許しているので、サーバ経由アップロードのままだと
+5 と衝突する。ブラウザから S3 へ直接 PUT すれば大きなボディが CloudFront/Lambda を通らず、
+衝突そのものが消える（依存 B）。
+
+**実施したこと**: アップロードを **upload-url → S3 へ直接 PUT → confirm** の3段にした。
+S3/Rekognition 側は `src/lib/avatarStorage.ts`、DynamoDB 側は `src/lib/avatarAccount.ts`。
+
+**🔴 バケットを2つに分けた理由（検閲の順序が逆転するため）**:
+Blob 版は「Rekognition に通してから `put()`」で、**落ちた画像は保存されない**順序だった。
+presigned にすると **PUT が先・検閲が後**になり、confirm を呼ばなければ未検閲物が残る。
+
+| バケット | 公開 | 中身 |
+|---|---|---|
+| アップロード用 | 非公開（CDN なし） | presign の宛先。**未検閲**。ライフサイクルで1日後に自動削除 |
+| 公開用 | CloudFront(OAC) のみ | **検閲を通ったものだけ**をコピー |
+
+同一バケットのプレフィクス分割にしなかったのは、CDN を被せた時点で `pending/` も
+配信対象になり、ビヘイビアで塞ぐ運用に頼ることになるため。**バケットが違えば
+「公開される場所に未検閲物を置けない」ことが構造で保証される。**
+
+**presigned PUT で縛れないもの**: 署名にサイズを含められない（POST policy と違う）。
+そのため confirm 側で `HeadObject` の**実測値**を見て弾き、落ちたオブジェクトはその場で消す。
+放置分はライフサイクルが回収する。持ち主の検証はキーに `userId` を含めて行う
+（`pending/<userId>/<uuid>.<ext>` の形と前方一致の**両方**を見る）。
+
+**🔴 順序の問題を1つ発見した（計画に無かった）**: 4 は 13 より前なのに、その時点で
+**AWS の production ステージが存在しない**。サイトの CloudFront に相乗りできないため、
+アバター専用の `sst.aws.Router` を立てた。**この判断が無いと 4 は本番で成立しない。**
+
+**マージ後に必要な作業**（済むまで本番のアップロードは 503・プリセットは影響なし）:
+① `npm run sst:deploy` でバケットと Router を作る ② `AVATAR_UPLOAD_BUCKET` /
+`AVATAR_BUCKET` / `AVATAR_BASE_URL` を **Vercel 側にも**入れる ③ Vercel の IAM ユーザーに
+S3 権限を足す。本番で `avatarUrl` を持つユーザーは0件なので影響範囲は小さい。
+
+回帰テスト `src/__tests__/avatarStorage.test.ts`（18ケース・253 テスト green / lint / tsc clean）。
+`next build` で3ルートの登録を確認し、未認証で 401 を返すことも実測。
+
+---
+
 ## 教訓
 
 他の作業にも移植できる形で残す。

@@ -73,13 +73,65 @@ export default $config({
       // ── 意図的に入れないもの ──
       // STRIPE_* / PAYMENTS_ENABLED … 決済停止中（Phase 0 を維持）
       // NEXT_PUBLIC_GA_MEASUREMENT_ID … dev のアクセスが本番 GA に混ざるため
-      // BLOB_* … Vercel 固有。Phase 2 で S3 に置き換える
+      // BLOB_* … ✅ 4 で S3 に置き換え済み。Vercel 側の3本も 15 で捨ててよい
       // WEBAUTHN_RP_ID / WEBAUTHN_ORIGIN … 未設定ならリクエスト元から自動導出されるので dev では不要
     ] as const
 
     const secretEnv = Object.fromEntries(
       SECRET_NAMES.map((name) => [name, new sst.Secret(name).value]),
     )
+
+    // ── アバター画像の保管（Pour Over 4: Vercel Blob → S3）──────────
+    //
+    // 🔴 **バケットを2つに分けるのは検閲の順序が逆転するから。**
+    // Blob 版は「Rekognition に通してから put()」だったが、presigned PUT では
+    // **アップロードが先・検閲が後**になる。同じバケットのプレフィクス違いで
+    // CDN を被せると、`pending/` も配信対象になってしまう（ビヘイビアで塞ぐ運用に頼ることになる）。
+    // 置き場自体を分ければ「公開される場所に未検閲物を置けない」ことが構造で保証される。
+    //
+    // 🔴 **13（切替）より前に本番で使い始める**ため、サイト本体の CloudFront には
+    // 相乗りできない（本番ステージがまだ無い）。専用の Router を立てる。
+    // CloudFront は無料枠（1TB / 1000万リクエスト）の内側なので費用はほぼ増えない。
+    // 13 の後にサイト側のディストリビューションへ統合してもよい。
+
+    // 非公開。presigned PUT の宛先で、**検閲前の未確認オブジェクトだけ**が入る。
+    const avatarUploads = new sst.aws.Bucket('AvatarUploads', {
+      // ブラウザから直接 PUT するので CORS が要る。
+      // ⚠️ オリジンを絞らないのは、**認可は presigned URL 自体**（署名・5分・単一キー）が
+      // 担っており、かつ soak 期間は Vercel と AWS の2オリジンから叩かれるため。
+      // 許可するメソッドは PUT だけに限定する。
+      cors: {
+        allowMethods: ['PUT'],
+        allowOrigins: ['*'],
+        allowHeaders: ['content-type'],
+        maxAge: '1 hour',
+      },
+    })
+
+    // 🔴 放置された未検閲オブジェクトの掃除。**これが無いと「confirm を呼ばずに
+    // 上げ続ける」だけで課金対象のゴミが無限に溜まる**。
+    new aws.s3.BucketLifecycleConfigurationV2('AvatarUploadsLifecycle', {
+      bucket: avatarUploads.name,
+      rules: [
+        {
+          id: 'expire-pending',
+          status: 'Enabled',
+          filter: { prefix: 'pending/' },
+          expiration: { days: 1 },
+          abortIncompleteMultipartUpload: { daysAfterInitiation: 1 },
+        },
+      ],
+    })
+
+    // 公開用。CloudFront(OAC) からのみ読める＝バケット自体は公開しない。
+    // **検閲を通ったものだけ**がここへコピーされる。
+    const avatarPublic = new sst.aws.Bucket('Avatars', {
+      access: 'cloudfront',
+    })
+
+    const avatarCdn = new sst.aws.Router('AvatarCdn', {
+      routes: { '/*': { bucket: avatarPublic } },
+    })
 
     new sst.aws.Nextjs('Web', {
       // ⚠️ 必須のピン留め。SST の既定は OpenNext **3.9.14**（Next.js 15 想定）で、
@@ -125,6 +177,18 @@ export default $config({
           actions: ['rekognition:DetectModerationLabels'],
           resources: ['*'],
         },
+        // アバター（Pour Over 4）。**バケットごとに必要な操作だけ**を与える。
+        // ⚠️ Rekognition は「サービスが勝手に読む」のではなく **呼び出し元の権限**で
+        // S3 を読む。`Image: { S3Object }` にした以上、アップロード用バケットの
+        // `s3:GetObject` が無いと検閲が丸ごと失敗する（＝全部 `safe:false` になる）。
+        {
+          actions: ['s3:PutObject', 's3:GetObject', 's3:DeleteObject'],
+          resources: [$interpolate`${avatarUploads.arn}/pending/*`],
+        },
+        {
+          actions: ['s3:PutObject', 's3:DeleteObject'],
+          resources: [$interpolate`${avatarPublic.arn}/avatars/*`],
+        },
       ],
 
       environment: {
@@ -153,6 +217,13 @@ export default $config({
         // `sentry.*.config.ts` の environment / tracesSampleRate を決める。
         // 判定はフェイルクローズなので、**本番ステージ以外では preview テーブルを向く**。
         STAGE: $app.stage,
+
+        // アバターの保管先（Pour Over 4）。`src/lib/avatarStorage.ts` が読む。
+        // ⚠️ 3本そろっていないとアップロードは 503 で止まる（フェイルクローズ）。
+        // soak 期間は **Vercel 側にも同じ3本**を入れる必要がある（同じバケットを使う）。
+        AVATAR_UPLOAD_BUCKET: avatarUploads.name,
+        AVATAR_BUCKET: avatarPublic.name,
+        AVATAR_BASE_URL: avatarCdn.url,
 
         // 📌 `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` はここでは設定しない（予約変数）が、
         // **Lambda は実行ロールの資格情報を同名の環境変数として自動注入する**。
@@ -222,9 +293,15 @@ export default $config({
 //     Sentry の tags.route は既存値（`cron/...`）を維持。回帰テストは
 //     src/__tests__/cron-observability.test.ts。
 //  3. Vercel 専用スクリプト（@vercel/analytics・@vercel/speed-insights）を条件付きレンダーにする。
-//  4. Vercel Blob → S3。**presigned S3 PUT で実装すること**（理由は 5 の 1MB 制限）。
-//     移送すべきデータは無い（本番の avatarUrl 保持ユーザーは0件・Blob ストアも空）＝コード置換のみ。
-//     next.config.ts の remotePatterns と CSP img-src を**両方**更新する。
+//  4. ✅ Vercel Blob → S3。presigned S3 PUT（理由は 5 の 1MB 制限＝依存 B）。
+//     upload-url → S3 へ直接 PUT → confirm の3段。src/lib/avatarStorage.ts と avatarAccount.ts。
+//     🔴 **バケットは2つ**。presigned では PUT が先・検閲が後に逆転するため、
+//        未検閲の置き場（非公開・1日で自動削除）と公開先（CloudFront OAC）を分けてある。
+//        同一バケットのプレフィクス分割だと CDN が pending/ も配信してしまう。
+//     🔴 **13 より前に本番で使い始める**ので、サイト本体の CloudFront には相乗りできない
+//        （本番ステージがまだ無い）。アバター専用の Router を立てている。
+//     ⚠️ マージしただけでは本番は 503。デプロイ後に AVATAR_* の3本を **Vercel 側にも**入れ、
+//        Vercel の IAM ユーザーに S3 権限を足すこと（AWS 側は実行ロールで付与済み）。
 //
 // ── 第2群｜AWS の防御と実行基盤（dev で検証）────────────────────
 //  5. 🔴 **Function URL の保護**。OpenNext/SST は server Lambda の Function URL をオリジンにするが

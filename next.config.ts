@@ -56,7 +56,12 @@ const securityHeaders = [
       scriptSrc,
       "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
       "font-src 'self' https://fonts.gstatic.com",
-      "img-src 'self' data: blob: https://*.cdninstagram.com https://cdninstagram.com https://www.google-analytics.com https://*.public.blob.vercel-storage.com",
+      // アバターは CloudFront（Pour Over 4 で Vercel Blob から移行）。
+      // ⚠️ ホストを1つに絞れないのは、配信元がステージごとの CloudFront ドメインで、
+      // **ビルド時にはまだ確定していない**ため（URL はデプロイの出力）。
+      // img-src はスクリプトを実行しないので、この範囲の緩さは許容する。
+      // 12（独自ドメイン）以降に `avatars.sikocoffee.com` へ寄せれば1ホストに絞れる。
+      "img-src 'self' data: blob: https://*.cdninstagram.com https://cdninstagram.com https://www.google-analytics.com https://*.cloudfront.net",
       // Sentry の ingest を許可する。これが無いとブラウザ側の Sentry イベントは
       // CSP で全てブロックされる（2026-07-27 に本番でも起きていたことを実測）。
       // DSN は src/instrumentation-client.ts にハードコードされており、送信自体は
@@ -85,7 +90,8 @@ const nextConfig: NextConfig = {
       { protocol: 'https', hostname: 'instagram.com' },
       { protocol: 'https', hostname: 'cdninstagram.com' },
       { protocol: 'https', hostname: '**.cdninstagram.com' },
-      { protocol: 'https', hostname: '**.public.blob.vercel-storage.com' },
+      // アバターの配信元（Pour Over 4）。CSP の img-src と**必ず両方**そろえる。
+      { protocol: 'https', hostname: '**.cloudfront.net' },
     ],
   },
   async headers() {
