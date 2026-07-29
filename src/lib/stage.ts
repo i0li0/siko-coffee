@@ -13,6 +13,10 @@
 //
 // 📌 Vercel にカスタム環境は無く `VERCEL_ENV` は production / preview / development の
 // 3値しか取らない（2026-07-28 確認）ため、`=== 'production'` の単純判定で過不足ない。
+//
+// あわせて「Vercel の上で動いているか」（＝ステージではなく**プラットフォーム**の判定）も
+// ここに置く。どちらも Vercel 解約（Pour Over 16）でまとめて消える一群だからで、
+// 撤去のとき探し回らずに済むようにしている。
 
 /**
  * 実行中のステージ名。未設定なら `undefined`（＝本番ではない）。
@@ -32,4 +36,26 @@ export function getStage(): string | undefined {
  */
 export function isProductionStage(): boolean {
   return getStage() === 'production';
+}
+
+/**
+ * Vercel の上で動いているか（Pour Over 3）。**ステージではなくプラットフォームの判定**。
+ *
+ * `@vercel/analytics` と `@vercel/speed-insights` が読み込む
+ * `/_vercel/insights/script.js` / `/_vercel/speed-insights/script.js` は
+ * **Vercel のインフラが配信する**もので、アプリのビルド成果物には含まれない。
+ * AWS では当然 404 になり、計測もされないのに毎リクエスト取りに行く。
+ *
+ * 🔑 **`VERCEL` と `VERCEL_ENV` の両方を見る**。意味的には `VERCEL`（＝Vercel 上なら 1）が
+ * 正確だが、システム環境変数の注入はプロジェクト設定のトグルに依存するため
+ * 「必ずある」とは言い切れない。一方 `VERCEL_ENV` は本番で実際に読めていることが
+ * 分かっている（`getStage()` のフォールバックがそれで機能している）。
+ * **判定を外して困るのは Vercel 側**（計測が静かに止まり、soak 中の比較材料を失う）なので、
+ * 確実にある方を必ず含める。AWS ではどちらも未設定なので偽陽性は起きない。
+ *
+ * 🔴 Vercel 解約（Pour Over 16）ではこの関数・呼び出し側・`@vercel/analytics` と
+ * `@vercel/speed-insights` の依存をまとめて削除する（撤去リストの⑦）。
+ */
+export function isVercelPlatform(): boolean {
+  return Boolean(process.env.VERCEL ?? process.env.VERCEL_ENV);
 }

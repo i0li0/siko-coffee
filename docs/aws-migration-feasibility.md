@@ -492,7 +492,7 @@ AWS リソースはまだ1つも作っていない。ローカルで確かめら
 |---|---|---|
 | 1 | ✅ **`VERCEL_ENV` → `STAGE`**（判定を `src/lib/stage.ts` に集約＋`sst.config.ts` に `STAGE: $app.stage` を注入） | **完了（2026-07-29）**。AWS 本番でサーバ側 Sentry の Performance が実際に動くようになった（従来は `tracesSampleRate: VERCEL_ENV==='production' ? 0.1 : 0` のため **AWS 本番では 0＝完全に無効**だった）。「Speed Insights は Sentry Performance で代替」という前提がここで初めて成立する。`src/lib/db.ts` の判定も**反転**し、未設定時に preview へ倒れるフェイルクローズにした |
 | 2 | ✅ **cron 4ルートの観測性** | **完了（2026-07-29）**。観測を `src/lib/cronLog.ts` に集約し（`cronStart` / `cronDone` / `cronFail` / `cronWarn` / `cronAlert`）、4ルートを同じ形に揃えた。**console と Sentry の両方**へ出すので DSN 未設定でも消えない。`cronDone` が件数を出すため **「動いたが0件」と「動いていない」を CloudWatch だけで区別できる**（`release-reservations` の件に効く）。握り潰していた2か所も開けた: `cleanup-pending` の `DeleteCommand` は `ConditionalCheckFailedException` のみ `skipped` として数え他は報告、`instagram-refresh` の `GetCommand` は退避しつつ警告。依存 E・L 向けに失敗地点を `phase`（`token-read`/`refresh`/`persist`）で Sentry へ送り、残り14日を切ったら警告する。回帰テスト `src/__tests__/cron-observability.test.ts` |
-| 3 | **Vercel 専用スクリプトの条件化**（`@vercel/analytics` / `@vercel/speed-insights`） | `/_vercel/insights/script.js` と `/_vercel/speed-insights/script.js` の 404 が消える |
+| 3 | ✅ **Vercel 専用スクリプトの条件化**（`@vercel/analytics` / `@vercel/speed-insights`） | **完了（2026-07-29）**。`src/lib/stage.ts` に `isVercelPlatform()` を足し、`src/app/layout.tsx` は Vercel 上でのみ両コンポーネントを描画する。AWS では `/_vercel/insights/script.js` と `/_vercel/speed-insights/script.js` の 404 が消え、**Vercel 側の挙動は変わらない**（soak 中も Speed Insights の比較材料を保てる）。回帰テストは `src/__tests__/stage.test.ts` に追加 |
 | 4 | **Vercel Blob → S3**（**presigned S3 PUT で実装**） | 移送すべきデータは無い（本番の `avatarUrl` 保持ユーザー0件・Blob ストアも空）＝コード置換のみ。`next.config.ts` の `remotePatterns` と CSP `img-src` を**両方**更新する |
 
 > 🔴 **1 の実装で判明した罠: 単純な置換だと soak 期間に本番障害を起こす。**
@@ -650,7 +650,7 @@ AWS リソースはまだ1つも作っていない。ローカルで確かめら
 | # | 作業 | 期待できる結果 |
 |---|---|---|
 | 15 | **Vercel 解約 ＋ 決済再開** | ①Stripe 新キー投入 →②`PAYMENTS_ENABLED=true` →③再デプロイ の順厳守 |
-| 16 | **Vercel 依存の撤去（4点セット）** | OpenNext #1202 の暫定回避を撤去。`siko-coffee.vercel.app` 向けの2本目は解約で消えるため**移設不要＝削除のみ** |
+| 16 | **Vercel 依存の撤去（下記①〜⑦）** | OpenNext #1202 の暫定回避を撤去。`siko-coffee.vercel.app` 向けの2本目は解約で消えるため**移設不要＝削除のみ** |
 
 > 🔴 **16 は「`vercel.json` を消す」だけでは build が全環境で落ちる。** `package.json` の
 > **`prebuild` が `scripts/check-cron-schedule.mjs` を呼び、このスクリプトは `vercel.json` を
@@ -661,6 +661,11 @@ AWS リソースはまだ1つも作っていない。ローカルで確かめら
 > ⑤ `src/__tests__/hostRedirects.test.ts`（②と同時に消さないと CI が落ちる）
 > ⑥ 🆕 **`src/lib/stage.ts` の `?? process.env.VERCEL_ENV` フォールバック**（1 で soak 期間の
 > Vercel 本番を守るために入れたもの。⑥は `src/__tests__/stage.test.ts` の該当ケースと同時に消す）
+> ⑦ 🆕 **`src/lib/stage.ts` の `isVercelPlatform()` と `src/app/layout.tsx` の呼び出し、
+> `@vercel/analytics` / `@vercel/speed-insights` の依存**（3 で入れたもの。⑥と同じく
+> `src/__tests__/stage.test.ts` の該当 describe も同時に消す）
+>
+> 📌 ⑥⑦とも `src/lib/stage.ts` に集めてあるので、**撤去の起点は `grep -rn VERCEL src/`** でよい。
 
 ### 🔴 動かせない依存
 
