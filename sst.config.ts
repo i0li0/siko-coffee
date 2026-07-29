@@ -292,7 +292,11 @@ export default $config({
 //     （＝ release-reservations の件を CloudWatch だけで切り分けられる）。
 //     Sentry の tags.route は既存値（`cron/...`）を維持。回帰テストは
 //     src/__tests__/cron-observability.test.ts。
-//  3. Vercel 専用スクリプト（@vercel/analytics・@vercel/speed-insights）を条件付きレンダーにする。
+//  3. ✅ Vercel 専用スクリプト（@vercel/analytics・@vercel/speed-insights）を条件付きレンダーに。
+//     src/lib/stage.ts の isVercelPlatform() が判定し、layout.tsx は Vercel 上でのみ描画する。
+//     判定は VERCEL と VERCEL_ENV の**両方**を見る（VERCEL の注入はプロジェクト設定のトグル依存で
+//     確実でなく、外すと Vercel 側の計測が静かに止まって soak の比較材料を失うため）。
+//     ⚠️ 撤去は 16 のリスト⑦（⑥と同じく stage.ts に集めてある）。
 //  4. ✅ Vercel Blob → S3。presigned S3 PUT（理由は 5 の 1MB 制限＝依存 B）。
 //     upload-url → S3 へ直接 PUT → confirm の3段。src/lib/avatarStorage.ts と avatarAccount.ts。
 //     🔴 **バケットは2つ**。presigned では PUT が先・検閲が後に逆転するため、
@@ -369,8 +373,13 @@ export default $config({
 // 15. Vercel 解約 ＋ 決済再開（①Stripe 新キー投入 →②PAYMENTS_ENABLED=true →③再デプロイ の順厳守）。
 // 16. Vercel 依存の撤去。🔴 **vercel.json だけ消すと build が全環境で落ちる**
 //     （prebuild → scripts/check-cron-schedule.mjs が vercel.json を読めず exit 1。CI にも同ステップ）。
-//     4点セットで消すこと: ①redirects() ②vercel.json ③check-cron-schedule.mjs + prebuild + check:cron
+//     ①〜⑦をまとめて消すこと: ①redirects() ②vercel.json ③check-cron-schedule.mjs + prebuild + check:cron
 //     ④CI の該当ステップ ⑤src/__tests__/hostRedirects.test.ts
+//     ⑥src/lib/stage.ts の `?? VERCEL_ENV`（1 で soak 中の Vercel 本番を守るために入れたもの）
+//     ⑦src/lib/stage.ts の isVercelPlatform() と layout.tsx の呼び出し ＋
+//       @vercel/analytics / @vercel/speed-insights の依存（3 で入れたもの）
+//     📌 ⑥⑦とも stage.ts に集めてあるので、撤去の起点は `grep -rn VERCEL src/` でよい。
+//        ⑥⑦は src/__tests__/stage.test.ts の該当ケースと同時に消す。
 //     ⚠️ 12 が動いてからにすること。先に消すと apex が無正規化になる。
 //
 // ── 🔴 動かせない依存 ────────────────────────────────────────
