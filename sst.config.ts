@@ -143,6 +143,44 @@ export default $config({
       // buildId は output JSON ではなく `.next/BUILD_ID` から読まれるため欠落は問題にならない。
       openNextVersion: '4.1.0',
 
+      // ── Function URL の保護（Pour Over 5）─────────────────────────
+      //
+      // 🔴 **既定（"none"）だと server と image-optimizer の Function URL が全公開になる。**
+      // OpenNext/SST は Lambda の Function URL を CloudFront のオリジンにするが、その
+      // AuthType は `NONE`・リソースポリシーは `Principal: *` で CloudFront 限定の条件が無い。
+      // 実測で `https://<32文字>.lambda-url.ap-northeast-1.on.aws/` に直アクセスでき、
+      // `/` = 200 / `/admin` = 307 が返る。つまり CloudFront の前に何を置いても
+      // **6 の WAF も 9 の noindex も 12 の apex 正規化も、この URL を直接叩けば全部素通りする**。
+      // さらに直叩きでは CloudFront Function を経由しないため、下記の `x-forwarded-host`
+      // 退避が走らず **ホストを偽装できる**。URL は推測困難だが obscurity は統制ではない。
+      //
+      // ⚠️ **"oac" は採用できない。** POST に `x-amz-content-sha256` を自前で付ける必要があり、
+      // 本プロジェクトは POST ルートが20本以上ある。Stripe webhook・NextAuth・ブラウザの
+      // フォーム送信は**そのヘッダを付けられない**ので、まとめて壊れる。
+      // → Lambda@Edge が自動署名する `"oac-with-edge-signing"` が唯一の現実解。
+      //
+      // ✅ host 依存ロジック（`src/middleware.ts` の CSRF・NextAuth・パスキーの rpID 導出・
+      // checkout のホスト許可）は**壊れない**。オリジンリクエストポリシーが元から
+      // `Managed-AllViewerExceptHostHeader` で Host を転送しておらず、SST の CloudFront Function が
+      // `setForwardedHost()` で `x-forwarded-host` に本来のホストを退避しているため
+      // （dev への実プローブで裏取り済み）。
+      //
+      // 🔗 **依存 B**: このモードは Lambda@Edge を経路に挟むので **リクエストボディが 1MB 上限**。
+      // 4 でアバターを presigned S3 PUT にしてあるのはこのため（大きなボディは
+      // CloudFront/Lambda を通らず S3 へ直接行く）。1MB 超のボディを持つルートは他に無い
+      // （Server Actions は未使用）。
+      //
+      // ⚠️ **完了判定は `Principal:*` の掃除ではなく AuthType を見ること。**
+      //   aws lambda get-function-url-config --function-name <server> --query AuthType
+      //   → `AWS_IAM` になっていれば完了。公開ステートメントは5本残るが、すべて
+      //   `Condition: lambda:FunctionUrlAuthType = NONE` 付きなので切替時点で不発になる
+      //   （SST は世代違いの古いステートメントを掃除しないが、それは無害な汚れ）。
+      //   protection は server と image-optimizer の**両方**を iam に切り替える。
+      //
+      // ⚠️ **外す（"none" に戻す）ときは 5〜10 分かかる。** Lambda@Edge のレプリカが
+      //   全エッジロケーションから消えるまで削除がブロックされるため。
+      protection: 'oac-with-edge-signing',
+
       // Lambda 実行ロールに与える権限。**静的 AWS キーを一切置かないための要**。
       // アプリは既定の認証情報チェーンで DynamoDB / SES / Rekognition を叩くので、
       // ここで権限を与えれば `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` は不要になる
@@ -308,11 +346,12 @@ export default $config({
 //        Vercel の IAM ユーザーに S3 権限を足すこと（AWS 側は実行ロールで付与済み）。
 //
 // ── 第2群｜AWS の防御と実行基盤（dev で検証）────────────────────
-//  5. 🔴 **Function URL の保護**。OpenNext/SST は server Lambda の Function URL をオリジンにするが
-//     AuthType=NONE・Principal=* で**全公開**。実測で直アクセスできる（/ =200, /admin =307）。
+//  5. ✅ **Function URL の保護**。OpenNext/SST は server Lambda の Function URL をオリジンにするが
+//     AuthType=NONE・Principal=* で**全公開**だった。実測で直アクセスできた（/ =200, /admin =307）。
 //     このままだと 6 の WAF も 11 の apex 正規化も 9 の noindex も**全部迂回される**。
 //     さらに直叩きでは CFF を通らないため **x-forwarded-host を偽装できる**。
-//     → SsrSite の `protection` を **"oac-with-edge-signing"** にする。
+//     → 上の Nextjs コンポーネントに `protection: 'oac-with-edge-signing'` を入れた（理由は同所）。
+//     ⚠️ **コードだけでは閉じない。`npm run sst:deploy -- --stage dev` を打って初めて AuthType が変わる。**
 //     ✅ host 依存ロジック（CSRF/NextAuth/passkey/checkout）は**壊れない**。ORP は元から
 //        Managed-AllViewerExceptHostHeader で、CFF が x-forwarded-host に退避している（検証済み）。
 //     ⚠️ 完了判定は `get-function-url-config` の **AuthType: AWS_IAM**。公開ステートメントは

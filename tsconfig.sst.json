@@ -1,0 +1,18 @@
+// `sst.config.ts` だけを型検査するための設定。
+//
+// 本体の tsconfig.json は sst.config.ts を **exclude している**（`$config` / `sst` /
+// `aws` などのグローバルが `.sst/platform/config.d.ts` にあり、それは `sst install` が
+// 生成する gitignore 対象のため CI には存在しない）。結果として **CI で唯一
+// 型検査されないファイル**になっており、`sst.config.ts` の変更は素通りする。
+//
+// 使い方（ローカル限定・`.sst` が要るので CI には入れない）:
+//   npx sst install && npm run check:sst
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "skipLibCheck": true
+  },
+  "include": [".sst/platform/config.d.ts", "sst.config.ts"],
+  "exclude": ["node_modules"]
+}

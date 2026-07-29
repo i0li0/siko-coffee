@@ -10,6 +10,7 @@
     "dev": "next dev",
     "check:cron": "node scripts/check-cron-schedule.mjs",
     "check:toolchain": "node scripts/check-build-toolchain.mjs",
+    "check:sst": "tsc -p tsconfig.sst.json",
     "verify:image-optimizer": "node scripts/check-image-optimizer.mjs",
     "sst:deploy": "bash scripts/deploy.sh",
     "prebuild": "node scripts/check-cron-schedule.mjs",

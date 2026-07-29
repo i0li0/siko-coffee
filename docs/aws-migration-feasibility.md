@@ -557,7 +557,7 @@ AWS リソースはまだ1つも作っていない。ローカルで確かめら
 
 | # | 作業 | 期待できる結果 |
 |---|---|---|
-| 5 | 🔴 **Function URL の保護** → `protection: "oac-with-edge-signing"` | **これが無いと 6・9・12 が全部無意味になる**（下記参照） |
+| 5 | 🟡 **Function URL の保護** → `protection: "oac-with-edge-signing"` | **コードは投入済み（2026-07-29）。`sst.config.ts` に `protection: 'oac-with-edge-signing'` を追加した。**<br>🔴 **ただしデプロイするまで Function URL は開いたまま**＝`AuthType` は今も `NONE` で、直叩きは 200 を返す（2026-07-29 実測）。完了は `npm run sst:deploy -- --stage dev` の後に `AuthType: AWS_IAM` を確認して初めて成立する。これが無いと 6・9・12 が全部無意味になる（下記参照） |
 | 6 | **WAF 3ルール**を AWS WAF で再構築（**CLOUDFRONT スコープ＝us-east-1 固定**・`transform.cdn` で `webAclArn`） | 切替時に admin の防御層（rate limit / challenge / geo≠JP deny）が消えるのを防ぐ。現行しきい値をそのまま移せばよい（過去1時間の実測は Allowed 1.3k / Denied 1 / Challenged 0 / Rate Limited 0） |
 | 7 | **`server.memory` 1024 → 2048 MB** | Lambda の CPU はメモリ比例で **1769MB＝1vCPU 相当**。現行 1024MB は約 0.58vCPU ＝ **Vercel(1vCPU/2GB) の6割**。GB-秒課金なので実行時間が縮めば費用は相殺され、8 の実行予算にも効く |
 | 8 | **cron 4本 → `sst.aws.Cron`（EventBridge Scheduler）＋中継 Lambda** | Hobby の日次制限と ±59分のゆらぎから解放され、`release-reservations` を10分毎に戻せる |
