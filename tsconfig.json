@@ -34,7 +34,10 @@
     "node_modules",
     // SST の設定は `$config` / `sst` グローバルを `.sst/platform/config.d.ts`
     // （`sst install` で生成・gitignore 対象）から得る。CI にはそれが無いため
-    // 本体の型チェックからは外す。検証は `npx sst install` 後にローカルで行う。
+    // 本体の型チェックからは外す。
+    // 🔴 結果として **sst.config.ts は CI で型検査されない唯一のファイル**になる。
+    //    変更したら `npx sst install && npm run check:sst` を手元で通すこと
+    //    （設定は tsconfig.sst.json）。
     "sst.config.ts"
   ]
 }
