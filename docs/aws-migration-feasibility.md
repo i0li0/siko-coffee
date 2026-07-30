@@ -807,8 +807,14 @@ Vercel 側の棚卸しと対になる回。**stage `dev` の実デプロイと�
 > 🔑 **リソースポリシーに世代の違う重複ステートメントが残る。**
 > server 側は5ステートメントあり、うち3つが公開許可。Sid の命名規則が2世代混在しており、
 > **SST はデプロイをまたいだ古い許可を掃除していない**。
-> → **5 で `protection` を有効化した後、`aws lambda get-policy` に `Principal: "*"` が
-> 残っていないことを必ず確認する。** 残っていれば URL は開いたままで、5・6・9・12 が全て無意味になる。
+>
+> 🔴 **↑ ここから導いた「`Principal:*` が残っていれば URL は開いたまま」は誤りだった（2026-07-29 に実施して判明）。**
+> 公開ステートメントは**すべて `Condition: lambda:FunctionUrlAuthType = NONE`
+> （または `InvokedViaFunctionUrl`）付き**なので、**`AuthType` を `AWS_IAM` にした時点で不発になる**。
+> 実際 5 の適用後も `Principal:*` は2本残っているが、直叩きは **403** である（実測）。
+> → **完了判定は `Principal:*` の掃除ではなく `aws lambda get-function-url-config` の
+> `AuthType: AWS_IAM`**（詳細は上の「5」の節）。ポリシーの残骸は**無害な汚れ**。
+> なお SST は `WebPublicFunctionUrlAccess*` 系を実際には削除したので、残骸は3本ではなく2本だった。
 
 > ⚠️ **予約同時実行がどの関数にも設定されていない。** 同時実行クォータが 1000 に戻っている今、
 > 公開された Function URL から 1000 並列を引ける。`protection` と併せて上限を設けるのが妥当。
