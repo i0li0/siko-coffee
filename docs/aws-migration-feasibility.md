@@ -567,7 +567,7 @@ AWS リソースはまだ1つも作っていない。ローカルで確かめら
 |---|---|---|
 | 5 | ✅ **Function URL の保護** → `protection: "oac-with-edge-signing"` | **完了（2026-07-29・dev で実測検証）。** `AuthType` は server / image-optimizer とも `NONE` → **`AWS_IAM`**、直叩きは `/`・`/admin` とも **200 → 403**。CloudFront 経由は `/`=200・`/api/health`=200・`/admin`=307 で**変化なし**。host 依存ロジックも無傷（`/api/admin` への POST は正しい Origin で middleware を通過し、詐称・欠落は 403）。これで 6・9・12 が意味を持つようになった |
 | 6 | ✅ **WAF 3ルール**を AWS WAF で再構築（**CLOUDFRONT スコープ＝us-east-1 固定**・`transform.cdn` で `webAclArn`） | **完了（2026-07-31・dev で実測検証）。** 値は推測せず `vercel firewall rules ls --json` の live 設定から採った。公開パス（`/`・`/shop`・`/api/health`）は **200 のまま不変**、`/admin`・`/admin/login` は 307/200 → **202（`x-amzn-waf-action: challenge`）**、`/api/admin/auth` は変更前 40連打が全部 405 だったのに対し **T+45s 以降は 403**。レート制限のブロック中も `/admin` は 202 のままで、**スコープが2つのログインパスに限定されている**ことも確認できた |
-| 7 | ✅ **`server.memory` 1024 → 2048 MB** | **完了（2026-07-31・dev で実測検証）。** Lambda の CPU はメモリ比例で **1769MB＝1vCPU 相当**なので 0.58vCPU → **約1.16vCPU**。同一手段（CloudWatch Logs の `REPORT`）で前後を測り、コールド／ウォームを分けた結果、**コールド p50 は 2,041ms → 1,073ms（−47%）**、ウォーム p50 は 73.8ms → 49.0ms（−34%）、ウォーム p90 は 281ms → 83ms（−71%）。`maxMemoryUsed` は **231MB → 230MB で不変**＝ RAM は元から余っており、効いたのは純粋に CPU。8 の実行予算（30秒）にも効く |
+| 7 | ✅ **`server.memory` 1024 → 2048 MB** | **完了（2026-07-31・dev で実測検証）。** Lambda の CPU はメモリ比例で **1769MB＝1vCPU 相当**なので 0.58vCPU → **約1.16vCPU**。同一手段（CloudWatch Logs の `REPORT`）で前後を測り、コールド／ウォームを分けた結果、**コールド p50 は 2,041ms → 1,068ms（−48%・n=21）**、ウォーム p50 は 73.8ms → 51.3ms（−30%・n=123）。`maxMemoryUsed` は **231MB → 230MB で不変**＝ RAM は元から余っており、効いたのは純粋に CPU。8 の実行予算（30秒）にも効く。⚠️ 費用は「相殺」ではなく GB-秒で**約 +10%**（月 $0.003 相当＝誤差） |
 | 8 | **cron 4本 → `sst.aws.Cron`（EventBridge Scheduler）＋中継 Lambda** | Hobby の日次制限と ±59分のゆらぎから解放され、`release-reservations` を10分毎に戻せる |
 | 9 | **非本番に `X-Robots-Tag: noindex`＋アクセス制限**（`edge.viewerResponse.injection`） | dev の `robots.txt` は実測で `Allow: /`。加えて Vercel は Deployment Protection で dev URL を守っていたが **AWS に同等機能は無い**。⚠️ **アクセス制限に WAF を使わないこと** — web ACL をもう1枚作ると **$5/月が上乗せ**され、移行後コストが月$13〜16 になる。**CloudFront Function のベーシック認証（無料）**にするか、6 の web ACL を dev のディストリビューションにも共有する |
 
@@ -816,7 +816,7 @@ cron の実行時刻（18:00–19:00 UTC）は取得範囲外。「cron のロ�
 - 📌 server Lambda は **x86_64 / 2048MB**（7 で 1024 から変更）、image-optimizer は **arm64 / 1536MB**。
   **アーキテクチャの不一致は残っている。** 7 では arm64 化を**意図的に見送った**（1回のデプロイで
   メモリと arch の2変数を動かすと効果を切り分けられないため）。やるなら単独タスクとして、
-  7 が残した数値（ウォーム p50 49.0ms / コールド p50 1,073ms）を基準に測る。sharp の arm64 ビルドは実証済み。
+  7 が残した数値（ウォーム p50 51.3ms / コールド p50 1,068ms）を基準に測る。sharp の arm64 ビルドは実証済み。
 
 ---
 
@@ -890,7 +890,7 @@ DynamoDB 初回接続）。`open-next.config.ts` の warmer は `'dummy'` で無
 > **メモリ不足の解消ではなく純粋な CPU 増強**である、という裏付けが取れた。RAM は余っている。
 
 ✅ **7 の実施後（2026-07-31）にこの節の前提が改善した。** 2048MB 化でコールド経路の実行時間は
-**p50 2,041ms → 1,073ms（−47%）**、ウォーム p50 も 73.8ms → 49.0ms。上表の「コールド 3.11s」は
+**p50 2,041ms → 1,068ms（−48%）**、ウォーム p50 も 73.8ms → 51.3ms。上表の「コールド 3.11s」は
 その分だけ短くなる（`initDuration` は 164ms → 157ms でほぼ不変＝縮んだのは初回実行そのもの）。
 **ただしコールド経路が消えたわけではなく、依然 1 秒級**である。
 → **warmer の要否はこの新しい水準で判断する。** `open-next.config.ts` の warmer は `'dummy'` のままで、
