@@ -557,7 +557,7 @@ AWS リソースはまだ1つも作っていない。ローカルで確かめら
 
 | # | 作業 | 期待できる結果 |
 |---|---|---|
-| 5 | 🟡 **Function URL の保護** → `protection: "oac-with-edge-signing"` | **コードは投入済み（2026-07-29）。`sst.config.ts` に `protection: 'oac-with-edge-signing'` を追加した。**<br>🔴 **ただしデプロイするまで Function URL は開いたまま**＝`AuthType` は今も `NONE` で、直叩きは 200 を返す（2026-07-29 実測）。完了は `npm run sst:deploy -- --stage dev` の後に `AuthType: AWS_IAM` を確認して初めて成立する。これが無いと 6・9・12 が全部無意味になる（下記参照） |
+| 5 | ✅ **Function URL の保護** → `protection: "oac-with-edge-signing"` | **完了（2026-07-29・dev で実測検証）。** `AuthType` は server / image-optimizer とも `NONE` → **`AWS_IAM`**、直叩きは `/`・`/admin` とも **200 → 403**。CloudFront 経由は `/`=200・`/api/health`=200・`/admin`=307 で**変化なし**。host 依存ロジックも無傷（`/api/admin` への POST は正しい Origin で middleware を通過し、詐称・欠落は 403）。これで 6・9・12 が意味を持つようになった |
 | 6 | **WAF 3ルール**を AWS WAF で再構築（**CLOUDFRONT スコープ＝us-east-1 固定**・`transform.cdn` で `webAclArn`） | 切替時に admin の防御層（rate limit / challenge / geo≠JP deny）が消えるのを防ぐ。現行しきい値をそのまま移せばよい（過去1時間の実測は Allowed 1.3k / Denied 1 / Challenged 0 / Rate Limited 0） |
 | 7 | **`server.memory` 1024 → 2048 MB** | Lambda の CPU はメモリ比例で **1769MB＝1vCPU 相当**。現行 1024MB は約 0.58vCPU ＝ **Vercel(1vCPU/2GB) の6割**。GB-秒課金なので実行時間が縮めば費用は相殺され、8 の実行予算にも効く |
 | 8 | **cron 4本 → `sst.aws.Cron`（EventBridge Scheduler）＋中継 Lambda** | Hobby の日次制限と ±59分のゆらぎから解放され、`release-reservations` を10分毎に戻せる |
@@ -591,6 +591,16 @@ AWS リソースはまだ1つも作っていない。ローカルで確かめら
 > 「URL が開いたまま」ではない。
 > → 検証は `aws lambda get-function-url-config` の **`AuthType: AWS_IAM`** を主、
 >   `get-policy` の残骸確認を従とする。
+>
+> ✅ **実施後の実測（2026-07-29）— 予測より綺麗になった。** SST は
+> `WebPublicFunctionUrlAccess*` 系を**実際に削除した**（デプロイログに `Deleted` が出る）。
+> 結果、server のポリシーは **4本**:
+> `Principal:*` の残骸2本（`FunctionURLAllowPublicAccess` は `AuthType=NONE` 条件付き、
+> `FunctionURLAllowInvokeAction` は `InvokedViaFunctionUrl` 条件付き＝どちらも AWS_IAM 下では不発）
+> ＋ **CloudFront 用の2本**（`Principal: cloudfront.amazonaws.com` かつ
+> `AWS:SourceArn` がディストリビューション ARN に限定）。
+> 「5本すべて残る」という上の記述は**予測であって実測ではなかった**。実際の残骸は2本。
+> 不発であることは直叩き 403 で裏が取れている。
 > 📌 SST 4.17.1 のソースを確認したところ、`protection` は **server と image-optimizer の
 >   両方**の Function URL を `authorization: "iam"` に切り替える（`ssr-site.ts`）。
 >   image-optimizer 側の露出も同じ1手で塞がる。
@@ -665,7 +675,7 @@ AWS リソースはまだ1つも作っていない。ローカルで確かめら
 
 | # | 作業 | 期待できる結果 |
 |---|---|---|
-| 13 | **production ステージへデプロイ → 検証 → DNS 切替** | シークレットは Vercel 本番の30本と突合済みで過不足なし（AWSキー3本は廃止、BLOB3本は不要、`SITE_URL`/`NEXTAUTH_URL` はコードに `https://www.sikocoffee.com` のフォールバックあり） |
+| 13 | **production ステージへデプロイ → 検証 → DNS 切替** | シークレットは Vercel 本番の30本と突合済みで過不足なし（AWSキー3本は廃止、BLOB3本は不要、`SITE_URL`/`NEXTAUTH_URL` はコードに `https://www.sikocoffee.com` のフォールバックあり）<br>🔴 **5 の確認をこのステージでもやり直すこと**（`protection` はステージごとに効くので、dev で閉じても production は別）。`AuthType: AWS_IAM` と直叩き 403 を再測する<br>🔴 **4 の積み残し②③をここで回収する**: production のバケット名で `AVATAR_UPLOAD_BUCKET` / `AVATAR_BUCKET` / `AVATAR_BASE_URL` を Vercel 本番にも入れ、Vercel の IAM ユーザーに S3 権限を足す。**それまで本番のアイコン設定は 503 のまま**（オーナー判断・2026-07-29。理由は `docs/pour-over-log.md` 教訓20） |
 | 14 | **soak 期間**。**Vercel は `main` 自動デプロイのまま生かす** | ロールバック先が常に最新に保たれる。この期間は Vercel の設定に一切触らない |
 
 ### 第5群｜後始末
@@ -894,6 +904,7 @@ server Lambda のインラインポリシーは DynamoDB を `siko-coffee-previe
 | CloudFront アクセスログ | **無効** ＝ エッジのリクエスト可視性ゼロ |
 | SQS の DLQ / RedrivePolicy | **無し** ＝ ISR 再検証の失敗が4日後に黙って消える |
 | CloudFront CustomErrorResponses | **0 件** ＝ 5xx で CloudFront 素のエラーページが出る |
+| `next/image` の**存在しない画像**の扱い | **AWS 500 / Vercel 400**（2026-07-29 実測。正常な画像は両方とも最適化されて 200 なので **5 とは無関係の既存差分**）。10 のアラームを 5xx 率で組むと、**壊れたリンク1本でページングされうる**点に注意 |
 | GuardDuty / Security Hub / Config / Access Analyzer | **0 / 未購読 / 0 / 0** |
 | IAM パスワードポリシー | **未設定** |
 | Route53 ヘルスチェック | **未設定** ＝ ロールバックは手動 DNS 変更のみ |

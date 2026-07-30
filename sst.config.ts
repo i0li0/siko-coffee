@@ -342,8 +342,14 @@ export default $config({
 //        同一バケットのプレフィクス分割だと CDN が pending/ も配信してしまう。
 //     🔴 **13 より前に本番で使い始める**ので、サイト本体の CloudFront には相乗りできない
 //        （本番ステージがまだ無い）。アバター専用の Router を立てている。
-//     ⚠️ マージしただけでは本番は 503。デプロイ後に AVATAR_* の3本を **Vercel 側にも**入れ、
-//        Vercel の IAM ユーザーに S3 権限を足すこと（AWS 側は実行ロールで付与済み）。
+//     ✅ dev のバケット・ライフサイクル・Router は作成済み（2026-07-29 実測: 両バケットとも
+//        Public Access Block 4項目 True / 直 GET は 403 / pending/ は1日で失効 / CORS は PUT のみ）。
+//     🔴 **本番のアップロードは 503 のまま据え置き（13 まで）。オーナー判断・2026-07-29。**
+//        「AVATAR_* を Vercel 側にも入れる」の *同じバケット* とは **production ステージの**
+//        バケットのことで、それが出来るのは 13。dev のバケットに本番を向けると
+//        本番ユーザーの画像が `sst remove --stage dev` で消える。
+//        → **②Vercel への env 投入と ③Vercel の IAM ユーザーへの S3 権限追加は 13 の直後に行う。**
+//        本番の avatarUrl 保持者は 0 件なので、それまでの実害は「新しいアイコンを設定できない」だけ。
 //
 // ── 第2群｜AWS の防御と実行基盤（dev で検証）────────────────────
 //  5. ✅ **Function URL の保護**。OpenNext/SST は server Lambda の Function URL をオリジンにするが
@@ -351,7 +357,10 @@ export default $config({
 //     このままだと 6 の WAF も 11 の apex 正規化も 9 の noindex も**全部迂回される**。
 //     さらに直叩きでは CFF を通らないため **x-forwarded-host を偽装できる**。
 //     → 上の Nextjs コンポーネントに `protection: 'oac-with-edge-signing'` を入れた（理由は同所）。
-//     ⚠️ **コードだけでは閉じない。`npm run sst:deploy -- --stage dev` を打って初めて AuthType が変わる。**
+//     ✅ **dev で実測済み（2026-07-29）**: AuthType は server / image-optimizer とも AWS_IAM、
+//        直叩きは 200 → **403**、CloudFront 経由は 200/200/307 で不変、host 依存ロジックも無傷
+//        （/api/admin への POST が正しい Origin のみ通過）。
+//     ⚠️ **ステージごとにデプロイして初めて閉じる。** production ステージ（13）でも同じ確認をすること。
 //     ✅ host 依存ロジック（CSRF/NextAuth/passkey/checkout）は**壊れない**。ORP は元から
 //        Managed-AllViewerExceptHostHeader で、CFF が x-forwarded-host に退避している（検証済み）。
 //     ⚠️ 完了判定は `get-function-url-config` の **AuthType: AWS_IAM**。公開ステートメントは
@@ -404,6 +413,9 @@ export default $config({
 //
 // ── 第4群｜切替と観測 ────────────────────────────────────────
 // 13. production ステージへデプロイ → 検証 → DNS 切替。
+//     🔴 **5 の確認をこのステージでもやり直す**（protection はステージごと。dev で閉じても production は別）。
+//     🔴 **4 の積み残し②③をここで回収する**（production のバケット名で Vercel に AVATAR_* を投入し、
+//        Vercel の IAM ユーザーに S3 権限を追加）。それまで本番のアイコン設定は 503 のまま。
 //     シークレットは Vercel 本番の30本と突合済み（AWSキー3本は廃止・BLOB3本は不要）。
 // 14. soak 期間。**Vercel は main 自動デプロイのまま生かしておく**＝ロールバック先が常に最新に保たれる。
 //     この期間、Vercel の設定には一切触らない。
