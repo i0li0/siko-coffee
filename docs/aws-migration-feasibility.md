@@ -397,7 +397,7 @@ AWS リソースはまだ1つも作っていない。ローカルで確かめら
 🔴 **番号そのものは正しく、動かしていない。** 直したのは合計だけなので、
 「20タスク」と書かれた古い文書が別の割り当てを指しているわけではない。
 
-**進捗（2026-07-31 時点）: 11 / 21。** 第0群 4/4・第1群 4/4・第2群 3/5（5・6・7 が完了）。次は 8（cron → EventBridge）。
+**進捗（2026-07-31 時点）: 12 / 21。** 第0群 4/4・第1群 4/4・第2群 4/5（5・6・7・8 が完了）。次は 9（非本番の noindex ＋ アクセス制限）。
 
 ### 第0群｜地ならし（本番影響ゼロ・依存なし・並行可）
 
@@ -568,7 +568,7 @@ AWS リソースはまだ1つも作っていない。ローカルで確かめら
 | 5 | ✅ **Function URL の保護** → `protection: "oac-with-edge-signing"` | **完了（2026-07-29・dev で実測検証）。** `AuthType` は server / image-optimizer とも `NONE` → **`AWS_IAM`**、直叩きは `/`・`/admin` とも **200 → 403**。CloudFront 経由は `/`=200・`/api/health`=200・`/admin`=307 で**変化なし**。host 依存ロジックも無傷（`/api/admin` への POST は正しい Origin で middleware を通過し、詐称・欠落は 403）。これで 6・9・12 が意味を持つようになった |
 | 6 | ✅ **WAF 3ルール**を AWS WAF で再構築（**CLOUDFRONT スコープ＝us-east-1 固定**・`transform.cdn` で `webAclArn`） | **完了（2026-07-31・dev で実測検証）。** 値は推測せず `vercel firewall rules ls --json` の live 設定から採った。公開パス（`/`・`/shop`・`/api/health`）は **200 のまま不変**、`/admin`・`/admin/login` は 307/200 → **202（`x-amzn-waf-action: challenge`）**、`/api/admin/auth` は変更前 40連打が全部 405 だったのに対し **T+45s 以降は 403**。レート制限のブロック中も `/admin` は 202 のままで、**スコープが2つのログインパスに限定されている**ことも確認できた |
 | 7 | ✅ **`server.memory` 1024 → 2048 MB** | **完了（2026-07-31・dev で実測検証）。** Lambda の CPU はメモリ比例で **1769MB＝1vCPU 相当**なので 0.58vCPU → **約1.16vCPU**。同一手段（CloudWatch Logs の `REPORT`）で前後を測り、コールド／ウォームを分けた結果、**コールド p50 は 2,041ms → 1,068ms（−48%・n=21）**、ウォーム p50 は 73.8ms → 51.3ms（−30%・n=123）。`maxMemoryUsed` は **231MB → 230MB で不変**＝ RAM は元から余っており、効いたのは純粋に CPU。8 の実行予算（30秒）にも効く。⚠️ 費用は「相殺」ではなく GB-秒で**約 +10%**（月 $0.003 相当＝誤差） |
-| 8 | **cron 4本 → `sst.aws.Cron`（EventBridge Scheduler）＋中継 Lambda** | Hobby の日次制限と ±59分のゆらぎから解放され、`release-reservations` を10分毎に戻せる |
+| 8 | ✅ **cron 4本 → `sst.aws.CronV2`（EventBridge Scheduler）＋中継 Lambda** | **完了（2026-07-31・dev で実測検証）。** 経路は **Scheduler → 中継 Lambda（`src/functions/cronRelay.ts`）→ server の Function URL を SigV4 で直叩き → cron ルート**。`release-reservations` は日次から **`rate(10 minutes)`** へ、`instagram-refresh` は月次から **週次**へ（依存 E・L の余裕を 60日で2回→8回にする）。認可は **①Function URL の IAM ②`CRON_SECRET`** の2重。<br>🔴 **`Authorization` ヘッダは SigV4 が占有する**ため `CRON_SECRET` は **`x-cron-secret`** で渡す。判定は `src/lib/cronAuth.ts` に集約し、soak のあいだ Vercel の `Authorization: Bearer` 形式も受け続ける（撤去は 16 の⑧）<br>🔴 **production のスケジュールは DISABLED で作られる**。`sst.config.ts` の `CRON_STAGES` に `'production'` を足すのは **13 で DNS を切り替えたあと**（それまで Vercel の cron が生きており、二重実行すると `instagram-refresh` が競合する） |
 | 9 | **非本番に `X-Robots-Tag: noindex`＋アクセス制限**（`edge.viewerResponse.injection`） | dev の `robots.txt` は実測で `Allow: /`。加えて Vercel は Deployment Protection で dev URL を守っていたが **AWS に同等機能は無い**。⚠️ **アクセス制限に WAF を使わないこと** — web ACL をもう1枚作ると **$5/月が上乗せ**され、移行後コストが月$13〜16 になる。**CloudFront Function のベーシック認証（無料）**にするか、6 の web ACL を dev のディストリビューションにも共有する |
 
 > 🔴 **5 が最優先である理由**: OpenNext/SST は server Lambda の **Function URL をオリジン**にするが、
@@ -613,14 +613,23 @@ AWS リソースはまだ1つも作っていない。ローカルで確かめら
 >   両方**の Function URL を `authorization: "iam"` に切り替える（`ssr-site.ts`）。
 >   image-optimizer 側の露出も同じ1手で塞がる。
 
-> ⚠️ **8 の設計上の制約が2つある**。
-> ① **`sst.aws.Cron` の実体は EventBridge Scheduler ではなく EventBridge Rules**（`cron.ts` は
-> `cloudwatch.EventRule` を作る。2026-07-28 にソースで確認・従来の記述は誤り）。
-> Rules は **API Destinations で任意の HTTPS を叩ける**が、認証は API key / Basic / OAuth のみで
-> **SigV4 に対応しない**。5 で Function URL を IAM 認証にする以上、**中継 Lambda は依然として必須**
-> （結論は変わらない）。中継 Lambda は同一アカウントなので、**実行ロールのアイデンティティ側ポリシーに
-> `lambda:InvokeFunctionUrl` を与えれば足りる**（リソースポリシーの追加は不要）。
-> 対象の URL は `web.nodes.server.url` から取れる。
+> ✅ **8 の設計上の制約は2つとも予測どおりだったが、コンポーネントの選択が違った**（実装時に判明）。
+> ① **`sst.aws.Cron` は 4.17.1 で deprecated**。「実体は EventBridge Rules（Scheduler ではない）」は
+> `Cron` については正しいが、**非推奨でない `sst.aws.CronV2` は EventBridge Scheduler**
+> （`cron-v2.ts` は `scheduler.Schedule` を作る）で、`timezone` と `retries` を持つ。**採用したのは `CronV2`**。
+> どちらにせよ **中継 Lambda は必須**である点は変わらない — Rules の API Destinations が対応する認証は
+> API key / Basic / OAuth のみで **SigV4 に対応せず**、Scheduler はそもそも任意の HTTPS を叩けない。
+> 中継 Lambda は同一アカウントなので、**実行ロールのアイデンティティ側ポリシーに
+> `lambda:InvokeFunctionUrl` を与えれば足りた**（リソースポリシーの追加は不要）。
+> 対象の URL は `web.nodes.server.url` から取れる（実際に `.apply()` 越しに取得している）。
+> 📌 **4本のスケジュールは1つの中継関数を共有する。** `CronV2` の `function` に `Function`
+> インスタンスを渡すと `functionBuilder` が**再利用**し（新規作成しない）、叩くパスは
+> `event: { path }` で渡せる。関数を4つ作る必要はない。
+> 🔴 **`Authorization` ヘッダは SigV4 の署名が占有する**ため、`CRON_SECRET` を同居させられない。
+> → 中継からは **`x-cron-secret`** で送り、cron ルート側は `src/lib/cronAuth.ts` で
+> **両形式（Vercel の `Authorization: Bearer` と AWS の `x-cron-secret`）を受ける**。
+> soak 期間は両方の経路が本番を担うので、どちらか一方に寄せてはいけない。
+> この秘密ヘッダは **SigV4 の署名対象に含めてある**ので、経路上で差し替えれば署名検証で落ちる。
 > ② 中継先は CloudFront ではなく **Function URL を直接**にする。**CloudFront のオリジン ReadTimeout は
 > 実測 30 秒**しかなく、Vercel が関数にくれていた 300 秒から **1/10 に縮む**ため。
 > 📌 この 30 秒はディストリビューション設定ではなく **KVS の metadata**（`origin.timeouts.readTimeout`）にあり、
@@ -702,7 +711,7 @@ AWS リソースはまだ1つも作っていない。ローカルで確かめら
 
 | # | 作業 | 期待できる結果 |
 |---|---|---|
-| 13 | **production ステージへデプロイ → 検証 → DNS 切替** | シークレットは Vercel 本番の30本と突合済みで過不足なし（AWSキー3本は廃止、BLOB3本は不要、`SITE_URL`/`NEXTAUTH_URL` はコードに `https://www.sikocoffee.com` のフォールバックあり）<br>🔴 **5 の確認をこのステージでもやり直すこと**（`protection` はステージごとに効くので、dev で閉じても production は別）。`AuthType: AWS_IAM` と直叩き 403 を再測する<br>🔴 **4 の積み残し②③をここで回収する**: production のバケット名で `AVATAR_UPLOAD_BUCKET` / `AVATAR_BUCKET` / `AVATAR_BASE_URL` を Vercel 本番にも入れ、Vercel の IAM ユーザーに S3 権限を足す。**それまで本番のアイコン設定は 503 のまま**（オーナー判断・2026-07-29。理由は `docs/pour-over-log.md` 教訓20） |
+| 13 | **production ステージへデプロイ → 検証 → DNS 切替** | シークレットは Vercel 本番の30本と突合済みで過不足なし（AWSキー3本は廃止、BLOB3本は不要、`SITE_URL`/`NEXTAUTH_URL` はコードに `https://www.sikocoffee.com` のフォールバックあり）<br>🔴 **5 の確認をこのステージでもやり直すこと**（`protection` はステージごとに効くので、dev で閉じても production は別）。`AuthType: AWS_IAM` と直叩き 403 を再測する<br>🔴 **4 の積み残し②③をここで回収する**: production のバケット名で `AVATAR_UPLOAD_BUCKET` / `AVATAR_BUCKET` / `AVATAR_BASE_URL` を Vercel 本番にも入れ、Vercel の IAM ユーザーに S3 権限を足す。**それまで本番のアイコン設定は 503 のまま**（オーナー判断・2026-07-29。理由は `docs/pour-over-log.md` 教訓20）<br>🔴 **8 の cron を DNS 切替の“あと”で有効化する**: `sst.config.ts` の `CRON_STAGES` に `'production'` を足して再デプロイ。それまで production のスケジュールは DISABLED で作られており、cron は Vercel 側だけが回している。**先に有効化すると `instagram-refresh` が Vercel と二重に走り、長期トークンの更新が競合する** |
 | 14 | **soak 期間**。**Vercel は `main` 自動デプロイのまま生かす** | ロールバック先が常に最新に保たれる。この期間は Vercel の設定に一切触らない |
 
 ### 第5群｜後始末
@@ -724,8 +733,12 @@ AWS リソースはまだ1つも作っていない。ローカルで確かめら
 > ⑦ 🆕 **`src/lib/stage.ts` の `isVercelPlatform()` と `src/app/layout.tsx` の呼び出し、
 > `@vercel/analytics` / `@vercel/speed-insights` の依存**（3 で入れたもの。⑥と同じく
 > `src/__tests__/stage.test.ts` の該当 describe も同時に消す）
+> ⑧ 🆕 **`src/lib/cronAuth.ts` の `Authorization: Bearer` 分岐**（8 で AWS 経路を `x-cron-secret` に
+> 移したあとも、soak 中の Vercel cron のために残してあるもの。`src/__tests__/cronAuth.test.ts` の
+> 該当ケースも同時に消す）。あわせて **`vercel.json` の `crons` 4本**も②で一緒に消える
 >
 > 📌 ⑥⑦とも `src/lib/stage.ts` に集めてあるので、**撤去の起点は `grep -rn VERCEL src/`** でよい。
+> ⑧ は `src/lib/cronAuth.ts` の1関数に閉じている。
 
 ### 🔴 動かせない依存
 
@@ -735,14 +748,14 @@ AWS リソースはまだ1つも作っていない。ローカルで確かめら
 | B | **5 と 4** | 5 の Lambda@Edge はボディ 1MB 上限。だから 4 は presigned S3 PUT で作る |
 | C | **6 → 13** | WAF 不在で切り替えると admin の防御が丸ごと消える |
 | D | **1 → 13** | Sentry が無効のままだと切替後に何を観測しても信用できない |
-| E | **8 → 15** | Instagram の長期トークンは月次 cron で延長する方式。**60日止まると恒久失効**し手動再認証が要る |
+| E | **8 → 15** | Instagram の長期トークンは cron で延長する方式。**60日止まると恒久失効**し手動再認証が要る。✅ 8 で **月次 → 週次**にしたので、60日の窓に取れる更新機会は 2回 → **8回**になった |
 | F | **11 → 13** | 24時間以上前でないと旧 TTL が失効せず引き下げが効かない |
 | G | **12 → 16** | 先に `redirects()` を消すと apex が無正規化になる。テストも同時に消さないと CI が落ちる |
 | H | **0-b（CAA 修正）→ 12** | Amazon CA が CAA で許可されていないと ACM が発行できず、`domain` 設定が完了しない |
 | ~~I~~ | ~~**Amplify 削除 → 12**~~ | ✅ **解消済（2026-07-28）**。0-c で association・app・role・孤児 CNAME を削除した |
 | **J** | **0-a → 以降のすべてのデプロイ** | npm 10 でビルドすると sharp が wasm32 に落ち、**next/image が無言で壊れたままデプロイが成功する** |
 | **K** | **9.5 → 14** | 無いと soak 中に main へ push するたび Vercel だけが進み、本番の AWS が取り残される |
-| **L** | **Instagram トークンの更新確認 → 15** | E の実体を絶対日付にしたもの。実測 `refreshedAt: 2026-07-01T00:51:23Z` / `expiresIn: 5184000`（60日）＝ **失効は 2026-08-30**。次の自動更新機会は **2026-08-01 00:00 UTC**（`0 0 1 * *`）。8/1 の成否は `siko-coffee-config` の `refreshedAt` を読めば判定できる（Vercel のログは不要）。落とすと恒久失効し手動再認証 |
+| **L** | **Instagram トークンの更新確認 → 15** | E の実体を絶対日付にしたもの。実測 `refreshedAt: 2026-07-01T00:51:23Z` / `expiresIn: 5184000`（60日）＝ **失効は 2026-08-30**。🔴 **AWS 側の週次スケジュールは 13 まで DISABLED** なので、それまで頼りになるのは **Vercel の月次 `0 0 1 * *`＝ 2026-08-01 00:00 UTC の1回きり**。成否は `siko-coffee-config` の `refreshedAt` を読めば判定できる（Vercel のログは不要）。落とすと恒久失効し手動再認証 |
 
 ### Pour Over に含めないもの（分離実施）
 

@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { verifyBearer } from '@/lib/safeCompare'
+import { isAuthorizedCron } from '@/lib/cronAuth'
 import { cronStart, cronDone, cronFail } from '@/lib/cronLog'
 import { sweepPoTimeouts } from '@/lib/pos'
 
@@ -13,8 +13,8 @@ export const preferredRegion = ['hnd1']
 // ※ Vercel Hobby の cron は日次までのため、これは**バックストップ**。実際の適時性は
 //   発注一覧の読み取り時 sweep（roaster/pos・admin/pos）が担う。
 export async function GET(req: Request) {
-  // Vercel Cron は Authorization: Bearer {CRON_SECRET} を自動付与する
-  if (!verifyBearer(req.headers.get('authorization'), process.env.CRON_SECRET)) {
+  // Vercel Cron は `Authorization: Bearer`、AWS の中継 Lambda は `x-cron-secret`（Pour Over 8）。
+  if (!isAuthorizedCron(req)) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
