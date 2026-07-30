@@ -558,7 +558,7 @@ AWS リソースはまだ1つも作っていない。ローカルで確かめら
 | # | 作業 | 期待できる結果 |
 |---|---|---|
 | 5 | ✅ **Function URL の保護** → `protection: "oac-with-edge-signing"` | **完了（2026-07-29・dev で実測検証）。** `AuthType` は server / image-optimizer とも `NONE` → **`AWS_IAM`**、直叩きは `/`・`/admin` とも **200 → 403**。CloudFront 経由は `/`=200・`/api/health`=200・`/admin`=307 で**変化なし**。host 依存ロジックも無傷（`/api/admin` への POST は正しい Origin で middleware を通過し、詐称・欠落は 403）。これで 6・9・12 が意味を持つようになった |
-| 6 | **WAF 3ルール**を AWS WAF で再構築（**CLOUDFRONT スコープ＝us-east-1 固定**・`transform.cdn` で `webAclArn`） | 切替時に admin の防御層（rate limit / challenge / geo≠JP deny）が消えるのを防ぐ。現行しきい値をそのまま移せばよい（過去1時間の実測は Allowed 1.3k / Denied 1 / Challenged 0 / Rate Limited 0） |
+| 6 | ✅ **WAF 3ルール**を AWS WAF で再構築（**CLOUDFRONT スコープ＝us-east-1 固定**・`transform.cdn` で `webAclArn`） | **完了（2026-07-31・dev で実測検証）。** 値は推測せず `vercel firewall rules ls --json` の live 設定から採った。公開パス（`/`・`/shop`・`/api/health`）は **200 のまま不変**、`/admin`・`/admin/login` は 307/200 → **202（`x-amzn-waf-action: challenge`）**、`/api/admin/auth` は変更前 40連打が全部 405 だったのに対し **T+45s 以降は 403**。レート制限のブロック中も `/admin` は 202 のままで、**スコープが2つのログインパスに限定されている**ことも確認できた |
 | 7 | **`server.memory` 1024 → 2048 MB** | Lambda の CPU はメモリ比例で **1769MB＝1vCPU 相当**。現行 1024MB は約 0.58vCPU ＝ **Vercel(1vCPU/2GB) の6割**。GB-秒課金なので実行時間が縮めば費用は相殺され、8 の実行予算にも効く |
 | 8 | **cron 4本 → `sst.aws.Cron`（EventBridge Scheduler）＋中継 Lambda** | Hobby の日次制限と ±59分のゆらぎから解放され、`release-reservations` を10分毎に戻せる |
 | 9 | **非本番に `X-Robots-Tag: noindex`＋アクセス制限**（`edge.viewerResponse.injection`） | dev の `robots.txt` は実測で `Allow: /`。加えて Vercel は Deployment Protection で dev URL を守っていたが **AWS に同等機能は無い**。⚠️ **アクセス制限に WAF を使わないこと** — web ACL をもう1枚作ると **$5/月が上乗せ**され、移行後コストが月$13〜16 になる。**CloudFront Function のベーシック認証（無料）**にするか、6 の web ACL を dev のディストリビューションにも共有する |
@@ -627,6 +627,25 @@ AWS リソースはまだ1つも作っていない。ローカルで確かめら
 > 費用は **$5/ACL + $1/rule×3 = 月$8**。実測トラフィック（Edge Requests 103K/月・転送 1.26GB・
 > Function Invocations 5.5K）では CloudFront も Lambda も無料枠に収まるため、
 > **移行後の AWS コストの大半がこの WAF**。「コスト差は月$5程度」という当初の見積りは WAF を勘定していなかった。
+>
+> 🔴 **web ACL はステージごとに1枚できる**（Pulumi のスタックが別なので共有されない）。
+> dev と production が並ぶ soak 期間は **月$16** になり、予算通知のしきい値 $12 を超える。
+> → `sst.config.ts` の `WAF_STAGES` を配列で持たせてあるので、**dev の検証が済んだら 'dev' を外す**。
+> ⚠️ 9（非本番のアクセス制限）で web ACL を**もう1枚作らないこと**。作るならこの ACL を共有する。
+>
+> 📌 **移行で変わる挙動が2つある（どちらも緩む方向ではない）。**
+> ① レート制限の窓: Vercel の `fixed_window` は窓の境界でカウンタがリセットされるが、
+>    AWS は約30秒ごとに直近の窓を再評価し、**レートがしきい値を下回るまでブロックが続く**。
+>    実測でも 80連打の直後は素通り（405）で、**T+45s から 403 に変わった**＝集計に遅れがある。
+> ② challenge の免疫時間: 既定 300 秒。App Router のクライアント遷移は同じ `/admin*` へ
+>    RSC の fetch を投げ、**実測でそれも 202（challenge）になる**。トークンが切れた瞬間の遷移が
+>    challenge の HTML を受け取るのを避けるため、`challengeConfig` で **3600 秒**に伸ばしてある
+>    （admin セッションは 25 時間なので依然その内側）。
+>
+> 📌 **海外渡航時の一時解除の手順が Vercel と変わる。** Vercel は
+> `vercel firewall rules disable <id>` だったが、AWS では web ACL が IaC 管理下にあるので
+> **`AdminGeoRestrictJp` の action を `count` に変えてデプロイし直す**のが正しい（教訓6）。
+> コンソールや CLI で直接いじると次の `sst deploy` で黙って巻き戻る。
 
 ### 第3群｜切替準備
 

@@ -17,7 +17,9 @@
 | AWS アカウント | `654512230021` / 主リージョン `ap-northeast-1` |
 | Route53 ホストゾーン | `Z0281603UIOXAI0M8P8R`（`sikocoffee.com`） |
 | **ワイルドカード証明書** | `arn:aws:acm:us-east-1:654512230021:certificate/01195002-424e-44b1-9425-aff38c879765`<br>`sikocoffee.com` + `*.sikocoffee.com` / Issuer: Amazon / **2027-02-11 まで** |
-| dev の CloudFront | `https://d3ejmruzea0u7a.cloudfront.net` |
+| dev の CloudFront | `https://d3ejmruzea0u7a.cloudfront.net`（ディストリビューション `E2KRJP9NS7XXWC`） |
+| dev の AvatarCdn | `https://d22i7l6gqogfbs.cloudfront.net`（`E1PTASTVVV2I6E`・**WAF は付けない**） |
+| dev の web ACL（6） | `AdminWaf-a3068a4` / us-east-1 / scope `CLOUDFRONT`<br>⚠️ **ステージごとに1枚できる**（$8/月）。`WAF_STAGES` で作るステージを絞る |
 | デプロイの入口 | **`npm run sst:deploy -- --stage <stage>`**（素の `npx sst deploy` を打たない） |
 
 ### 🔴 消してはいけない DNS レコード
@@ -273,6 +275,72 @@ S3 権限を足す。本番で `avatarUrl` を持つユーザーは0件なので
 | AvatarCdn 経由で未存在オブジェクト | 403（OAC 経由で到達＝バケットは非公開のまま） |
 
 ⚠️ **本番の 503 は意図的に据え置いた**（オーナー判断・2026-07-29）。理由は下の教訓20。
+
+---
+
+### 2026-07-31 — 第2群 6（Vercel WAF → AWS WAF）
+
+**着手の前提**: 5 が入って Function URL が `AWS_IAM` になっているので、CloudFront の前段に
+置く統制がようやく意味を持つ（依存 A）。着手前に `wafv2 list-web-acls --scope CLOUDFRONT` が
+**0件**であることを実測して「未着手」を裏取りしてから始めた。
+
+**移す値は推測しなかった**。`vercel firewall rules ls --json` で live 設定を採取:
+
+| Vercel の現行ルール | 条件 | 動作 |
+|---|---|---|
+| Admin login rate limit | path pre `/api/admin/auth` OR `/api/admin/passkey/login` | IP 別 30req/60s（fixed_window）超過で deny |
+| Admin UI bot challenge | path pre `/admin` | challenge |
+| Admin geo restrict JP | (`/admin` OR `/api/admin`) AND geo_country ≠ JP | deny |
+
+**実施したこと**: `sst.config.ts` に `aws.wafv2.WebAcl`（`scope: 'CLOUDFRONT'`）を足し、
+`sst.aws.Nextjs` の `transform.cdn` で `webAclArn` を渡した。
+📌 `sst.aws.Nextjs` に web ACL の引数は無く、内部の `Cdn` コンポーネントを transform するのが唯一の経路。
+📌 CloudFront の API はこのフィールドを紛らわしくも `webAclId` と呼ぶが、WAFv2 では **ARN を渡す**。
+📌 `scope: 'CLOUDFRONT'` の web ACL は **us-east-1 にしか作れない**ので、この1リソースにだけ
+`new aws.Provider('WafUsEast1', { region: 'us-east-1' })` を付けた。
+
+**変更前の値を同じ手段で採ってからデプロイした（教訓14）**:
+
+| 見たもの | 変更前 | 変更後 |
+|---|---|---|
+| `wafv2 list-web-acls --scope CLOUDFRONT` | **0件** | **1件**（`AdminWaf-a3068a4`） |
+| ディストリビューションの `WebACLId`（Web app） | 空 | **web ACL の ARN** |
+| ディストリビューションの `WebACLId`（AvatarCdn） | 空 | **空のまま**（意図どおり） |
+| `/` `/shop` `/api/health` | 200 / 200 / 200 | **200 / 200 / 200（不変）** |
+| `/admin` | 307 | **202**（`x-amzn-waf-action: challenge`） |
+| `/admin/login` | 200 | **202** |
+| `/api/admin/auth`（GET） | 405 | 405（challenge の対象外＝Vercel と同じ） |
+| `/api/admin/auth` を 40連打 | **40/40 が 405** | 直後は素通り → **T+45s から 40/40 が 403** |
+| POST `/api/admin/auth` | 403 | **403（不変）**＝middleware の origin 検査は無傷 |
+
+✅ **レート制限のブロックは2つのログインパスに正しく限定されている**。403 が返っている最中でも
+`/` は 200、`/admin` は 202（challenge）のままだった＝ scope-down statement が効いている。
+
+✅ **エンコードと大文字での迂回も塞がっている**。`/%61dmin/login` と `/Admin/login` はどちらも
+**202**。`textTransformations` に `URL_DECODE` と `LOWERCASE` を2段掛けたのが効いている
+（素の `uriPath` だけを見ると、WAF が見る文字列とアプリが解釈するパスがずれる）。
+
+🔴 **計画に無かった発見: challenge の既定 300 秒では admin の画面遷移に割り込む。**
+App Router のクライアント遷移は同じ `/admin*` へ RSC の fetch を投げるが、`RSC: 1` を付けた
+リクエストも **202（challenge）**になることを実測した。トークンが切れた瞬間の遷移は
+RSC ペイロードの代わりに challenge の HTML を受け取ることになる。
+→ `challengeConfig.immunityTimeProperty.immunityTime` を **3600 秒**にした。
+admin セッションは 25 時間（`api/admin/auth` の cookie `maxAge`）なので依然その内側。
+challenge は静かな JS チャレンジで、突破コストは 5 分でも 1 時間でも変わらない
+（実効的な統制は geo deny とレート制限のほう）。
+
+⚠️ **費用はステージごとに掛かる。** web ACL は Pulumi のスタック単位なので dev と production で
+共有されず、soak 期間は **月$16**＝予算通知のしきい値 $12 を超える。
+→ `WAF_STAGES` を配列にしてあるので、**dev の検証が済んだら 'dev' を外して再デプロイする**。
+
+⚠️ **海外渡航時の一時解除の手順が変わった。** Vercel は `vercel firewall rules disable <id>` で
+よかったが、AWS では web ACL が IaC 管理下にある。**`AdminGeoRestrictJp` の action を
+`count` に変えてデプロイし直す**のが正しい（教訓6）。コンソールで直接いじると次の
+`sst deploy` で黙って巻き戻る。
+
+📌 **geo ルールは日本からは検証しきれない。** ルールの構造（`NOT geo[JP] AND (/admin OR /api/admin)`）
+は `get-web-acl` で確認し、**日本からのアクセスがブロックされないこと**（負の対照）は実測したが、
+「国外からは deny される」ことそのものは未確認。13 の後に国外経路で確かめる。
 
 ---
 
@@ -539,3 +607,17 @@ CSRF チェックは `src/middleware.ts` の `matcher`（`/admin/*` と `/api/ad
 別の顔だった。共通しているのは **指標が測定対象に反応するかを先に確かめていない**こと。
 → **プローブを撃つ前に「この経路は測りたいコードを通るか」を確認する。**
 反応することは、**わざと落ちる条件を1つ混ぜれば**その場で分かる。
+
+### 22. 「効いていない」と「まだ効いていない」を、時間を置かずに判定しない
+
+6 のレート制限をデプロイ直後に検証したとき、`/api/admin/auth` への **80連打が全部 405** で
+素通りした。設定は正しいのに「移行に失敗した」と読める結果である。
+実際は AWS のレートベースルールが **約30秒ごとに直近の窓を再集計する**ためで、
+同じプローブを **T+45s に撃ち直したら 40/40 が 403** になった。
+
+Vercel の `fixed_window` は窓の境界で即座に切り替わるので、この遅れは移行で新しく現れた性質だった。
+
+→ **状態が非同期に伝播する統制（WAF・CDN・DNS・IAM）は、1回の観測で結論を出さない。**
+→ 判定する前に「この仕組みの状態は何秒で伝わるか」を先に調べ、**その周期をまたいで2回測る**。
+教訓14・21 は「指標が反応するか」を問うていたが、これは **「いつ反応するか」** を勘定に入れる話。
+1回目の素通りを設定ミスと解釈して config をいじり始めていたら、正しい設定を壊していた。
