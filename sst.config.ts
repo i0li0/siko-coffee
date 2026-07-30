@@ -133,6 +133,159 @@ export default $config({
       routes: { '/*': { bucket: avatarPublic } },
     })
 
+    // ── admin の防御層（Pour Over 6: Vercel WAF → AWS WAF）──────────
+    //
+    // Vercel の現行3ルールをそのまま移す。値は推測ではなく
+    // `vercel firewall rules ls --json` で採取した live 設定（2026-07-31）:
+    //   ① Admin login rate limit … /api/admin/auth と /api/admin/passkey/login に
+    //      IP 別 30req/60s（fixed_window）→ 超過で deny
+    //   ② Admin UI bot challenge … /admin* に challenge
+    //   ③ Admin geo restrict JP  … /admin* と /api/admin/* で geo_country ≠ JP なら deny
+    //
+    // 🔴 **対象パスは admin に限定する。** 全パスへ広げると 8（EventBridge → cron）を
+    //    自分でレート制限することになる。公開ページは default action の allow を素通りする。
+    //
+    // 🔴 **scope: 'CLOUDFRONT' の web ACL は us-east-1 にしか作れない。** アプリ本体は
+    //    ap-northeast-1 なので、このリソースだけ専用のプロバイダを立てる。
+    //
+    // ⚠️ **依存 A**: 5（Function URL の保護）が無いと Lambda の Function URL を直叩きする
+    //    だけでこの web ACL は丸ごと迂回される。5 は適用済み（AuthType: AWS_IAM）。
+    //
+    // ⚠️ **海外渡航時は admin にアクセスできなくなる**（③）。Vercel では
+    //    `vercel firewall rules disable <id>` で一時解除していたが、AWS では
+    //    この配列から 'JP' 以外の国を足すのではなく、**ルールの action を count に変えて
+    //    デプロイし直す**のが手順になる（IaC 管理下のリソースを CLI で触らない＝教訓6）。
+    //
+    // 💰 $5/web ACL + $1/rule × 3 = **月$8**。移行後の AWS コストの大半がこれ。
+    //    ステージごとに1枚できるため、dev と production が並ぶ soak 期間は倍かかる。
+    //    → **dev での検証が済んだら下の配列から 'dev' を外して再デプロイする。**
+    //    ⚠️ 9（非本番のアクセス制限）で web ACL を**もう1枚作らないこと**（+$5/月）。
+    //       必要ならこの ACL を dev のディストリビューションと共有する。
+    const WAF_STAGES = ['production', 'dev']
+
+    // Vercel の path 条件は前方一致（op: 'pre'）。AWS では uriPath の STARTS_WITH に対応する。
+    // ⚠️ 変換を2段かけているのは **エンコードによる迂回を塞ぐため**。素の uriPath だけを見ると
+    //    `/%61dmin` や `/Admin` が条件をすり抜けたうえで、オリジン側では /admin として
+    //    解決されうる（Next のルーティングは大文字小文字を区別するので後者は 404 になるが、
+    //    「WAF が見た文字列」と「アプリが解釈するパス」がずれること自体を作らない）。
+    const pathStartsWith = (
+      prefix: string,
+    ): aws.types.input.wafv2.WebAclRuleStatement => ({
+      byteMatchStatement: {
+        searchString: prefix,
+        positionalConstraint: 'STARTS_WITH',
+        fieldToMatch: { uriPath: {} },
+        textTransformations: [
+          { priority: 0, type: 'URL_DECODE' },
+          { priority: 1, type: 'LOWERCASE' },
+        ],
+      },
+    })
+
+    const wafVisibility = (metricName: string) => ({
+      cloudwatchMetricsEnabled: true,
+      sampledRequestsEnabled: true,
+      metricName,
+    })
+
+    // 「admin 系のどれか」＝ UI と API の両方。③が対象にするパス。
+    const adminPaths: aws.types.input.wafv2.WebAclRuleStatement = {
+      orStatement: {
+        statements: [pathStartsWith('/admin'), pathStartsWith('/api/admin')],
+      },
+    }
+
+    const adminWaf = WAF_STAGES.includes($app.stage)
+      ? new aws.wafv2.WebAcl(
+          'AdminWaf',
+          {
+            scope: 'CLOUDFRONT',
+            // 公開サイトは素通り。ルールに当たった admin 系だけを止める。
+            defaultAction: { allow: {} },
+            visibilityConfig: wafVisibility(`siko-${$app.stage}-admin-waf`),
+            // 🔴 **既定の 300 秒では admin の画面遷移に割り込む。**
+            // App Router のクライアント遷移は同じ /admin* パスへ RSC の fetch を投げる。
+            // dev で実測したところ `RSC: 1` 付きのリクエストも 202（challenge）になったので、
+            // トークンが切れた瞬間の遷移は RSC ペイロードの代わりに challenge の HTML を受け取る。
+            // admin セッションは 25 時間（api/admin/auth の cookie maxAge）なので、
+            // 免疫時間を1時間に伸ばして「セッション中に何度も割り込まれる」のを避ける。
+            // 📌 challenge は静かな JS チャレンジで、突破コストはヘッドレスブラウザなら
+            //    1時間でも5分でも変わらない。実効的な統制は geo deny とレート制限のほう。
+            challengeConfig: { immunityTimeProperty: { immunityTime: 3600 } },
+            rules: [
+              // ① レート制限。Vercel と同じ「IP 別 30req/60s を超えたら deny」。
+              // 📌 挙動は完全に同じではない: Vercel の fixed_window は窓の境界でカウンタが
+              //    リセットされるが、AWS は約30秒ごとに直近の窓を再評価し、**レートが
+              //    しきい値を下回るまでブロックが続く**。移行で緩む方向ではないので採用する。
+              {
+                name: 'AdminLoginRateLimit',
+                priority: 0,
+                action: { block: {} },
+                statement: {
+                  rateBasedStatement: {
+                    limit: 30,
+                    evaluationWindowSec: 60,
+                    aggregateKeyType: 'IP',
+                    scopeDownStatement: {
+                      orStatement: {
+                        statements: [
+                          pathStartsWith('/api/admin/auth'),
+                          pathStartsWith('/api/admin/passkey/login'),
+                        ],
+                      },
+                    },
+                  },
+                },
+                visibilityConfig: wafVisibility(
+                  `siko-${$app.stage}-admin-login-rate-limit`,
+                ),
+              },
+              // ② geo 制限。**Vercel では challenge の後ろにあったが、ここでは前に置く。**
+              //    どちらの順でも最終的な応答は deny で同じだが、これから拒否する相手に
+              //    challenge のページを出して往復させる意味がないため。
+              {
+                name: 'AdminGeoRestrictJp',
+                priority: 1,
+                action: { block: {} },
+                statement: {
+                  andStatement: {
+                    statements: [
+                      {
+                        notStatement: {
+                          statements: [
+                            { geoMatchStatement: { countryCodes: ['JP'] } },
+                          ],
+                        },
+                      },
+                      adminPaths,
+                    ],
+                  },
+                },
+                visibilityConfig: wafVisibility(
+                  `siko-${$app.stage}-admin-geo-restrict-jp`,
+                ),
+              },
+              // ③ bot チャレンジ。対象は **UI の /admin* だけ**（Vercel も同じ条件で、
+              //    /api/admin/* は前方一致に含まれない）。API に challenge を掛けると
+              //    JS を実行できないクライアントが正規の経路でも通れなくなる。
+              //    📌 challenge は CAPTCHA と違い**追加課金が無い**（CAPTCHA は $0.40/1000）。
+              {
+                name: 'AdminUiBotChallenge',
+                priority: 2,
+                action: { challenge: {} },
+                statement: pathStartsWith('/admin'),
+                visibilityConfig: wafVisibility(
+                  `siko-${$app.stage}-admin-ui-bot-challenge`,
+                ),
+              },
+            ],
+          },
+          {
+            provider: new aws.Provider('WafUsEast1', { region: 'us-east-1' }),
+          },
+        )
+      : undefined
+
     new sst.aws.Nextjs('Web', {
       // ⚠️ 必須のピン留め。SST の既定は OpenNext **3.9.14**（Next.js 15 想定）で、
       // 本プロジェクトの Next 16.2.11 は OpenNext **4.1.0** 以上でないとビルドできない
@@ -180,6 +333,17 @@ export default $config({
       // ⚠️ **外す（"none" に戻す）ときは 5〜10 分かかる。** Lambda@Edge のレプリカが
       //   全エッジロケーションから消えるまで削除がブロックされるため。
       protection: 'oac-with-edge-signing',
+
+      // ── WAF の紐付け（Pour Over 6）───────────────────────────────
+      // `sst.aws.Nextjs` には webAcl を渡す引数が無く、内部の Cdn コンポーネントの
+      // `webAclArn` を transform 経由で埋めるのが唯一の経路（Cdn は直接生成しない）。
+      // 📌 CloudFront の API はこのフィールドを紛らわしくも `webAclId` と呼ぶが、
+      //    WAFv2 では **ARN を渡す**。SST 側が名前の差を吸収している。
+      transform: {
+        cdn: (cdnArgs) => {
+          if (adminWaf) cdnArgs.webAclArn = adminWaf.arn
+        },
+      },
 
       // Lambda 実行ロールに与える権限。**静的 AWS キーを一切置かないための要**。
       // アプリは既定の認証情報チェーンで DynamoDB / SES / Rekognition を叩くので、
@@ -368,10 +532,16 @@ export default $config({
 //        protection は server と image-optimizer の**両方**を iam に切り替える。
 //     "oac" は POST に x-amz-content-sha256 を要求し、Stripe webhook・NextAuth・フォーム送信が
 //     壊れるため**採用不可**（本プロジェクトは POST ルートが20本以上）。
-//  6. WAF 3ルール（rate limit / bot challenge / geo≠JP deny）を AWS WAF で再構築。
+//  6. ✅ **WAF 3ルールを AWS WAF で再構築**（上の `AdminWaf`）。値は推測ではなく
+//     `vercel firewall rules ls --json` の live 設定から採った（rate limit 30req/60s・
+//     /admin* に challenge・admin 系で geo≠JP なら deny）。
 //     **CLOUDFRONT スコープ＝us-east-1 固定**。`transform.cdn` で `webAclArn` を渡す（直接の引数は無い）。
-//     ⚠️ 対象パスは現行どおり /admin* と /api/admin/* に限定する。全パスに広げると 8 の cron を自分で止める。
-//     費用は $5/ACL + $1/rule×3 = **月$8**＝移行後の AWS コストの大半がこれ。
+//     ⚠️ 対象パスは現行どおり /admin* と /api/admin/* に限定してある。全パスに広げると 8 の cron を自分で止める。
+//     ✅ **dev で実測済み（2026-07-31）**: 公開パスは 200 のまま不変、/admin と /admin/login は
+//        200/307 → **202（x-amzn-waf-action: challenge）**、/api/admin/auth は 40連打で全部 405 →
+//        **T+45s 以降 403**（レート制限が発火）。`/%61dmin` `/Admin` も 202＝変換2段が効いている。
+//     ⚠️ **ステージごとに1枚できる**（$8/月）。dev の検証が済んだら WAF_STAGES から 'dev' を外す。
+//     ⚠️ 13 で production ステージにもデプロイして同じ確認をすること（5 と同じ理由）。
 //  7. server.memory を 1024 MB → **2048 MB** へ。Lambda の CPU はメモリ比例で 1769MB＝1vCPU 相当のため、
 //     現行 1024MB は約0.58vCPU ＝ **Vercel(1vCPU/2GB) の6割**。GB-秒課金なので実行時間が縮めば費用は相殺。
 //  8. cron 4本 → `sst.aws.Cron`（実体は **EventBridge Rules**。Scheduler ではない・4.17.1 で確認）
