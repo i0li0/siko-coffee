@@ -397,7 +397,7 @@ AWS リソースはまだ1つも作っていない。ローカルで確かめら
 🔴 **番号そのものは正しく、動かしていない。** 直したのは合計だけなので、
 「20タスク」と書かれた古い文書が別の割り当てを指しているわけではない。
 
-**進捗（2026-07-31 時点）: 10 / 21。** 第0群 4/4・第1群 4/4・第2群 2/5（5 と 6 が完了）。
+**進捗（2026-07-31 時点）: 11 / 21。** 第0群 4/4・第1群 4/4・第2群 3/5（5・6・7 が完了）。次は 8（cron → EventBridge）。
 
 ### 第0群｜地ならし（本番影響ゼロ・依存なし・並行可）
 
@@ -567,7 +567,7 @@ AWS リソースはまだ1つも作っていない。ローカルで確かめら
 |---|---|---|
 | 5 | ✅ **Function URL の保護** → `protection: "oac-with-edge-signing"` | **完了（2026-07-29・dev で実測検証）。** `AuthType` は server / image-optimizer とも `NONE` → **`AWS_IAM`**、直叩きは `/`・`/admin` とも **200 → 403**。CloudFront 経由は `/`=200・`/api/health`=200・`/admin`=307 で**変化なし**。host 依存ロジックも無傷（`/api/admin` への POST は正しい Origin で middleware を通過し、詐称・欠落は 403）。これで 6・9・12 が意味を持つようになった |
 | 6 | ✅ **WAF 3ルール**を AWS WAF で再構築（**CLOUDFRONT スコープ＝us-east-1 固定**・`transform.cdn` で `webAclArn`） | **完了（2026-07-31・dev で実測検証）。** 値は推測せず `vercel firewall rules ls --json` の live 設定から採った。公開パス（`/`・`/shop`・`/api/health`）は **200 のまま不変**、`/admin`・`/admin/login` は 307/200 → **202（`x-amzn-waf-action: challenge`）**、`/api/admin/auth` は変更前 40連打が全部 405 だったのに対し **T+45s 以降は 403**。レート制限のブロック中も `/admin` は 202 のままで、**スコープが2つのログインパスに限定されている**ことも確認できた |
-| 7 | **`server.memory` 1024 → 2048 MB** | Lambda の CPU はメモリ比例で **1769MB＝1vCPU 相当**。現行 1024MB は約 0.58vCPU ＝ **Vercel(1vCPU/2GB) の6割**。GB-秒課金なので実行時間が縮めば費用は相殺され、8 の実行予算にも効く |
+| 7 | ✅ **`server.memory` 1024 → 2048 MB** | **完了（2026-07-31・dev で実測検証）。** Lambda の CPU はメモリ比例で **1769MB＝1vCPU 相当**なので 0.58vCPU → **約1.16vCPU**。同一手段（CloudWatch Logs の `REPORT`）で前後を測り、コールド／ウォームを分けた結果、**コールド p50 は 2,041ms → 1,068ms（−48%・n=21）**、ウォーム p50 は 73.8ms → 51.3ms（−30%・n=123）。`maxMemoryUsed` は **231MB → 230MB で不変**＝ RAM は元から余っており、効いたのは純粋に CPU。8 の実行予算（30秒）にも効く。⚠️ 費用は「相殺」ではなく GB-秒で**約 +10%**（月 $0.003 相当＝誤差） |
 | 8 | **cron 4本 → `sst.aws.Cron`（EventBridge Scheduler）＋中継 Lambda** | Hobby の日次制限と ±59分のゆらぎから解放され、`release-reservations` を10分毎に戻せる |
 | 9 | **非本番に `X-Robots-Tag: noindex`＋アクセス制限**（`edge.viewerResponse.injection`） | dev の `robots.txt` は実測で `Allow: /`。加えて Vercel は Deployment Protection で dev URL を守っていたが **AWS に同等機能は無い**。⚠️ **アクセス制限に WAF を使わないこと** — web ACL をもう1枚作ると **$5/月が上乗せ**され、移行後コストが月$13〜16 になる。**CloudFront Function のベーシック認証（無料）**にするか、6 の web ACL を dev のディストリビューションにも共有する |
 
@@ -813,8 +813,10 @@ cron の実行時刻（18:00–19:00 UTC）は取得範囲外。「cron のロ�
   state 自体は S3（`sst-state-…`・バージョニング有効）なので失われない。
   **`sst deploy` と AWS 操作は main から**、コード変更は従来どおり worktree + PR、という分担にする。
   `next.config.ts` の `repoRoot()` が worktree 用の探索分岐を持つ点でもメイン側が素直。
-- 📌 server Lambda は **x86_64 / 1024MB**、image-optimizer は **arm64 / 1536MB** で不一致。
-  7 でメモリを上げる際に arm64 へ揃える余地がある（sharp の arm64 ビルドは実証済み）。
+- 📌 server Lambda は **x86_64 / 2048MB**（7 で 1024 から変更）、image-optimizer は **arm64 / 1536MB**。
+  **アーキテクチャの不一致は残っている。** 7 では arm64 化を**意図的に見送った**（1回のデプロイで
+  メモリと arch の2変数を動かすと効果を切り分けられないため）。やるなら単独タスクとして、
+  7 が残した数値（ウォーム p50 51.3ms / コールド p50 1,068ms）を基準に測る。sharp の arm64 ビルドは実証済み。
 
 ---
 
@@ -887,6 +889,15 @@ DynamoDB 初回接続）。`open-next.config.ts` の warmer は `'dummy'` で無
 > 🔑 **`maxMemoryUsed` は 231MB / 1024MB。** つまり作業 7 の 2048MB 化は
 > **メモリ不足の解消ではなく純粋な CPU 増強**である、という裏付けが取れた。RAM は余っている。
 
+✅ **7 の実施後（2026-07-31）にこの節の前提が改善した。** 2048MB 化でコールド経路の実行時間は
+**p50 2,041ms → 1,068ms（−48%）**、ウォーム p50 も 73.8ms → 51.3ms。上表の「コールド 3.11s」は
+その分だけ短くなる（`initDuration` は 164ms → 157ms でほぼ不変＝縮んだのは初回実行そのもの）。
+**ただしコールド経路が消えたわけではなく、依然 1 秒級**である。
+→ **warmer の要否はこの新しい水準で判断する。** `open-next.config.ts` の warmer は `'dummy'` のままで、
+有効化すると常時課金が増える。dev の 15.6% というコールド率は**巡回トラフィック主体の dev 固有の値**で、
+本番の実際のコールド率は 13 の後でないと分からない。**warmer の判断は 13 以降に持ち越すのが妥当**
+（今決めても根拠になる本番の数字が無い）。
+
 ### ⚠️ 4（Blob → S3）は画像モデレーションを黙って外してしまう
 
 `src/app/api/account/avatar/route.ts` は Rekognition `DetectModerationLabels` を
@@ -951,8 +962,9 @@ server Lambda のインラインポリシーは DynamoDB を `siko-coffee-previe
 - Function URL の `InvokeMode` は両方 **`BUFFERED`** ＝ レスポンスストリーミング無効、同期呼び出しの
   **6MB レスポンス上限**が効く。ただし最大ページは 240KB、Suspense の使用も3ページのみ＝**現状は実害なし**。
   将来 admin 集約 API が育ったときの天井として記憶しておく。
-- server Lambda は **x86_64 / 1024MB**、image-optimizer は **arm64 / 1536MB** と**アーキテクチャが不一致**。
-  7 でメモリを上げる際に arm64 へ揃える余地がある（sharp の件で arm64 ビルドは実証済み）。
+- server Lambda は **x86_64 / 2048MB**（7 で 1024 から変更済み）、image-optimizer は **arm64 / 1536MB**。
+  **アーキテクチャの不一致は未解消**。7 では 2変数を同時に動かさないため arm64 化を見送った＝**独立した未着手項目**
+  として残っている（sharp の件で arm64 ビルドは実証済みなので、やること自体の障壁は低い）。
 - IPv6 は**無効**だが **Vercel 側にも AAAA が無い**ため退行ではない。有効化は費用ゼロの改善。
 - `MinimumProtocolVersion` は `TLSv1`（既定証明書ゆえ強制）。12 で ACM 証明書を付けたら
   **TLSv1.2_2021** にすること。
