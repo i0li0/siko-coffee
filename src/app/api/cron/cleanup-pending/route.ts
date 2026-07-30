@@ -1,7 +1,7 @@
 import { ScanCommand, DeleteCommand } from '@aws-sdk/lib-dynamodb';
 import { NextResponse } from 'next/server';
 import { getDocClient, TABLE } from '@/lib/db';
-import { verifyBearer } from '@/lib/safeCompare';
+import { isAuthorizedCron } from '@/lib/cronAuth';
 import { cronStart, cronDone, cronFail } from '@/lib/cronLog';
 
 export const preferredRegion = ['hnd1'];
@@ -13,8 +13,8 @@ const ROUTE = 'cron/cleanup-pending';
 const MAX_AGE_MS = 24 * 60 * 60 * 1000;
 
 export async function GET(req: Request) {
-  // Vercel Cron は Authorization: Bearer {CRON_SECRET} を自動付与する
-  if (!verifyBearer(req.headers.get('authorization'), process.env.CRON_SECRET)) {
+  // Vercel Cron は `Authorization: Bearer`、AWS の中継 Lambda は `x-cron-secret`（Pour Over 8）。
+  if (!isAuthorizedCron(req)) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 

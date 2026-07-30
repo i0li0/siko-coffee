@@ -20,6 +20,7 @@
 | dev の CloudFront | `https://d3ejmruzea0u7a.cloudfront.net`（ディストリビューション `E2KRJP9NS7XXWC`） |
 | dev の AvatarCdn | `https://d22i7l6gqogfbs.cloudfront.net`（`E1PTASTVVV2I6E`・**WAF は付けない**） |
 | dev の web ACL（6） | `AdminWaf-a3068a4` / us-east-1 / scope `CLOUDFRONT`<br>⚠️ **ステージごとに1枚できる**（$8/月）。`WAF_STAGES` で作るステージを絞る |
+| dev の cron（8） | EventBridge Scheduler 4本 → 中継 Lambda `siko-coffee-dev-CronRelayFunction-*` 1つ<br>⚠️ **production は DISABLED で作られる**。有効化は `CRON_STAGES` に `'production'` を足す＝ **13 の DNS 切替後** |
 | デプロイの入口 | **`npm run sst:deploy -- --stage <stage>`**（素の `npx sst deploy` を打たない） |
 
 ### 🔴 消してはいけない DNS レコード
@@ -34,7 +35,7 @@
 
 | | 期限 | 確認方法 |
 |---|---|---|
-| Instagram 長期トークン | **2026-08-30 失効** / 次の更新機会 2026-08-01 00:00 UTC | `siko-coffee-config` の `INSTAGRAM_ACCESS_TOKEN` の `refreshedAt`（Vercel のログは不要） |
+| Instagram 長期トークン | **2026-08-30 失効** / 次の更新機会 **2026-08-01 00:00 UTC（Vercel の月次・この1回きり）** | `siko-coffee-config` の `INSTAGRAM_ACCESS_TOKEN` の `refreshedAt`（Vercel のログは不要）<br>🔴 8 で AWS 側を**週次**にしたが、production のスケジュールは 13 まで DISABLED なので、それまで頼れるのは Vercel の月次だけ |
 | ワイルドカード証明書 | 2027-02-11 | 使用開始後に ACM が自動更新（検証レコードが要る） |
 
 ---
@@ -398,6 +399,90 @@ esbuild・@sentry/cli など5パッケージの postinstall が飛ぶ。**依存
 server / image-optimizer とも **`AWS_IAM`** のままで 5 も無傷。`sharp` も Linux arm64 ネイティブのまま
 （`verify:image-optimizer`）。`tsc` / `eslint` / `vitest`（27ファイル・258件）すべて green。
 
+### 2026-07-31 — 第2群 8（Vercel Cron → EventBridge Scheduler ＋ 中継 Lambda）
+
+**経路**: EventBridge Scheduler → 中継 Lambda（`src/functions/cronRelay.ts`）→
+**server の Function URL を SigV4 で直叩き** → `/api/cron/*`。CloudFront は通さない。
+
+**📌 使ったのは `sst.aws.Cron` ではなく `sst.aws.CronV2`。**
+計画には「`sst.aws.Cron` の実体は EventBridge **Rules** で Scheduler ではない」と書いてあり、
+それ自体は正しかったが、**4.17.1 で `Cron` は deprecated** で、後継の `CronV2` は
+`scheduler.Schedule` を作る＝**Scheduler が正**だった。`CronV2` は `timezone` と `retries` を持つ。
+中継 Lambda が要る理由は変わらない — Rules の API Destinations は **SigV4 非対応**、
+Scheduler はそもそも任意の HTTPS を叩けない。
+
+**🔑 4本のスケジュールで中継関数は1つ。** `CronV2` の `function` に `Function` インスタンスを渡すと
+`functionBuilder` が**再利用**する（ARN 文字列でなくても新規作成されない）。叩くパスは
+`event: { path }` で渡し、Scheduler の `Target.Input` に JSON として載る。関数を4つ作る必要はなかった。
+
+**🔴 計画に無かった衝突: `Authorization` ヘッダの取り合い。**
+cron ルートは Vercel Cron が付ける `Authorization: Bearer <CRON_SECRET>` を検査していたが、
+**SigV4 の署名も `Authorization` に入る**。同居できない。
+→ 中継からは **`x-cron-secret`** で送り、判定を `src/lib/cronAuth.ts` に集約して
+**両形式を受ける**ようにした。soak 期間は Vercel と AWS の両方が本番の cron を担うので、
+どちらか一方に寄せると片側が静かに 401 で止まる（教訓9）。撤去は 16 の⑧。
+📌 この秘密ヘッダは **SigV4 の署名対象に含めてある**（`SignedHeaders` に `x-cron-secret` が入る）ので、
+経路上で足したり差し替えたりすれば署名検証で落ちる。
+
+**SigV4 は自前で書いた（`src/functions/sigv4.ts`・約60行）。** 署名対象が
+「固定ホスト・ASCII のみのパス・クエリなし・GET」に限られ、S3 の二重エンコードもチャンク転送も
+presign も出てこないため。依存を足さない理由は、この関数が**実行ロールの一時資格情報を扱う**こと、
+および SST の Function ビルド（esbuild）に tsconfig paths の解決を期待しない方針にしていること。
+🔑 **正しさは外部の権威ある値で固定した**: AWS 公式 SigV4 テストスイートの `get-vanilla` ベクタ
+（期待 `Signature=5fa00fa3…fbf31`）と、実装時に `@smithy/signature-v4` 5.5.1 で
+**同じ入力を署名させて一致を確認した**「一時資格情報＋カスタムヘッダ＋lambda サービス」の2本。
+回帰テストは `src/__tests__/sigv4.test.ts`。
+
+**スケジュールの変更（Hobby の日次制限が外れた分の使い道）**
+
+| ルート | Vercel（旧） | AWS（新） | 理由 |
+|---|---|---|---|
+| `release-reservations` | `10 18 * * *` | **`rate(10 minutes)`** | 8 の本命。在庫確保の失効戻しは日次では粗すぎる |
+| `instagram-refresh` | `0 0 1 * *`（月次） | **`cron(0 0 ? * SUN *)`（週次）** | 依存 E・L。60日の窓で更新機会が **2回 → 8回**。Instagram 側は24時間以上経過したトークンしか更新できないので、これ以上詰めても無意味 |
+| `cleanup-pending` | `0 18 * * *` | `cron(0 18 * * ? *)` | 変更なし（UTC のまま・発火時刻も同じ） |
+| `po-timeouts` | `20 18 * * *` | `cron(20 18 * * ? *)` | 同上 |
+
+**🔴 production のスケジュールは DISABLED で作られる。**
+13 の時点では **Vercel の cron がまだ生きている**（soak 中は Vercel を触らない方針）。両方が回ると
+`instagram-refresh` が同じ長期トークンを競合して更新し、無効な方が残りうる。
+→ `sst.config.ts` の `CRON_STAGES` に `'production'` を足すのは **13 で DNS を切り替えたあと**。
+WAF_STAGES と同じ「1か所の配列で切り替える」形に揃えてある。
+
+**dev での実測（2026-07-31）**
+
+- 変更前のベースライン: `aws scheduler list-schedules` **0件** / `aws events list-rules` **0件**（教訓14）。
+- デプロイ後: スケジュール **4本**、いずれも `Target.Arn` が**同じ中継 Lambda**、`RetryPolicy` 2、
+  `FlexibleTimeWindow: OFF`（Vercel Hobby の ±59分のゆらぎが消えた）。
+  `instagram-refresh` だけ **DISABLED**（dev には本番の設定テーブルが無く、動かすと毎回
+  `no Instagram token found` で Sentry が鳴るだけのため）。
+- **通し動作**: 中継を `aws lambda invoke` で叩くと3本とも **200**。
+  中継側 `[cron] relay /api/cron/release-reservations done 126ms status=200 {"released":0,...}`、
+  **server 側にも** `[cron] cron/cleanup-pending done 22ms {"deleted":0,"skipped":0}` が出ており、
+  「200 が返った」ではなく**ルートが実際に走った**ことまで確認できた。
+  📌 中継とアプリで `[cron]` 接頭辞を揃えてあるので、Logs Insights の
+  `filter @message like /^\[cron\]/` は**別々のロググループでも同じ絞り込みで拾える**。
+- 🔑 **スケジュールが自力で発火することまで見た**（手で `invoke` して 200 が返るのは
+  「中継が正しい」証明にしかならない）。`rate(10 minutes)` は作成の約10分後 **22:42:08 UTC** に
+  1回目、**22:52 台**に2回目が出た。どちらも手動実行とは別の RequestId で、
+  手動を撃っていない時間帯に立っている。＝ **Scheduler → 中継 → アプリの鎖が全部つながっている**。
+  📌 スケジュール実行はほぼ毎回コールド（2,501〜2,681ms）。10分間隔では実行環境が保たれないため。
+  cron の性質上まったく問題にならないが、「中継は毎回 2.5 秒かかる」ものとして見ておく。
+- **負の対照を3つ撃った**（教訓19・21）:
+  ① 署名なしで Function URL 直叩き → **403**、`x-cron-secret` だけ付けても **403**
+     （＝ IAM 認証が主で、秘密は二重化にすぎないことの確認）
+  ② 中継に許可外のパス（`/api/admin/dashboard`）を渡す → `fetch` せず **Unhandled error**
+  ③ `sst.config.ts` に不正な `schedule` / `retries` を入れて `npm run check:sst` → **TS2322 が2件**
+     （型検査がこの新しいブロックを本当に見ていることの確認）
+- 中継の実測: `Max Memory Used` **106〜116 MB**（割当 256MB）/ Duration 139〜210ms。
+  ⚠️ **実行予算は 30 秒のまま**。CloudFront の 30 秒は回避したが、**server Lambda 側の
+  `timeout` も 30 秒**だから。伸ばすなら `server.timeout` を上げる（CloudFront 経由の web は
+  CF 側で切れるので挙動は変わらない）が、1デプロイ2変数を避けて別作業にした。
+
+⚠️ **中継 Lambda 自身の失敗は Sentry に出ない**（`@sentry/nextjs` は Next 側のコードで、この関数は
+node 組み込み以外に依存しない方針）。CloudWatch の Errors メトリクスにアラームを張ること。
+→ **10（CloudWatch Alarms）の対象に「CronRelay の Errors」を明示的に含める。**
+
+
 ---
 
 ## 教訓
@@ -694,3 +779,53 @@ Vercel の `fixed_window` は窓の境界で即座に切り替わるので、こ
 → より一般に、**「終わったこと」と「意図した状態になったこと」は別々に確かめる。**
    デプロイの成否は終了ステータスではなく、**変えたはずの属性を AWS に問い合わせて**確定させる。
    これは教訓10「状態は書いた場所の数だけ古くなる」の実行時版にあたる。
+
+### 24. 計画が名指ししたコンポーネントが、実装時点でも推奨とは限らない
+
+計画には「**`sst.aws.Cron` の実体は EventBridge Scheduler ではなく Rules**（ソースで確認・
+従来の記述は誤り）」と、わざわざ**訂正済みの事実**として書いてあった。実装のためにもう一度
+4.17.1 のソースを開いたら、その `Cron` に **`@deprecated Use CronV2 instead`** が付いており、
+後継の `CronV2` は `scheduler.Schedule` を作る＝**「Scheduler ではない」は非推奨の側の話**だった。
+
+結論（中継 Lambda が要る）は変わらなかったが、そのまま `Cron` を使っていれば
+非推奨コンポーネントの上に cron 基盤を作り、`timezone` と `retries` も得られなかった。
+
+→ **「ソースで確認済み」と書かれた前提ほど、次に触るときは確認の“範囲”を疑う。**
+   前回は「実体は何か」を確かめており、**「これを使うべきか」は確かめていなかった**。
+→ ライブラリの API を指す記述には、**確認した日付とバージョン**に加えて
+   **非推奨でないこと**まで含めて残す（教訓10 の「状態は古くなる」の API 版）。
+
+### 25. 1つのヘッダに2つの認証情報は載らない
+
+5 で Function URL を IAM 認証にした結果、8 の中継は `Authorization` に **SigV4 の署名**を入れる。
+ところが cron ルートは Vercel Cron の **`Authorization: Bearer <CRON_SECRET>`** を検査していた。
+「認証を1段足す」つもりが、**既存の認証情報の置き場を奪っていた**。
+
+気づいたのは実装中で、デプロイして 401 を見てからではなかったが、
+**計画のどこにも書かれていなかった**（「CRON_SECRET と二重の防御になる」とだけ書いてあった）。
+
+→ **認証方式を足すときは、鍵の強さではなく「搬送路」が空いているかを先に見る。**
+   ヘッダ・クエリ・Cookie は有限の資源で、標準ヘッダほど先客がいる。
+→ 対処は `x-cron-secret` への退避だが、**退避先を署名対象に含める**ところまでが1組
+   （含めないと「経路上で差し替え放題の平文ヘッダ」になり、二重化のつもりが穴になる）。
+
+### 26. 「npm 10 で入れる」は、そのマシンの npm 10 が同じ CPU とは限らない
+
+教訓（既存）として「**依存の導入は npm 10、npm 11 は `sst deploy` のときだけ**」を守り、
+worktree で `npm ci` を npm 10 で流した。テストは全部通ったのに **`npx sst install` が
+「sst-darwin-arm64 が無い」で落ちた**。
+
+原因は nvm の構成で、このマシンで npm 10 を持つ Node（v22.16.0）が **x64 ビルド**、
+npm 11 を持つ Node（v22.17.0）が **arm64 ビルド**だったこと。`npm ci` は実行中の Node の
+`process.arch` に従って optional な**プラットフォーム別パッケージ**を選ぶので、
+`sst-darwin-x64` と `@img/sharp-darwin-x64` が入り、arm64 版が入らなかった。
+
+対処は arm64 の npm で不足分だけを足すこと（`npm i --no-save --no-package-lock
+sst-darwin-arm64@… @img/sharp-darwin-arm64@…`）。**lockfile と package.json は無変更**を
+`git status` で確認した。プラットフォーム別パッケージは prebuilt バイナリで postinstall を
+持たないため、npm 11 で入れても教訓の前提（install スクリプトが飛ぶ）に抵触しない。
+
+→ **「どの npm か」を指定する運用ルールは、暗黙に「どの Node か」も決めている。**
+   バージョンだけでなく **`node -p process.arch`** まで込みで一致しているかを見る。
+→ 症状は「テストは通るのにツールだけ動かない」。**インストールの成否は
+   `added N packages` ではなく、必要なバイナリの実在で確かめる**（教訓23 の同型）。

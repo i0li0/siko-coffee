@@ -286,7 +286,7 @@ export default $config({
         )
       : undefined
 
-    new sst.aws.Nextjs('Web', {
+    const web = new sst.aws.Nextjs('Web', {
       // ⚠️ 必須のピン留め。SST の既定は OpenNext **3.9.14**（Next.js 15 想定）で、
       // 本プロジェクトの Next 16.2.11 は OpenNext **4.1.0** 以上でないとビルドできない
       // （4.1.0 の peer は `>=15.5.21 <16 || >=16.2.11`）。
@@ -467,6 +467,113 @@ export default $config({
         timeout: '30 seconds',
       },
     })
+
+    // ── cron（Pour Over 8: Vercel Cron → EventBridge Scheduler）──────
+    //
+    // 経路は **Scheduler → 中継 Lambda → server の Function URL（SigV4）→ cron ルート**。
+    //
+    // 🔑 **なぜ中継 Lambda を挟むのか。** EventBridge は Rules の API Destinations で
+    //    任意の HTTPS を叩けるが、対応する認証は API key / Basic / OAuth だけで
+    //    **SigV4 に対応しない**。5 で Function URL を `AWS_IAM` にした以上、
+    //    署名できる実行主体が要る。Scheduler に至っては HTTPS を直接叩けない。
+    //    ＝ **中継は省略できない**（計画段階からの結論。SST 4.17.1 のソースでも再確認）。
+    //
+    // 🔑 **なぜ CloudFront ではなく Function URL 直なのか。** CloudFront のオリジン
+    //    ReadTimeout が実測 30 秒で、WAF（6）の評価も挟まる。cron がブラウザ向けの
+    //    経路に相乗りする理由がない。
+    //    ⚠️ ただし **server 側の timeout も 30 秒**なので実行予算は 30 秒のまま。
+    //       伸ばすなら上の `server.timeout` を上げる（CloudFront 経由の web は CF 側の
+    //       30 秒で切れるので挙動は変わらない）。1回のデプロイで2変数動かさないため別作業。
+    //
+    // 📌 **`sst.aws.Cron` ではなく `CronV2` を使う。** 4.17.1 で `Cron` は **deprecated**
+    //    （実体は EventBridge **Rules**）。`CronV2` は **EventBridge Scheduler** で、
+    //    `timezone` と `retries` を持つ。計画文書の「Scheduler ではなく Rules」は
+    //    `Cron` についての記述で、非推奨でない方は Scheduler が正しい。
+    const cronRelay = new sst.aws.Function('CronRelay', {
+      handler: 'src/functions/cronRelay.handler',
+      // 実体は HTTP を1本投げて待つだけ。CPU ではなく server 側の処理待ちが支配的。
+      memory: '256 MB',
+      // server の 30 秒より長くしておく。ここが先に切れると「アプリが遅い」のか
+      // 「中継が諦めた」のかを切り分けられない（ハンドラ側は 35 秒で abort する）。
+      timeout: '40 seconds',
+      environment: {
+        // Function URL は SST が払い出す。**手で控えて貼らない**（デプロイのたびに変わりうる）。
+        CRON_TARGET_URL: web.nodes.server!.apply((fn) => fn.url),
+        // 認可の2重化。①IAM（このロールでしか Function URL を叩けない）②CRON_SECRET。
+        // ⚠️ `Authorization` は SigV4 が占有するので、中継は `x-cron-secret` で送る。
+        CRON_SECRET: secretEnv.CRON_SECRET,
+      },
+      // 🔑 同一アカウントなので**アイデンティティ側だけで足りる**
+      //    （Function URL のリソースポリシーに足す必要はない）。
+      permissions: [
+        {
+          actions: ['lambda:InvokeFunctionUrl'],
+          resources: [web.nodes.server!.apply((fn) => fn.arn)],
+        },
+      ],
+    })
+
+    // 🔴 **実際に発火させるステージ。** 13（production デプロイ）の時点では
+    //    **Vercel の cron がまだ生きている**（soak 中は Vercel を触らない方針）。
+    //    両方が同時に回ると `instagram-refresh` が競合する（同じ長期トークンを
+    //    2か所から更新し、後勝ちで無効な方が残りうる）。
+    //    → **13 で DNS を切り替えたあとに 'production' を足す**。それまで production の
+    //      スケジュールは作られるが DISABLED で、`aws scheduler list-schedules` に見える。
+    //    WAF_STAGES と同じ運用（1か所の配列で切り替える）に揃えてある。
+    const CRON_STAGES = ['dev']
+
+    // 📌 スケジュールは **EventBridge Scheduler の書式**（cron は6フィールドで、
+    //    day-of-month と day-of-week のどちらかを `?` にする）。時刻は UTC のまま
+    //    `vercel.json` と揃えてあるので、移行の前後で発火時刻は変わらない。
+    const CRON_JOBS = [
+      {
+        name: 'CronInstagramRefresh',
+        path: '/api/cron/instagram-refresh',
+        // 🔴 **月次から週次へ上げた（依存 E・L）。** 長期トークンは 60 日で失効し、
+        //    切れると手動の再認証が要る。月次だと 60 日の窓に**更新機会が2回**しかなく、
+        //    1回失敗しただけで残り1回に追い込まれる（実際 2026-07 はその状態になった）。
+        //    週次なら8回。Hobby の日次制限が外れたのでコストなしで取れる余裕。
+        //    📌 Instagram 側は「24時間以上経過したトークン」しか更新できないので、
+        //       これ以上詰めても意味はない。日曜 00:00 UTC ＝ 月曜 09:00 JST。
+        schedule: 'cron(0 0 ? * SUN *)',
+        // dev では動かない（CRON_SECRET 以外に INSTAGRAM_ACCESS_TOKEN が要り、
+        // 設定値は本番テーブル `siko-coffee-config` にしかない）。動かすと毎回
+        // `no Instagram token found` で Sentry が鳴るだけなので production 限定。
+        prodOnly: true,
+      },
+      {
+        name: 'CronCleanupPending',
+        path: '/api/cron/cleanup-pending',
+        schedule: 'cron(0 18 * * ? *)',
+      },
+      {
+        name: 'CronReleaseReservations',
+        path: '/api/cron/release-reservations',
+        // 🔑 **これが 8 の本命。** Vercel Hobby は日次までなので `10 18 * * *` に
+        //    落としていた（しかも実測では**登録済みなのに実行されていなかった**）。
+        //    在庫確保の失効戻しは本来もっと短い周期で回るべきもの。
+        schedule: 'rate(10 minutes)',
+      },
+      {
+        name: 'CronPoTimeouts',
+        path: '/api/cron/po-timeouts',
+        schedule: 'cron(20 18 * * ? *)',
+      },
+    ] as const
+
+    for (const job of CRON_JOBS) {
+      new sst.aws.CronV2(job.name, {
+        // Function インスタンスを渡すと**再利用**される（新しい関数は作られない）。
+        // 4本のスケジュールが1つの中継関数を共有し、パスは event で渡す。
+        function: cronRelay,
+        event: { path: job.path },
+        schedule: job.schedule,
+        enabled: CRON_STAGES.includes($app.stage) && (isProd || !('prodOnly' in job)),
+        // 一時的な失敗（server のコールド + 遅延で 35 秒超過など）で
+        // 日次ジョブが丸1日落ちるのを避ける。Scheduler 側の再試行。
+        retries: 2,
+      })
+    }
   },
 })
 
@@ -474,7 +581,7 @@ export default $config({
 // 本番切替までの作業順（プロジェクト「Pour Over」・2026-07-28 再監査・**全21項目**）
 // 📌 2026-07-31 訂正: 長らく「全20項目」と書いていたが、実数は 21（第0群 4 ＋ 本編 17）。
 //    20 は 9.5 を足す前の数で、合計だけが取り残されていた。**番号は動かしていない。**
-// 進捗（2026-07-31）: 11 / 21。第0群 4/4・第1群 4/4・第2群 3/5（5・6・7 が完了）。
+// 進捗（2026-07-31）: 12 / 21。第0群 4/4・第1群 4/4・第2群 4/5（5・6・7・8 が完了）。
 //
 // 正本は docs/aws-migration-feasibility.md「Pour Over 実行順」。ここは実装者向けの索引。
 // ✅ 完了: next/image の最適化（sharp のクロスビルド。open-next.config.ts 参照）
@@ -569,15 +676,26 @@ export default $config({
 //     💰 費用は「相殺」ではなく **GB-秒で約 +10%**（月 $0.003 相当＝誤差）。詳細は pour-over-log.md。
 //     📌 arm64 化は**同時にやらない**（server=x86_64 / image-optimizer=arm64 の不一致は残す）。
 //        1回のデプロイで2変数動かすと、速くなった原因を切り分けられなくなる。
-//  8. cron 4本 → `sst.aws.Cron`（実体は **EventBridge Rules**。Scheduler ではない・4.17.1 で確認）
-//     ＋中継 Lambda。
-//     ⚠️ Rules は API Destinations で HTTPS を叩けるが **SigV4 非対応**。5 で IAM 認証にする以上
-//        中継 Lambda が要る。同一アカウントなので中継側の**アイデンティティポリシーに
-//        lambda:InvokeFunctionUrl** を与えれば足りる（対象は `web.nodes.server.url`）。
+//  8. ✅ cron 4本 → **`sst.aws.CronV2`（EventBridge Scheduler）＋ 中継 Lambda**（上の `CronRelay`）。
+//     📌 **`sst.aws.Cron` は 4.17.1 で deprecated**（実体は EventBridge Rules）。非推奨でない
+//        `CronV2` は **Scheduler** で timezone / retries を持つ。旧記述「Scheduler ではない」は
+//        `Cron` についての話で、採用したのは `CronV2`。
+//     ⚠️ どちらにせよ **中継 Lambda は必須**。Rules の API Destinations は **SigV4 非対応**、
+//        Scheduler はそもそも任意の HTTPS を叩けない。5 で Function URL を IAM 認証にした以上、
+//        署名できる実行主体が要る。同一アカウントなので中継側の**アイデンティティポリシーに
+//        lambda:InvokeFunctionUrl** を与えれば足りた（対象は `web.nodes.server` の url / arn）。
 //     ⚠️ 中継先は CloudFront ではなく **Function URL を直接**（CloudFront のオリジン ReadTimeout は
-//        実測30秒しかなく、Vercel の 300秒 から大幅に縮む）。5 で IAM 認証にするなら実行ロールで SigV4 署名する。
-//     Hobby の日次制限が外れるので release-reservations は 10分毎に戻す。
+//        実測30秒しかなく、WAF の評価も挟まる）。ただし **server 側の timeout も 30 秒**なので
+//        実行予算は 30 秒のまま＝ここを伸ばすなら `server.timeout` を上げる（別作業）。
+//     🔴 **`Authorization` は SigV4 が占有する**ので CRON_SECRET は **`x-cron-secret`** で送る。
+//        判定は `src/lib/cronAuth.ts` に集約し、soak 中は Vercel の `Authorization: Bearer` も
+//        受け続ける（撤去は 16 の⑧）。この秘密ヘッダは**署名対象に含めてある**。
+//     🔑 `release-reservations` は日次 → **rate(10 minutes)**、`instagram-refresh` は月次 → **週次**
+//        （依存 E・L の更新機会が 60日で2回 → 8回になる）。
 //     📌 そもそも Vercel では release-reservations が**登録済みなのに実行されていなかった**（2026-07-28 実測）。
+//     🔴 **production のスケジュールは DISABLED で作られる。** `CRON_STAGES` に 'production' を
+//        足すのは **13 で DNS を切り替えたあと**（先に有効化すると Vercel の cron と二重に走り、
+//        instagram-refresh が同じ長期トークンを競合して更新する）。
 //  9. 非本番ステージに X-Robots-Tag: noindex（`edge.viewerResponse.injection`）＋アクセス制限。
 //     Vercel は Deployment Protection で dev URL を守っていたが **AWS に同等機能は無い**。
 //
@@ -633,7 +751,8 @@ export default $config({
 //  B. 5 と 4     : 5 の Lambda@Edge はボディ 1MB 上限。だから 4 は presigned S3 PUT で作る
 //  C. 6 → 13     : WAF 不在で切り替えると admin の防御が丸ごと消える
 //  D. 1 → 13     : Sentry が無効のままだと切替後に何を観測しても信用できない
-//  E. 8 → 15     : Instagram の長期トークンは月次 cron で延長。60日止まると恒久失効し手動再認証が要る
+//  E. 8 → 15     : Instagram の長期トークンは cron で延長。60日止まると恒久失効し手動再認証が要る
+//                  ✅ 8 で月次 → 週次にしたので、60日の窓の更新機会は 2回 → 8回
 //  F. 11 → 13    : 24時間以上前でないと旧 TTL が失効せず引き下げが効かない
 //  G. 12 → 16    : 先に redirects() を消すと apex が無正規化になる
 //  H. 0-b(CAA修正) → 12 : Amazon CA が CAA で許可されていないと ACM が発行できない
@@ -641,5 +760,7 @@ export default $config({
 //  J. 0-a → 以降の全デプロイ : npm 10 だと next/image が無言で壊れたままデプロイが成功する
 //  K. 9.5 → 14  : 無いと soak 中に AWS だけが古くなる
 //  L. Instagram トークン更新確認 → 15 : 実測 refreshedAt=2026-07-01 / 60日 ＝ **失効 2026-08-30**。
-//     次の更新機会は 2026-08-01 00:00 UTC。成否は siko-coffee-config の refreshedAt で判定できる。
+//     🔴 AWS の週次スケジュールは 13 まで DISABLED なので、それまで頼れるのは
+//     **Vercel の月次 `0 0 1 * *` ＝ 2026-08-01 00:00 UTC の1回きり**。
+//     成否は siko-coffee-config の refreshedAt で判定できる。
 // ─────────────────────────────────────────────────────────────

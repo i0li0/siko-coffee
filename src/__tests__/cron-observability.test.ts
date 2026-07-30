@@ -10,7 +10,8 @@ vi.mock('@/lib/db', () => ({
   TABLE: { ORDERS: 'orders', CONFIG: 'config' },
   isDbConfigured: () => false,
 }))
-vi.mock('@/lib/safeCompare', () => ({ verifyBearer: vi.fn(() => true) }))
+// 認可そのものは src/__tests__/cronAuth.test.ts の担当。ここは観測性だけを見る。
+vi.mock('@/lib/cronAuth', () => ({ isAuthorizedCron: vi.fn(() => true) }))
 vi.mock('@sentry/nextjs', () => ({ captureException: vi.fn(), captureMessage: vi.fn() }))
 vi.mock('@/lib/pos', () => ({ sweepPoTimeouts: vi.fn() }))
 vi.mock('@/lib/reservations', () => ({
@@ -23,7 +24,7 @@ import { GET as poTimeouts } from '@/app/api/cron/po-timeouts/route'
 import { GET as releaseReservations } from '@/app/api/cron/release-reservations/route'
 import { GET as cleanupPending } from '@/app/api/cron/cleanup-pending/route'
 import { GET as instagramRefresh } from '@/app/api/cron/instagram-refresh/route'
-import { verifyBearer } from '@/lib/safeCompare'
+import { isAuthorizedCron } from '@/lib/cronAuth'
 import { sweepPoTimeouts } from '@/lib/pos'
 import { sweepExpiredReservations, reconcileLotReservations } from '@/lib/reservations'
 
@@ -40,7 +41,7 @@ function lines(spy: { mock: { calls: unknown[][] } }): string[] {
 
 beforeEach(() => {
   vi.clearAllMocks()
-  vi.mocked(verifyBearer).mockReturnValue(true)
+  vi.mocked(isAuthorizedCron).mockReturnValue(true)
   logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
   warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
   errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
@@ -269,7 +270,7 @@ describe('cron の観測性', () => {
   })
 
   it('認証に失敗したら何も実行せずログも出さない', async () => {
-    vi.mocked(verifyBearer).mockReturnValue(false)
+    vi.mocked(isAuthorizedCron).mockReturnValue(false)
 
     const res = await poTimeouts(req())
 

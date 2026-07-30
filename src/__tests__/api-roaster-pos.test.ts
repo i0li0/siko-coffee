@@ -9,7 +9,7 @@ vi.mock('@/lib/db', () => ({
 }))
 vi.mock('@/lib/roasterAuth', () => ({ requireRoaster: vi.fn(), getOwnedBean: vi.fn() }))
 vi.mock('@/lib/rateLimit', () => ({ checkGeneralRateLimit: vi.fn(), getClientIp: vi.fn() }))
-vi.mock('@/lib/safeCompare', () => ({ verifyBearer: vi.fn() }))
+vi.mock('@/lib/cronAuth', () => ({ isAuthorizedCron: vi.fn() }))
 vi.mock('@sentry/nextjs', () => ({ captureException: vi.fn() }))
 
 import { GET as listPos } from '@/app/api/roaster/pos/route'
@@ -17,7 +17,7 @@ import { POST as respond } from '@/app/api/roaster/pos/[orderId]/respond/route'
 import { GET as poTimeouts } from '@/app/api/cron/po-timeouts/route'
 import { requireRoaster } from '@/lib/roasterAuth'
 import { checkGeneralRateLimit, getClientIp } from '@/lib/rateLimit'
-import { verifyBearer } from '@/lib/safeCompare'
+import { isAuthorizedCron } from '@/lib/cronAuth'
 import type { PoRecord, RoasterRecord } from '@/types/platform'
 
 const ROASTER_ID = 'roaster-1'
@@ -70,7 +70,7 @@ beforeEach(() => {
   vi.mocked(getClientIp).mockReturnValue('1.2.3.4')
   vi.mocked(checkGeneralRateLimit).mockResolvedValue({ allowed: true })
   vi.mocked(requireRoaster).mockResolvedValue({ ok: true, userId: ROASTER_ID, roaster })
-  vi.mocked(verifyBearer).mockReturnValue(true)
+  vi.mocked(isAuthorizedCron).mockReturnValue(true)
 })
 
 describe('GET /api/roaster/pos', () => {
@@ -186,7 +186,7 @@ describe('POST /api/roaster/pos/[orderId]/respond', () => {
 
 describe('GET /api/cron/po-timeouts', () => {
   it('CRON_SECRET が合わなければ 401', async () => {
-    vi.mocked(verifyBearer).mockReturnValue(false)
+    vi.mocked(isAuthorizedCron).mockReturnValue(false)
     const res = await poTimeouts(new Request('http://localhost/api/cron/po-timeouts'))
     expect(res.status).toBe(401)
     expect(mockSend).not.toHaveBeenCalled()
