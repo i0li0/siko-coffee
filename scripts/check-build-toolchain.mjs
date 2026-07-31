@@ -15,6 +15,7 @@
 // ※ CI（`next build` のみ）はこの制約を受けないため、意図的に CI からは呼ばない。
 
 import { execFileSync } from 'node:child_process'
+import { readFileSync } from 'node:fs'
 
 const MIN_NPM_MAJOR = 11
 
@@ -50,3 +51,53 @@ if (major < MIN_NPM_MAJOR) {
 }
 
 console.log(`✓ npm ${npmVersion}（>= ${MIN_NPM_MAJOR} 必須）`)
+
+// ── sharp のクロスビルド設定が自己整合しているか ───────────────────
+// なぜ**ここ**（デプロイ前）で見るか: この不整合はこれまで `verify:image-optimizer`
+// ＝ `sst deploy` の**後**でしか検出できなかった。つまり壊れた成果物が一度適用されてから
+// 赤くなる。13（本番切替）ではそれは「本番に一度出てから気づく」を意味する。
+// 成果物を見ないと分からないこともあるが、**設定の矛盾は静的に分かる**ので、
+// 分かる分だけは適用前に止める。2026-08-01 に CI の初回デプロイで実際に踏んだ（教訓29）。
+//
+// 何を見るか: OpenNext は install オプションの `arch` を `--arch=` として渡すが、
+// それは node-gyp 系のフラグで **optional 依存の絞り込みには効かない**。
+// 実際に `@img/sharp-<os>-<cpu>` を決めるのは `additionalArgs` の **`--cpu`** で、
+// 無ければ npm は**ビルドしたマシンの CPU** を使う（＝ビルド機によって結果が変わる）。
+const configPath = new URL('../open-next.config.ts', import.meta.url)
+let config
+try {
+  config = readFileSync(configPath, 'utf8')
+} catch (err) {
+  fail([`open-next.config.ts を読めませんでした: ${err.message}`])
+}
+
+// コメント行は `//` で始まるのでこのパターンには一致しない（本文の宣言だけを拾う）。
+const archMatch = config.match(/^\s*arch:\s*'([^']+)'/m)
+const extraArgsMatch = config.match(/^\s*additionalArgs:\s*'([^']*)'/m)
+
+if (!archMatch) {
+  fail([
+    'open-next.config.ts の imageOptimization.install に arch の宣言が見つかりません。',
+    'この検査が設定の形を追えていない＝検査自体が形骸化しています。先にここを直してください。',
+  ])
+}
+
+const arch = archMatch[1]
+const cpuFlag = extraArgsMatch?.[1].match(/--cpu=(\S+)/)?.[1]
+
+if (cpuFlag !== arch) {
+  fail([
+    `sharp のクロスビルド設定が矛盾しています（arch: '${arch}' / --cpu: ${cpuFlag ?? 'なし'}）。`,
+    '',
+    'OpenNext は arch を `--arch=` として渡しますが、これは optional 依存の',
+    '絞り込みには効きません。実際に CPU を決めるのは `--cpu` です。',
+    '無いとビルドしたマシンの CPU が黙って使われ、arm64 の Lambda に x64 の',
+    'sharp が入って next/image が原本をそのまま返します（デプロイは成功します）。',
+    '',
+    "  install: { arch: 'arm64', additionalArgs: '--cpu=arm64', ... }",
+    '',
+    'open-next.config.ts の imageOptimization.install のコメントと教訓29 を参照。',
+  ])
+}
+
+console.log(`✓ sharp のクロスビルド設定は自己整合（arch: ${arch} / --cpu=${cpuFlag}）`)

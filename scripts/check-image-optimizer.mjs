@@ -55,10 +55,20 @@ const installed = existsSync(imgDir) ? readdirSync(imgDir) : []
 
 // ① 期待するネイティブパッケージがあるか
 if (!existsSync(join(nodeModules, EXPECTED))) {
+  // 「別 CPU のものが入っている」のか「そもそも解決に失敗した」のかで原因が違うので、
+  // 実際に入っているものを見て診断を出し分ける。前者を後者の文言で案内すると
+  // os/arch/libc を見に行かせることになり、**それらは合っているので迷子になる**（2026-08-01）。
+  const wrongCpu = installed.find((n) => /^sharp-linux-(?!arm64)/.test(n))
   const npmHint =
     Number.isInteger(npmMajor) && npmMajor < 11
       ? `npm が ${npmVersion} です。**npm 11 以降が必須**（10 系は --libc を解釈せず wasm32 に落ちる）。\`npm i -g npm@11\` の後に再ビルドしてください。`
-      : `open-next.config.ts の imageOptimization.install（os/arch/libc）と sst.config.ts の Lambda アーキテクチャが一致しているか確認してください。`
+      : wrongCpu
+        ? `別 CPU 向けの ${wrongCpu} が入っています＝**ビルドしたマシンの CPU が漏れています**。
+    OpenNext の install オプションの \`arch\` は \`--arch=\`（node-gyp 系）として渡され、
+    optional 依存の絞り込みには効きません。効くのは \`--cpu\` です。
+    open-next.config.ts の imageOptimization.install に
+    \`additionalArgs: '--cpu=arm64'\` があるか確認してください。`
+        : `open-next.config.ts の imageOptimization.install（os/arch/libc）と sst.config.ts の Lambda アーキテクチャが一致しているか確認してください。`
   fail(
     `${EXPECTED} が image-optimization Lambda にありません（@img 配下: ${installed.join(', ') || 'なし'}）`,
     npmHint,
