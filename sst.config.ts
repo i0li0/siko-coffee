@@ -699,9 +699,10 @@ export default $config({
 // 本番切替までの作業順（プロジェクト「Pour Over」・2026-07-28 再監査・**全21項目**）
 // 📌 2026-07-31 訂正: 長らく「全20項目」と書いていたが、実数は 21（第0群 4 ＋ 本編 17）。
 //    20 は 9.5 を足す前の数で、合計だけが取り残されていた。**番号は動かしていない。**
-// 進捗（2026-08-01）: 13 / 21。第0群 4/4・第1群 4/4・**第2群 5/5（5〜9 完了）**。
-// 🔶 9.5 は**実装済みだが未検証**（AWS 側のロール作成と CI からの実デプロイが未実施）。
-//    14/21 に進めるのは CI が dev へ実際にデプロイして緑になってから。
+// 進捗（2026-08-01）: **14 / 21**。第0群 4/4・第1群 4/4・第2群 5/5・**9.5 完了**。次は 10。
+// 🔴 **9.5 以降、main への push は必ず AWS へデプロイする。＝ マージ順が実害を持つ。**
+//    壊れた状態を直す PR より先に無関係な PR をマージすると、無関係な変更が原因に見える赤が出る。
+//    📌 PR の CI が緑でもデプロイ可否は保証されない（deploy は push 限定で PR ではスキップ）。
 //
 // 正本は docs/aws-migration-feasibility.md「Pour Over 実行順」。ここは実装者向けの索引。
 // ✅ 完了: next/image の最適化（sharp のクロスビルド。open-next.config.ts 参照）
@@ -831,7 +832,7 @@ export default $config({
 //        （CF_BLOCK_CLOUDFRONT_URL_INJECTION）。この作業を production へ広げる必要は無い。
 //
 // ── 第3群｜切替準備 ──────────────────────────────────────────
-// 9.5 🔶 GitHub Actions ＋ OIDC ロールで `sst deploy` を自動化する（**実装済み・未検証**）。
+// 9.5 ✅ GitHub Actions ＋ OIDC ロールで `sst deploy` を自動化する（**完了・実測検証済み**）。
 //     無いと 14 の soak 中に main へ push するたび **Vercel だけが更新され AWS が取り残される**。
 //     実体は `.github/workflows/ci.yml` の `deploy` ジョブ（`needs: [lint-typecheck, e2e]`）と
 //     `scripts/bootstrap-github-oidc.sh`（ロール作成・**SST の管理外**・1度だけ実行）。
