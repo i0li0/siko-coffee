@@ -75,5 +75,11 @@
     "tailwindcss": "^4",
     "typescript": "^5",
     "vitest": "^4.1.8"
+  },
+  "allowScripts": {
+    "@sentry/cli": true,
+    "esbuild": true,
+    "fsevents": true,
+    "unrs-resolver": true
   }
 }
