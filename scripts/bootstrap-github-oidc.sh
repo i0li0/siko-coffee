@@ -72,7 +72,8 @@ if aws iam get-role --role-name "$ROLE_NAME" >/dev/null 2>&1; then
 else
   aws iam create-role \
     --role-name "$ROLE_NAME" \
-    --description 'Pour Over 9.5: GitHub Actions から sst deploy を実行するロール' \
+    `# IAM の description は Latin-1 しか受け付けない（日本語は ValidationError）` \
+    --description 'Pour Over 9.5: role assumed by GitHub Actions to run sst deploy' \
     --max-session-duration 3600 \
     --assume-role-policy-document "$trust" >/dev/null
   echo "✓ 作成しました（${ROLE_NAME}）"

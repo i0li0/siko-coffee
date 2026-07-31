@@ -614,13 +614,34 @@ CI からの実デプロイが未実施**なので、進捗は 13/21 のまま�
 - `ci.yml` を YAML パーサに通して `needs` / `if` / `permissions` / `concurrency` / `matrix` を確認。
 - `npm run lint` / `npx tsc --noEmit` / `npm test`（30ファイル・272件）/ `npm run check:sst` すべて 0。
 
-**🔴 残っている完了条件**
+**✅ 完了条件① — ロール作成（2026-08-01 実行済み・AWS 実測で確認）**
 
-1. `bash scripts/bootstrap-github-oidc.sh` を実行（要 `aws login`）。
-   **PR をマージする前に**。先にマージすると `AWS_DEPLOY_ROLE_ARN` 未設定で main が赤くなる。
-2. マージ後、`deploy` ジョブが dev へ実際にデプロイして緑になることを確認する。
-   成否は **AWS 側に問い合わせて**確定させる（教訓23）。例えば server Lambda の
-   `LastModified` が CI 実行時刻に更新されているか。
+`bash scripts/bootstrap-github-oidc.sh` を実行した。**スクリプトの出力ではなく AWS に
+問い合わせて**確認した（教訓23）:
+
+| 確認したもの | 実測値 |
+|---|---|
+| OIDC プロバイダ | `token.actions.githubusercontent.com` / ClientIDList `["sts.amazonaws.com"]` |
+| 信頼ポリシーの `sub` | **`repo:i0li0/siko-coffee:ref:refs/heads/main`**（＝main への push のみ） |
+| 信頼ポリシーの `aud` | `sts.amazonaws.com` |
+| アタッチ済みポリシー | `AdministratorAccess` の1本のみ |
+| リポジトリ変数 | `AWS_DEPLOY_ROLE_ARN` = `arn:aws:iam::654512230021:role/siko-coffee-github-deploy` |
+
+**冪等性も実測**（2回目の実行は3経路とも「既にあります／更新しました」に落ちて exit 0）。
+
+⚠️ **踏んだ罠: IAM の `description` は Latin-1 しか受け付けない。**
+日本語を入れたら `ValidationError`（`[	
+ -~¡-ÿ]*`）で
+`CreateRole` が落ちた。このリポジトリはコメントも文書も日本語なので**同じ書き味で書くと落ちる**
+API がある、という点だけ覚えておく（タグの Value や S3 のメタデータも同種の制約を持つ）。
+📌 このとき **OIDC プロバイダは既に作られていた**ので、再実行時に二重作成にならないことが
+偶然この場で確かめられた（冪等に書いておいて助かった形）。
+
+**🔴 残っている完了条件②**
+
+マージ後、`deploy` ジョブが dev へ実際にデプロイして緑になることを確認する。
+成否は **AWS 側に問い合わせて**確定させる（教訓23）。例えば server Lambda の
+`LastModified` が CI 実行時刻に更新されているか。
 
 **次への申し送り（13 で必ず読む）**: `matrix.stage` に **`production` を足すのは DNS を
 切り替えた後**。先に足すと本番ステージが CI から先に作られ、13 の「production デプロイ →

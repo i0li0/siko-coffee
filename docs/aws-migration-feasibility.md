@@ -697,10 +697,13 @@ CI が dev へ実際にデプロイして緑になってから**。詳細は下�
 > - `concurrency` は `cancel-in-progress: false`。SST の state ロックは1ステージ1本で、
 >   デプロイ中に打ち切ると **ロックが残ったままになる**。
 >
-> 🔴 **残っている完了条件（この2つが済むまで 9.5 は「済」ではない）**
-> 1. `bash scripts/bootstrap-github-oidc.sh` を実行する（要 `aws login`）。
->    **PR をマージする前**に。先にマージすると `AWS_DEPLOY_ROLE_ARN` 未設定で main が赤くなる。
-> 2. マージ後、`deploy` ジョブが dev へ実際にデプロイして緑になることを確認する。
+> **完了条件**
+> 1. ✅ **`bash scripts/bootstrap-github-oidc.sh` 実行済み（2026-08-01）。**
+>    信頼ポリシーの `sub` が `repo:i0li0/siko-coffee:ref:refs/heads/main`、権限は
+>    `AdministratorAccess` の1本、リポジトリ変数 `AWS_DEPLOY_ROLE_ARN` の登録まで
+>    **AWS と gh に問い合わせて確認**（冪等性も2回目の実行で実測）。
+>    ⚠️ IAM の `description` は Latin-1 のみ＝日本語を入れると `ValidationError`。
+> 2. 🔴 **未**: マージ後、`deploy` ジョブが dev へ実際にデプロイして緑になることを確認する。
 >    ⚠️ 「ワークフローの文法が通った」は「デプロイできた」の証明ではない（教訓27 と同型）。
 >    実デプロイの結果は **AWS 側に問い合わせて**確かめる（例: `aws lambda get-function-configuration`
 >    の `LastModified` が CI 実行時刻に更新されているか）。
