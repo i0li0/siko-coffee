@@ -81,6 +81,100 @@ export default $config({
       SECRET_NAMES.map((name) => [name, new sst.Secret(name).value]),
     )
 
+    // ── 非本番ステージの遮蔽（Pour Over 9）────────────────────────
+    //
+    // Vercel は Deployment Protection（Vercel Authentication = Require Log In）で
+    // プレビュー URL を守っていた。実測で **1.2k req/h の自動巡回がこの壁で弾かれていた**
+    // ＝ 飾りではなく実際に効いている統制である。**AWS に同等の機能は無い**ので、
+    // 切替でここだけは確実に劣化する。移行の前に等価物を用意する。
+    //
+    // 🔴 **アクセス制限に WAF を使わないこと。** web ACL は**ステージごとに1枚**で
+    //    $5/月 + $1/ルール。6 の `AdminWaf` とは別に dev 用をもう1枚作ると、
+    //    移行後の AWS コスト（大半が WAF）がさらに上がる。CloudFront Function は
+    //    **リクエスト課金だけ**（$0.10/百万・実測 103K req/月＝月 $0.01）で、
+    //    しかも 5 の Lambda@Edge より手前で完結するので Lambda の起動すら要らない。
+    //
+    // 🔑 **2段構えにするのは目的が別だから。**
+    //    ① `X-Robots-Tag: noindex` … 検索エンジンに載らないようにする（robots.txt は
+    //       `Allow: /` で、しかも `public/robots.txt` は全ステージ同じものが配られる）。
+    //    ② Basic 認証 … 人間と巡回ボットの目に触れないようにする。①だけでは
+    //       「インデックスされないだけで誰でも読める」ままで、Vercel の壁の代替にならない。
+    //
+    // ⚠️ **これは秘匿ではなく遮蔽**。資格情報は CloudFront Function のコードに
+    //    平文で焼き込まれるので、`cloudfront:GetFunction` を持つ相手からは読める。
+    //    比較も定数時間ではない。本物の秘密（本番の認証情報・鍵）を dev に置かない
+    //    という既存の方針（SECRET_NAMES のコメント）と合わせて初めて成立する。
+    //
+    // 🔗 **12 との衝突に注意**: apex 正規化と HSTS も `edge.viewerRequest.injection` を使う。
+    //    CloudFront Function は**1ビヘイビアに1つ**しか付かず、SST は injection を
+    //    自前の関数に合成する方式なので、**注入口は1つしかない**。今は
+    //    「9 は非本番だけ／12 は本番だけ」で排他なので衝突しないが、両方を要する
+    //    ステージができたら**文字列を連結する**こと（関数を足そうとしないこと）。
+    // 🔑 **`public/robots.txt` を書き換える案は採らない。** あれは静的配信物で、
+    //    ステージごとに差し替えるとビルド成果物がステージ依存になる（同じ成果物を
+    //    どのステージにも置ける、という現在の性質を失う）。ヘッダなら S3 由来の
+    //    静的アセットにも Lambda 由来の HTML にも等しく乗る。
+    //    📌 このディストリビューションは**ビヘイビアが default の1つだけ**なので、
+    //       viewer-response 関数は**全経路**（HTML・_next/static・画像・API）に掛かる。
+    const NOINDEX_INJECTION =
+      "event.response.headers['x-robots-tag'] = { value: 'noindex, nofollow' };"
+
+    // 非本番だけで要る秘密。SECRET_NAMES に混ぜると **production の 13 でも投入を
+    // 強いられる**（あの配列に載せた名前は値が無いと deploy 自体が失敗する）ので分ける。
+    //   sst secret set PREVIEW_BASIC_AUTH 'user:password' --stage dev
+    // ⚠️ 値は下の CloudFront Function のコードに焼き込まれる。**回すには再デプロイが要る**
+    //    （`sst secret set` だけでは配信中の関数は変わらない）。
+    const previewEdge = isProd
+      ? undefined
+      : {
+          // 🔴 **injection の中で `${...}` を書かないこと。** SST 側は
+          //    interpolate のテンプレートリテラルに埋め込むので、こちらに
+          //    テンプレートリテラルがあると先に展開されて壊れる。連結だけで書く。
+          //
+          // 📌 挿入位置は SST の request 関数の**先頭**（ssr-site.ts の
+          //    createRequestFunction: userInjection → CloudFront URL ブロック →
+          //    ルーティング本体 の順）。ここで応答を返せば KVS 参照も
+          //    オリジンへの転送も 5 の Lambda@Edge も一切走らない。
+          viewerRequest: {
+            injection: new sst.Secret('PREVIEW_BASIC_AUTH').value.apply(
+              (credentials) => {
+                // deploy 時に base64 化して、実行時は**1回の文字列比較**で済ませる。
+                // CloudFront Function には atob も Buffer も crypto も無いので、
+                // 受け取ったヘッダを復号するのではなく期待値の方を先に作っておく。
+                const expected =
+                  'Basic ' + Buffer.from(credentials).toString('base64')
+                // 変数名は SST 側の注入コード（routeSite など）と衝突しないよう
+                // 独自の接頭辞を付ける。同じ関数スコープに同居するため。
+                return [
+                  'var sikoPreviewAuth = event.request.headers.authorization;',
+                  'if (!sikoPreviewAuth || sikoPreviewAuth.value !== ' +
+                    JSON.stringify(expected) +
+                    ') {',
+                  '  return {',
+                  '    statusCode: 401,',
+                  "    statusDescription: 'Unauthorized',",
+                  '    headers: {',
+                  // realm が無いとブラウザが入力欄を出さない。
+                  "      'www-authenticate': { value: " +
+                    JSON.stringify(
+                      'Basic realm="siko-coffee (non-production)"',
+                    ) +
+                    ' },',
+                  // 401 にも自前で付ける。**viewer-response 関数は
+                  // viewer-request 関数が生成した応答には走らない**ため、
+                  // 下の viewerResponse には頼れない。
+                  "      'x-robots-tag': { value: 'noindex, nofollow' },",
+                  "      'cache-control': { value: 'no-store' },",
+                  '    },',
+                  '  };',
+                  '}',
+                ].join('\n')
+              },
+            ),
+          },
+          viewerResponse: { injection: NOINDEX_INJECTION },
+        }
+
     // ── アバター画像の保管（Pour Over 4: Vercel Blob → S3）──────────
     //
     // 🔴 **バケットを2つに分けるのは検閲の順序が逆転するから。**
@@ -130,7 +224,26 @@ export default $config({
     })
 
     const avatarCdn = new sst.aws.Router('AvatarCdn', {
-      routes: { '/*': { bucket: avatarPublic } },
+      routes: {
+        '/*': {
+          bucket: avatarPublic,
+          // 9（非本番の遮蔽）はこちらにも要る。**ただし noindex だけ**。
+          // 🔴 Basic 認証は付けられない: これは別オリジンで、`<img src>` は資格情報を
+          //    送らないので dev サイト上のアイコンが全部壊れる。画像を守るのは
+          //    「バケットは非公開・CloudFront OAC 経由のみ・鍵は presigned」という
+          //    4 の構造の側であって、ここのアクセス制限ではない。
+          //
+          // 🔴 **`edge` は Router の直下ではなくルートの中に書く。** `RouterArgs` にも
+          //    同名の `edge` があり**型検査は通る**が、`routes` をインラインで書いた場合
+          //    SST が読むのはルート側だけで、直下の `edge` は**黙って無視される**
+          //    （router.ts: handleInlineRoutes は route.edge、直下の args.edge を読むのは
+          //    後から `route()` で足す handleLazyRoutes の方）。実際に直下へ書いて
+          //    デプロイし、CloudFront Function が1つも作られないことを実測した。
+          edge: isProd
+            ? undefined
+            : { viewerResponse: { injection: NOINDEX_INJECTION } },
+        },
+      },
     })
 
     // ── admin の防御層（Pour Over 6: Vercel WAF → AWS WAF）──────────
@@ -333,6 +446,11 @@ export default $config({
       // ⚠️ **外す（"none" に戻す）ときは 5〜10 分かかる。** Lambda@Edge のレプリカが
       //   全エッジロケーションから消えるまで削除がブロックされるため。
       protection: 'oac-with-edge-signing',
+
+      // ── 非本番の遮蔽（Pour Over 9）───────────────────────────────
+      // production では `undefined`＝ CloudFront Function に何も足さない。
+      // 本番に noindex が漏れるのが最悪の事故なので、判定は上の1か所（isPreviewStage）だけ。
+      edge: previewEdge,
 
       // ── WAF の紐付け（Pour Over 6）───────────────────────────────
       // `sst.aws.Nextjs` には webAcl を渡す引数が無く、内部の Cdn コンポーネントの
@@ -581,7 +699,7 @@ export default $config({
 // 本番切替までの作業順（プロジェクト「Pour Over」・2026-07-28 再監査・**全21項目**）
 // 📌 2026-07-31 訂正: 長らく「全20項目」と書いていたが、実数は 21（第0群 4 ＋ 本編 17）。
 //    20 は 9.5 を足す前の数で、合計だけが取り残されていた。**番号は動かしていない。**
-// 進捗（2026-07-31）: 12 / 21。第0群 4/4・第1群 4/4・第2群 4/5（5・6・7・8 が完了）。
+// 進捗（2026-07-31）: 13 / 21。第0群 4/4・第1群 4/4・**第2群 5/5（5〜9 完了）**。次は 9.5。
 //
 // 正本は docs/aws-migration-feasibility.md「Pour Over 実行順」。ここは実装者向けの索引。
 // ✅ 完了: next/image の最適化（sharp のクロスビルド。open-next.config.ts 参照）
@@ -696,8 +814,19 @@ export default $config({
 //     🔴 **production のスケジュールは DISABLED で作られる。** `CRON_STAGES` に 'production' を
 //        足すのは **13 で DNS を切り替えたあと**（先に有効化すると Vercel の cron と二重に走り、
 //        instagram-refresh が同じ長期トークンを競合して更新する）。
-//  9. 非本番ステージに X-Robots-Tag: noindex（`edge.viewerResponse.injection`）＋アクセス制限。
+//  9. ✅ 非本番ステージに X-Robots-Tag: noindex ＋ Basic 認証（上の `previewEdge` / `NOINDEX_INJECTION`）。
 //     Vercel は Deployment Protection で dev URL を守っていたが **AWS に同等機能は無い**。
+//     🔴 **アクセス制限に WAF を使っていない**（web ACL はステージごとに $5/月）。CloudFront Function は
+//        リクエスト課金だけで、5 の Lambda@Edge より手前で完結する。
+//     ✅ **dev で実測済み（2026-07-31）**: 公開パスは 200 → **401**（`www-authenticate` ＋
+//        `x-robots-tag` ＋ `cache-control: no-store`／`x-cache: FunctionGeneratedResponse`＝
+//        エッジで完結しオリジンに届いていない）、資格情報ありで 200 ＋ `x-robots-tag`、誤り 401。
+//        回帰も確認: 5 は AuthType 維持・直叩き 403／6 は公開パス 40連打で全部 200／
+//        8 は中継 Lambda 手動実行で 200（cron は CloudFront を通らない）／next/image も 31,590→216B。
+//     🔴 **WAF は CloudFront Function より先に評価される**＝ `/admin*` は資格情報の有無に関わらず
+//        202（challenge）のまま。防御が重なる順序は WAF → viewer-request CFF → キャッシュ → オリジン。
+//     📌 **12 で `domain` を付けると SST が `*.cloudfront.net` 宛を自動で 403 にする**
+//        （CF_BLOCK_CLOUDFRONT_URL_INJECTION）。この作業を production へ広げる必要は無い。
 //
 // ── 第3群｜切替準備 ──────────────────────────────────────────
 // 9.5 🆕 GitHub Actions ＋ OIDC ロールで `sst deploy` を自動化する（16項目の版で抜けていた）。

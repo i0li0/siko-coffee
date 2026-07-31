@@ -483,6 +483,81 @@ node 組み込み以外に依存しない方針）。CloudWatch の Errors メ�
 → **10（CloudWatch Alarms）の対象に「CronRelay の Errors」を明示的に含める。**
 
 
+### 2026-07-31 — 第2群 9（非本番の noindex ＋ アクセス制限）
+
+**やったこと**: `sst.aws.Nextjs` と `sst.aws.Router` の `edge` に CloudFront Function を注入し、
+**非本番ステージだけ** ①全応答に `X-Robots-Tag: noindex, nofollow` ②Basic 認証 を掛けた。
+
+**なぜ2段構えか。** 目的が別だから。noindex は「検索結果に載らない」だけで、
+**URL を知っていれば誰でも読める**状態は変わらない。Vercel が Deployment Protection で
+実際に止めていたのは後者で、実測では **1.2k req/h の自動巡回がその壁で弾かれていた**
+（＝飾りではない）。noindex だけで置き換えたことにすると、統制が1つ消えたまま 13 を迎える。
+
+**🔴 アクセス制限に WAF を使わない。** web ACL は**ステージごとに1枚**で $5/月 + $1/ルール。
+6 の `AdminWaf` と別に dev 用を作ると移行後コストが月$13〜16 になる。
+CloudFront Function はリクエスト課金だけ（$0.10/百万＝実測 103K req/月で**月 $0.01**）で、
+しかも **5 の Lambda@Edge より手前**で完結するので Lambda の起動すら起きない。
+
+**実装上の要点**
+- 資格情報は `sst.Secret('PREVIEW_BASIC_AUTH')` から取り、**deploy 時に base64 化**して
+  CFF には期待値の文字列だけを焼く。CFF には `atob` も `Buffer` も `crypto` も無いので、
+  受け取ったヘッダを復号するのではなく比較対象を先に作っておくのが唯一の手。
+- **`SECRET_NAMES` には入れない。** あの配列に載せた名前は値が無いと deploy 自体が落ちるので、
+  混ぜると production（13）でも投入を強いられる。非本番でだけ `new sst.Secret()` する。
+- injection の中に `${...}` を書かない。SST 側が `interpolate` のテンプレートリテラルに
+  埋めるため、テンプレートリテラルを持ち込むと先に展開されて壊れる。連結だけで書く。
+- ⚠️ **これは秘匿ではなく遮蔽**。CFF のコードは `cloudfront:GetFunction` で読めるし比較も
+  定数時間ではない。「本番と同じ値を dev に置かない」という既存方針と合わせて初めて成立する。
+- ⚠️ 値は CFF に焼き込まれるので、**回すには `sst secret set` だけでなく再デプロイが要る**。
+
+**実測（dev・変更前のベースラインを同じ `curl` で取ってから比較）**
+
+| | 変更前 | 変更後（認証なし） | 変更後（認証あり） |
+|---|---|---|---|
+| `/`・`/shop`・`/robots.txt`・`/api/health` | 200・`x-robots-tag` **なし** | **401**＋`www-authenticate`＋`x-robots-tag`＋`cache-control: no-store` | 200＋**`x-robots-tag: noindex, nofollow`** |
+| `/_next/static/...` | 200 | **401** | — |
+| `/_next/image`（og.jpg・w=96・webp） | — | — | **200 / image/webp / 31,590→216 B** |
+| 誤った資格情報 | — | **401** | — |
+
+`x-cache` が **`FunctionGeneratedResponse from cloudfront`** ＝ 401 はエッジで完結しており、
+オリジンにも Lambda@Edge にも届いていない。デプロイ後に `aws cloudfront get-function --stage LIVE`
+でコードを読み戻し、注入が**ハンドラ先頭**に入っていることも確認した（教訓23）。
+
+**回帰（他タスクを壊していないこと）**: 5 → `AuthType: AWS_IAM` のまま・Function URL 直叩き **403**／
+6 → 公開パスは 40連打しても全部 200（スコープ維持）／8 → 中継 Lambda を手動実行して **200**
+（cron は CloudFront を通らないので Basic 認証の影響を受けない、が**実際に確かめた**）／
+next/image の最適化も維持。
+
+**🔴 計画に無かった発見が3つ**
+1. **WAF は CloudFront Function より先に評価される。** `/admin` は資格情報の有無にかかわらず
+   **202（challenge）**のままで、Basic 認証の 401 にはならない。順序は
+   **WAF → viewer-request CFF → キャッシュ → オリジン**。防御が重なる順序を思い込みで書かない。
+2. **CloudFront が生成したエラーには viewer-response 関数が走らない。** AvatarCdn で存在しない
+   キーを引くと 403 だが `x-robots-tag` は付かない（`x-cache: Error from cloudfront`）。
+   実在するオブジェクトでは 200 とともに付く＝**関数の関連付けの確認を 404/403 でやると
+   「効いていない」と誤判定する**（教訓21 の同型）。
+3. **SST は `args.domain` があるとき `*.cloudfront.net` 宛を自動で 403 にする**
+   （`CF_BLOCK_CLOUDFRONT_URL_INJECTION`）。dev は domain 未設定なので今は入っていないが、
+   **12 で production に domain を付けた時点で自動的に有効**になる。9 を production へ
+   広げる必要はない（そもそも本番は index されたい）。
+
+**🔧 これ以降の運用に効くこと（次に dev を触る人へ）**
+- **dev への素の `curl` は全パス 401 になる。** 「壊れた」と誤診しないこと。`-u` を付ける。
+  資格情報は **`npx sst secret list --stage dev`** で読む（`eval "$(aws configure
+  export-credentials --format env)"` が先に要る）。
+  ⚠️ **SSM を直接引いても出ない** — SST v4 の secret は平文パラメータではなく暗号化された
+  state 側にあり、SSM にあるのは `/sst/passphrase/siko-coffee/dev` だけ。
+- 認証が掛からない/効かない経路が3つある。**この3つは 401 にならないのが正常**:
+  ① **AvatarCdn**（`d22i7l6gqogfbs.cloudfront.net`）は noindex のみ
+  ② **`/admin*`** は WAF が先に評価されるので資格情報の有無に関わらず 202（challenge）
+  ③ **cron** は CloudFront を通らない（Function URL 直叩き）
+- 資格情報を回すには **`sst secret set` だけでは足りず再デプロイが要る**（CFF に焼き込むため）。
+
+**次への申し送り**: 12（apex 正規化＋HSTS）も `edge.viewerRequest.injection` を使う。
+CloudFront Function は**1ビヘイビアに1つ**で、SST は injection を自前の関数に合成する方式なので
+**注入口は1つしかない**。今は「9 は非本番だけ／12 は本番だけ」で排他だが、両方が要るステージが
+できたら**文字列を連結する**こと（関数を足そうとしない）。
+
 ---
 
 ## 教訓
@@ -829,3 +904,39 @@ sst-darwin-arm64@… @img/sharp-darwin-arm64@…`）。**lockfile と package.js
    バージョンだけでなく **`node -p process.arch`** まで込みで一致しているかを見る。
 → 症状は「テストは通るのにツールだけ動かない」。**インストールの成否は
    `added N packages` ではなく、必要なバイナリの実在で確かめる**（教訓23 の同型）。
+
+### 27. 「型が通った」は「読まれている」の証明ではない
+
+AvatarCdn（`sst.aws.Router`）に noindex を足すとき、`edge` を **Router の直下**に書いた。
+`npm run check:sst` は通り、`sst deploy` も **exit 0 で成功**した。それでも
+**CloudFront Function は1つも作られなかった**。
+
+原因は Router に2つのモードがあること。`routes` を**インラインで書いた場合**（`handleInlineRoutes`）
+SST が読むのは**ルートごとの `edge`** だけで、直下の `args.edge` を読むのは
+後から `route()` で足す `handleLazyRoutes` の方だった。`RouterArgs` には直下の `edge` が
+**確かに定義されている**ので型検査は何も言わない。正しい位置は
+`routes: { '/*': { bucket, edge: {...} } }`。
+
+教訓19 で「型検査も負の対照で確かめる」と書いたが、今回はその負の対照（不正な型 → TS2322）も
+**ちゃんと出ていた**。型は「その形が受理される」ことしか言わず、
+**「その値が実装に読まれる」ことは言わない**。デプロイの成功も同じで、
+無視された設定はエラーにならない。
+
+→ **設定を足したら、それが作ったはずの実体を AWS に問い合わせる**（教訓23 の一般形）。
+   今回は `aws cloudfront list-functions` が変更前と同じ2行のままだったので気づけた。
+   応答ヘッダだけを見ていたら「CloudFront の伝播待ちか」と誤診して時間を溶かしていた。
+→ 同じ形の罠は**同名プロパティが複数の階層にあるライブラリ全般**にある。
+   ドキュメントの例が「どちらの階層の話か」を確かめること。
+
+### 28. 教訓26 の回避策には、正面から効く設定があった
+
+npm 11 が install スクリプトを飛ばす件は、`npm install-scripts approve <pkg>` で
+**`package.json` の `allowScripts` に許可を書ける**（実測: `esbuild` / `@sentry/cli` /
+`fsevents` / `unrs-resolver` の4件が列挙された）。これを入れれば
+「**依存導入は npm 10、deploy は npm 11**」という使い分け自体が要らなくなり、
+教訓26 の「npm 10 の Node が x64 だった」問題も同時に消える。
+
+今回は 9 のスコープ外なので**入れていない**（1つの PR で2つのことを確かめない）。
+→ **別タスクとして起票する。** ここに書いたのは、次に npm の使い分けで詰まった人が
+   「回避策を洗練させる」方向へ行かないようにするため。**回避策が育ってきたら、
+   回避している当の仕組みに正面の設定が無いかを一度探す。**
