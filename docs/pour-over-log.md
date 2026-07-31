@@ -394,6 +394,13 @@ esbuild・@sentry/cli など5パッケージの postinstall が飛ぶ。**依存
 `sst deploy` のときだけ**という既存の使い分けが正しいことを、実際の警告出力で再確認した。
 バイナリ（`esbuild/bin/esbuild`・`cli-darwin/bin/sentry-cli`）の実在まで見て確定させた。
 
+> 🔴 **この段落の「使い分けが正しい」という結論は誤りだった（2026-07-31 に撤回）。**
+> 実在を確認したバイナリは **npm 11 で postinstall が飛んでも同じように実在する**
+> （4件とも optional なプラットフォーム別パッケージで解決するため postinstall が実質 no-op）。
+> 「npm 10 で入れたから在った」ではなく「**どちらで入れても在った**」が事実。
+> 負の対照を取らなかったための誤帰属で、この誤りが教訓26 の arch 不一致を生んだ。
+> 現在は `allowScripts` で npm 11 に統一済み。→ **教訓28 の決着**。
+
 ✅ **回帰は無し。** `/`・`/shop`・`/api/health` は 200 のまま、`/admin`・`/admin/login` は **202
 （`x-amzn-waf-action: challenge`）**で 6 の WAF は無傷、Function URL の `AuthType` は
 server / image-optimizer とも **`AWS_IAM`** のままで 5 も無傷。`sharp` も Linux arm64 ネイティブのまま
@@ -905,6 +912,13 @@ sst-darwin-arm64@… @img/sharp-darwin-arm64@…`）。**lockfile と package.js
 → 症状は「テストは通るのにツールだけ動かない」。**インストールの成否は
    `added N packages` ではなく、必要なバイナリの実在で確かめる**（教訓23 の同型）。
 
+✅ **決着（2026-07-31）。この事故を生んだ運用ルールごと廃止した。**
+`package.json` に `allowScripts` を置いて npm 11 でも postinstall が走るようにしたので、
+**npm 10 を使う理由が無くなった＝ x64 の Node を踏むこともない**。以後 **npm は 11 に統一**
+（`sst deploy` のゲート①とも初めて矛盾しなくなった）。詳細は教訓28。
+さらに調べると、**そもそもこのルールは最初から不要だった**（同上）。この教訓が残す価値は
+「運用ルールは暗黙に Node も決めている」という一般則の方で、そちらは有効なまま。
+
 ### 27. 「型が通った」は「読まれている」の証明ではない
 
 AvatarCdn（`sst.aws.Router`）に noindex を足すとき、`edge` を **Router の直下**に書いた。
@@ -940,3 +954,65 @@ npm 11 が install スクリプトを飛ばす件は、`npm install-scripts appr
 → **別タスクとして起票する。** ここに書いたのは、次に npm の使い分けで詰まった人が
    「回避策を洗練させる」方向へ行かないようにするため。**回避策が育ってきたら、
    回避している当の仕組みに正面の設定が無いかを一度探す。**
+
+---
+
+✅ **決着（2026-07-31・Pour Over 本編とは独立した作業／21タスクの番号は動かしていない）。**
+
+`package.json` に `allowScripts` を入れた。**使い分けは廃止し、npm は 11 に統一**した。
+
+```json
+"allowScripts": {
+  "@sentry/cli": true, "esbuild": true, "fsevents": true, "unrs-resolver": true
+}
+```
+
+📌 **バージョンを焼き込まない形（`"pkg": true`）にした。** 既定の
+`npm install-scripts approve` は `"esbuild@0.25.4": true` と**バージョン込み**で書き、
+依存を上げるたびに陳腐化する（4件はすべて**推移的依存**＝ Next / eslint-config-next /
+@opennextjs/aws / vite 由来なので、上げた本人が allowScripts を思い出す見込みが薄い）。
+`--no-allow-scripts-pin` を付けると版に依存しない形で書ける。
+**引き換えに「将来の版の postinstall も無審査で走る」**が、esbuild は
+そもそもビルド中に実行されるバイナリで、install スクリプトだけ止めても防御にならない。
+陳腐化して**黙ってスキップに戻る**方が実害が大きいと判断した。
+
+⚠️ 実測でわかった npm 11.18.0 の癖:
+- `npm install-scripts approve --all` は **optional 依存の `fsevents` を拾わない**（名指しが要る）。
+  一方 `npm ci` の警告には出る＝**警告と `ls` の対象がずれている**。
+- `--dry-run` は **実際に `package.json` を書き換える**。dry run として信用しない。
+
+🔑 **調べてわかった本当のこと: この使い分けは、最初から不要だった。**
+`allowScripts` 無し・npm 11・clean install で**同じ4件を測り直した**ところ、全部揃っていた:
+
+| 確認対象 | postinstall スキップ | 実行 |
+|---|---|---|
+| `esbuild --version` | 0.25.4 | 0.25.4 |
+| `@sentry/cli` の `getPath()` → 実行 | sentry-cli 2.58.6 | 同左 |
+| `require('fsevents')` | 可 | 可 |
+| `@unrs/resolver-binding-darwin-arm64` | 有 | 有 |
+
+4件とも **optional なプラットフォーム別パッケージ**でバイナリを解決するため、postinstall は
+実質 no-op（`@sentry/cli` の postinstall は `@sentry/cli-darwin` が在れば何もしない。
+CDN 取得は在庫が無いときのフォールバック）。**教訓26 で「npm 10 で入れたから在った」と
+記録したバイナリは、npm 11 でも同じように在った。**
+
+→ 🔴 **教訓26 の実害（arch 不一致で `npx sst install` が落ちる）は、
+   不要な回避策を守ったせいで生じていた。** 回避策そのものがコストではなく、
+   **回避策が別の前提（この場合は Node の CPU）を持ち込むこと**がコストだった。
+→ 🔴 **「変更後に在ること」は効果の証拠にならない。「外したら無いこと」を同じ手段で見る。**
+   教訓23（`added N packages` で判定しない）に従ってバイナリの実在まで見ていたのに、
+   **負の対照が無かったため誤った結論に達した**＝ 手続きが正しくても因果は取り違えられる。
+   教訓19 の「負の対照」を、検査ではなく**依存**に適用すべきだった。
+→ 📌 `@sentry/cli/sentry-cli` を実在確認の対象にしたのも誤り。**プラットフォーム別パッケージを
+   持つ依存は、固定パスではなくパッケージ自身の解決関数（`getPath()` 等）で確かめる。**
+   固定パスはフォールバック経路の産物で、正常時には存在しないことがある。
+
+**検証**（すべて npm 11.18.0 / arm64・clean `npm ci` から）:
+`npm ci` の allow-scripts 警告が消えた（8行 → 0行）／`npx sst install` が成功
+（**教訓26 で落ちた当のコマンド**）／`check:sst`・`lint`・`test`（30ファイル・272件）・
+`check:cron`・`check:toolchain` がすべて exit 0。
+CI は `actions/setup-node` の Node 22＝**npm 10.9.x** で、`allowScripts` を**黙って無視して
+全スクリプトを実行する**ため無影響（スクラッチで実測。npm 11 に上がっても正しく動く）。
+`sst:deploy` のゲート①（npm 11 以上）とは矛盾しない。OpenNext の `installDependencies` は
+自前の一時ディレクトリで `npm install sharp` を打つので `allowScripts` は届かないが、
+sharp 0.35 は prebuilt で install スクリプトを持たず影響しない。
