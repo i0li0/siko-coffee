@@ -541,6 +541,18 @@ next/image の最適化も維持。
    **12 で production に domain を付けた時点で自動的に有効**になる。9 を production へ
    広げる必要はない（そもそも本番は index されたい）。
 
+**🔧 これ以降の運用に効くこと（次に dev を触る人へ）**
+- **dev への素の `curl` は全パス 401 になる。** 「壊れた」と誤診しないこと。`-u` を付ける。
+  資格情報は **`npx sst secret list --stage dev`** で読む（`eval "$(aws configure
+  export-credentials --format env)"` が先に要る）。
+  ⚠️ **SSM を直接引いても出ない** — SST v4 の secret は平文パラメータではなく暗号化された
+  state 側にあり、SSM にあるのは `/sst/passphrase/siko-coffee/dev` だけ。
+- 認証が掛からない/効かない経路が3つある。**この3つは 401 にならないのが正常**:
+  ① **AvatarCdn**（`d22i7l6gqogfbs.cloudfront.net`）は noindex のみ
+  ② **`/admin*`** は WAF が先に評価されるので資格情報の有無に関わらず 202（challenge）
+  ③ **cron** は CloudFront を通らない（Function URL 直叩き）
+- 資格情報を回すには **`sst secret set` だけでは足りず再デプロイが要る**（CFF に焼き込むため）。
+
 **次への申し送り**: 12（apex 正規化＋HSTS）も `edge.viewerRequest.injection` を使う。
 CloudFront Function は**1ビヘイビアに1つ**で、SST は injection を自前の関数に合成する方式なので
 **注入口は1つしかない**。今は「9 は非本番だけ／12 は本番だけ」で排他だが、両方が要るステージが
