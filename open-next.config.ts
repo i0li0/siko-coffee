@@ -62,6 +62,21 @@ const config: OpenNextConfig = {
     //    デプロイが成功してしまう（OpenNext の installDependencies は失敗をログに出すだけで
     //    ビルドを止めない）。ビルド後に `npm run verify:image-optimizer` で必ず検証すること。
     // ⚠️ arch は SST が作る Lambda（arm64）と一致させること。片方だけ変えると再発する。
+    //
+    // 🔴 ④ **`arch` だけでは CPU を選べない。`additionalArgs` で `--cpu` を渡すこと。**
+    //    OpenNext の installDependencies（dist/build/installDeps.js）は `arch` を
+    //    **`--arch=`** として渡す。これは node-gyp / prebuild-install の系譜のフラグで
+    //    `npm_config_arch` を立てるだけであり、**optional 依存の絞り込みには効かない**。
+    //    sharp 0.35 系は `@img/sharp-<os>-<cpu>` の optional 依存で解決されるので、
+    //    効くのは **`--cpu`**。指定が無いと npm は**ビルドしたマシンの CPU** で選ぶ。
+    //    ＝ Apple Silicon の Mac から打つと**たまたま arm64 が入って正しく見えていた**。
+    //    x64 のマシン（GitHub Actions の ubuntu-latest がまさにこれ）でビルドすると
+    //    黙って `@img/sharp-linux-x64` が入り、arm64 の Lambda で sharp が読めず
+    //    next/image が原本をそのまま返す。2026-08-01 に CI の初回デプロイで実際に踏んだ。
+    //    実測（arm64 の Mac 上・負の対照つき）:
+    //      `--arch=arm64` のみ           → sharp-linux-arm64（ホストが arm64 だから通るだけ）
+    //      `--arch=arm64 --cpu=x64`      → **sharp-linux-x64**（＝ arch は選択を制御していない）
+    //      `--cpu=arm64`                 → sharp-linux-arm64（ホストに依らず確定）
     install: {
       // 下限指定（固定しない）。Next 16.2.11 の optional 依存は `sharp: ^0.34.5`、
       // package.json の overrides は `^0.35.3`（#69 の脆弱性対応）なので、それに揃える。
@@ -70,6 +85,8 @@ const config: OpenNextConfig = {
       arch: 'arm64',
       libc: 'glibc',
       nodeVersion: '24', // Lambda ランタイム nodejs24.x に合わせる
+      // 🔴 これが実際に CPU を決める。`arch` と**必ず同じ値**にすること。
+      additionalArgs: '--cpu=arm64',
     },
   },
 
