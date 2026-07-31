@@ -20,6 +20,10 @@
 #
 # 環境変数:
 #   AWS_PROFILE  資格情報の取得元プロファイル（既定: default）
+#
+# CI（GitHub Actions ＋ OIDC）からも**この同じ入口を通す**。②だけは条件分岐する
+# （既に環境変数へ入っているので export-credentials は不要かつ不可能）。
+# CI 専用のデプロイ経路を別に作ると ①③④ が丸ごと抜けるため、分岐はここに閉じ込める。
 
 set -euo pipefail
 
@@ -30,15 +34,23 @@ profile="${AWS_PROFILE:-default}"
 echo "── ① ツールチェーンの確認 ──"
 node scripts/check-build-toolchain.mjs
 
-echo "── ② AWS 資格情報を環境変数へ展開（profile: ${profile}）──"
-if ! creds="$(aws configure export-credentials --profile "$profile" --format env 2>&1)"; then
-  echo "✗ 資格情報を取得できませんでした（profile: ${profile}）:" >&2
-  echo "$creds" >&2
-  exit 1
+if [[ -n "${AWS_ACCESS_KEY_ID:-}" ]]; then
+  # CI（GitHub Actions ＋ OIDC）では configure-aws-credentials が資格情報を
+  # 既に環境変数へ入れており、~/.aws/config が無いので export-credentials は使えない。
+  # SST が求めているのは「環境変数にあること」なので、その場合は ② を飛ばす。
+  echo "── ② AWS 資格情報は環境変数から取得済み ──"
+  echo "✓ $(aws sts get-caller-identity --query Arn --output text)"
+else
+  echo "── ② AWS 資格情報を環境変数へ展開（profile: ${profile}）──"
+  if ! creds="$(aws configure export-credentials --profile "$profile" --format env 2>&1)"; then
+    echo "✗ 資格情報を取得できませんでした（profile: ${profile}）:" >&2
+    echo "$creds" >&2
+    exit 1
+  fi
+  eval "$creds"
+  : "${AWS_ACCESS_KEY_ID:?資格情報の展開に失敗しました}"
+  echo "✓ 展開しました（$(aws sts get-caller-identity --query Arn --output text)）"
 fi
-eval "$creds"
-: "${AWS_ACCESS_KEY_ID:?資格情報の展開に失敗しました}"
-echo "✓ 展開しました（$(aws sts get-caller-identity --query Arn --output text)）"
 
 echo "── ③ sst deploy ──"
 npx sst deploy "$@"

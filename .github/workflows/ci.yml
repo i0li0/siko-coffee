@@ -75,3 +75,76 @@ jobs:
           name: playwright-report
           path: playwright-report/
           retention-days: 7
+
+  # Pour Over 9.5: main への push で AWS へも自動デプロイする。
+  #
+  # なぜ要るか: 14（soak）では Vercel と AWS の両方が本番を担う。Vercel は main の
+  # 自動デプロイが有効なので、AWS 側にこれが無いと **push のたびに Vercel だけが進み、
+  # 本番を担う AWS が取り残される**（依存 K）。加えてデプロイが「npm 11 の入った
+  # 特定のマシンからの手打ち」に固定されたままになる。
+  #
+  # 資格情報は OIDC で都度発行する＝**静的な AWS キーをリポジトリに置かない**。
+  # ロールの作成は scripts/bootstrap-github-oidc.sh（1回だけ・AWS 側の前提作業）。
+  deploy:
+    name: SST Deploy (${{ matrix.stage }})
+    runs-on: ubuntu-latest
+    # テストが通っていないものを本番に出さない。13 以降はこの gate が本番を守る。
+    needs: [lint-typecheck, e2e]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    strategy:
+      fail-fast: false
+      matrix:
+        # 🔴 デプロイ先はここ1か所で決める（sst.config.ts の WAF_STAGES / CRON_STAGES と
+        #    同じ運用）。**'production' を足すのは 13 で DNS を切り替えた後**。先に足すと
+        #    本番ステージが CI から先に作られ、13 の検証手順を飛ばすことになる。
+        stage: [dev]
+    permissions:
+      id-token: write # OIDC トークンの発行に必須（既定では付かない）
+      contents: read
+    concurrency:
+      # SST の state ロックは1ステージ1本。並走すると後発が state ロックで落ちる。
+      # 🔴 cancel-in-progress は false。デプロイ中に打ち切ると state がロックされたまま残る。
+      group: sst-deploy-${{ matrix.stage }}
+      cancel-in-progress: false
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+
+      # node 22 に同梱される npm は 10 系。npm 10 で入れた依存で OpenNext をビルドすると
+      # sharp が wasm32 に落ち、next/image が無言で最適化されなくなる
+      # （検知するのが scripts/check-build-toolchain.mjs＝下の ①）。
+      # 依存の導入も 11 で行う（package.json の allowScripts に一本化済み）。
+      - name: Use npm 11
+        run: npm i -g npm@11
+
+      - name: Install dependencies
+        run: npm ci
+
+      # 未設定のまま走ると configure-aws-credentials が読み解きにくいエラーで落ちるので、
+      # 何をすればよいかが分かる形で先に止める。
+      - name: Check deploy role is configured
+        run: |
+          if [ -z "${{ vars.AWS_DEPLOY_ROLE_ARN }}" ]; then
+            echo "✗ リポジトリ変数 AWS_DEPLOY_ROLE_ARN が未設定です。" >&2
+            echo "  bash scripts/bootstrap-github-oidc.sh を1度実行してください。" >&2
+            exit 1
+          fi
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ap-northeast-1
+
+      # 入口は `npm run sst:deploy` の1つだけ（0-a）。素の `npx sst deploy` にすると
+      # ツールチェーン検査と画像最適化の検証が両方抜ける。
+      # 🔴 パイプに通さないこと。終了ステータスが後段のものに化け、失敗が exit 0 になる（教訓23）。
+      - name: SST deploy
+        run: npm run sst:deploy -- --stage ${{ matrix.stage }}
+        env:
+          STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY || 'sk_test_placeholder' }}

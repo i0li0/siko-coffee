@@ -567,6 +567,88 @@ CloudFront Function は**1ビヘイビアに1つ**で、SST は injection を自
 
 ---
 
+### 9.5 GitHub Actions ＋ OIDC で `sst deploy` を自動化（2026-08-01・🔶 実装のみ／未検証）
+
+🔶 **この項目はまだ「済」ではない。** コードは入ったが、**AWS 側のロール作成と
+CI からの実デプロイが未実施**なので、進捗は 13/21 のまま据え置いている。
+このプロジェクトの完了基準は「実測で確かめた」ことであり、
+**ワークフローの文法が通ったことは、デプロイできたことの証明ではない**（教訓27 と同型）。
+
+**なぜ 13 より前に要るか**: 14（soak）では Vercel と AWS の両方が本番を担う。Vercel は main の
+自動デプロイが有効なままにする（ロールバック先を最新に保つため）ので、AWS 側にこれが無いと
+**push のたびに Vercel だけが進み、本番を担う AWS が取り残される**（依存 K）。
+
+**設計上の判断**
+
+- **`ci.yml` を拡張して `deploy` ジョブを足した**（別ワークフローにしなかった）。
+  `needs: [lint-typecheck, e2e]` で**テストが緑のときだけ**デプロイする。13 以降はこの gate が
+  本番を守る唯一の関門になる。`workflow_run` で別ワークフローに繋ぐ形もあるが、ref の解釈が
+  既定ブランチ側になって分かりにくく、ここでは同一ワークフロー内の依存で足りる。
+  `permissions` はジョブ単位で絞れるので、分ける理由にならない。
+- 🔑 **入口は `npm run sst:deploy` のまま**（0-a の不変条件を CI にも通した）。
+  CI 専用のデプロイ経路を別に書くと ①ツールチェーン検査 ③deploy ④画像最適化の検証 が
+  丸ごと抜ける。**この4つが抜けたことに気づく手段が無い**のが元の罠（#96）だった。
+  `scripts/deploy.sh` は **② だけ条件分岐**させた（CI では資格情報が既に環境変数にあり、
+  `~/.aws/config` が無いので `aws configure export-credentials` は使えないし、そもそも不要）。
+- **デプロイ先ステージは `strategy.matrix.stage` の1か所**で決める。`WAF_STAGES`・`CRON_STAGES`
+  と同じ「配列1か所」の運用に揃えた。🔴 **今は `[dev]` だけ**。
+- **ロールは SST の管理外**（`scripts/bootstrap-github-oidc.sh`／1度だけ実行）。
+  `sst.config.ts` に入れると「CI がデプロイするスタックが、その CI 自身のロールを管理する」
+  循環になり、デプロイに失敗したとき CI がデプロイし直せなくなる。
+  📌 **教訓6（IaC 管理下のものを手で触ると次の deploy で巻き戻る）は当てはまらない。**
+  あれは SST が作ったリソースの話で、ここは最初から SST の外にある。
+- 権限は **AdministratorAccess**（オーナー判断）。SST/Pulumi は Lambda・CloudFront・S3・IAM・
+  WAF・Scheduler・ACM・Route53 まで広範に触るので、絞ると 13 で AccessDenied が連発して
+  切り分け不能になる。**防御は権限の狭さではなく信頼ポリシー側**に寄せた
+  （`sub` を `repo:i0li0/siko-coffee:ref:refs/heads/main` に限定・静的キーは1本も増やさない）。
+- `concurrency` は **`cancel-in-progress: false`**。SST の state ロックは1ステージ1本で、
+  デプロイの途中で打ち切ると**ロックが残ったまま**になる。並走を防ぎつつ、割り込みもさせない。
+- node 22 の同梱 npm は 10 系なので、**`npm ci` より前に `npm i -g npm@11`** を入れてある
+  （順序が逆だと npm 10 で依存が入り、①の検査は通るのに sharp が wasm32 になる）。
+
+**検証（ローカルで確かめられる範囲）**
+
+- `scripts/deploy.sh` の分岐を stub で両方向とも実行: `AWS_ACCESS_KEY_ID` **あり**→②を飛ばして
+  ①③④ を通過／**なし**→従来どおり `export-credentials` 経由。
+  **負の対照**として「`export-credentials` が失敗したら止まるか」も確認（**exit 1** で ③ に進まない）。
+- `ci.yml` を YAML パーサに通して `needs` / `if` / `permissions` / `concurrency` / `matrix` を確認。
+- `npm run lint` / `npx tsc --noEmit` / `npm test`（30ファイル・272件）/ `npm run check:sst` すべて 0。
+
+**✅ 完了条件① — ロール作成（2026-08-01 実行済み・AWS 実測で確認）**
+
+`bash scripts/bootstrap-github-oidc.sh` を実行した。**スクリプトの出力ではなく AWS に
+問い合わせて**確認した（教訓23）:
+
+| 確認したもの | 実測値 |
+|---|---|
+| OIDC プロバイダ | `token.actions.githubusercontent.com` / ClientIDList `["sts.amazonaws.com"]` |
+| 信頼ポリシーの `sub` | **`repo:i0li0/siko-coffee:ref:refs/heads/main`**（＝main への push のみ） |
+| 信頼ポリシーの `aud` | `sts.amazonaws.com` |
+| アタッチ済みポリシー | `AdministratorAccess` の1本のみ |
+| リポジトリ変数 | `AWS_DEPLOY_ROLE_ARN` = `arn:aws:iam::654512230021:role/siko-coffee-github-deploy` |
+
+**冪等性も実測**（2回目の実行は3経路とも「既にあります／更新しました」に落ちて exit 0）。
+
+⚠️ **踏んだ罠: IAM の `description` は Latin-1 しか受け付けない。**
+日本語を入れたら `ValidationError`（`[	
+ -~¡-ÿ]*`）で
+`CreateRole` が落ちた。このリポジトリはコメントも文書も日本語なので**同じ書き味で書くと落ちる**
+API がある、という点だけ覚えておく（タグの Value や S3 のメタデータも同種の制約を持つ）。
+📌 このとき **OIDC プロバイダは既に作られていた**ので、再実行時に二重作成にならないことが
+偶然この場で確かめられた（冪等に書いておいて助かった形）。
+
+**🔴 残っている完了条件②**
+
+マージ後、`deploy` ジョブが dev へ実際にデプロイして緑になることを確認する。
+成否は **AWS 側に問い合わせて**確定させる（教訓23）。例えば server Lambda の
+`LastModified` が CI 実行時刻に更新されているか。
+
+**次への申し送り（13 で必ず読む）**: `matrix.stage` に **`production` を足すのは DNS を
+切り替えた後**。先に足すと本番ステージが CI から先に作られ、13 の「production デプロイ →
+検証 → DNS 切替」という順序が飛ぶ。`CRON_STAGES` に production を足すのが 13 の後なのと同じ理由。
+
+---
+
 ## 教訓
 
 他の作業にも移植できる形で残す。
