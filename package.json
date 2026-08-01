@@ -21,7 +21,8 @@
     "e2e:ui": "playwright test --ui",
     "test": "vitest run",
     "test:watch": "vitest",
-    "check:sst-config": "node scripts/check-sst-config.mjs"
+    "check:sst-config": "node scripts/check-sst-config.mjs",
+    "check:secret-file": "node scripts/check-secret-file.mjs"
   },
   "dependencies": {
     "@auth/dynamodb-adapter": "^2.11.3",
