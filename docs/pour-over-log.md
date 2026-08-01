@@ -987,6 +987,89 @@ Host ヘッダ欠落でも例外を投げない（投げると 500）／`SikoCof
 
 ---
 
+### 2026-08-01 — 13 の事前点検で見つかった2つの穴
+
+13 は依存 F により **2026-08-02 17:50 UTC 以降**まで実行できないので、
+その間に **「当日詰まる要因」を実測で潰す**ことにした。結果、2件見つかった。
+手順書は `docs/pour-over-13-runbook.md` に独立した文書として置いた。
+
+#### 🔴 穴①: production のシークレットが **0本**
+
+```
+$ npx sst secret list --stage production
+✕  No secrets found
+```
+
+`sst deploy --stage production` は **`SECRET_NAMES` の7本が1本でも欠けると落ちる**。
+＝ **13 はそのままでは1行目から進まなかった。**
+
+📌 Vercel 本番側には7本とも存在する（`vercel env ls production` で名前を確認）。
+やるべきは「作る」ではなく「**移す**」。
+
+🔴 **しかも作り直してはいけない。** soak（14）の間は **AWS と Vercel の両方が本番を担う**ので、
+乱数系を作り直すと**どちらに当たったかでユーザーの体験が割れる**:
+`AUTH_SECRET` と `ADMIN_SESSION_SECRET` は**ランダムにログアウト**、
+`ORDER_TOKEN_SECRET` は**切替前にメールで送った注文照会リンクが片方で 403**、
+`CRON_SECRET` は Vercel 側の cron が 401 になる。
+📌 `sst.config.ts` の「**本番と同じ値を dev に入れない**」という方針は **dev の話**で、
+production は Vercel と**一致していなければならない**。ここだけ向きが逆になる。
+
+#### 🔴🔴 穴②: `sst.config.ts` に配線されているシークレットが **7本しかなかった**
+
+計画の 13 の欄には「シークレットは Vercel 本番の30本と突合済みで**過不足なし**」と書いてある。
+だがこれは **値が Vercel に在ることの確認**であって、
+**`sst.config.ts` の `environment` に配線されていることの確認ではなかった**。
+実際に Lambda へ渡っていたのは `...secretEnv`＝ **`SECRET_NAMES` の7本だけ**で、
+残りは「任意」としてコメントアウトされたままだった。
+
+**このまま production を deploy すると「デプロイは成功するのに機能が欠けた本番」ができる。**
+消費側を1つずつ grep して確認した:
+
+| 欠ける変数 | 読む場所 | 起きること |
+|---|---|---|
+| `GOOGLE_CLIENT_ID/SECRET` | `src/lib/auth.ts` | `oauthEnabled.google` が false ＝ **Google ログインが黙って消える** |
+| `LINE_CLIENT_ID/SECRET` | 同上 | **LINE ログインが消える** |
+| `ADMIN_TOTP_SECRET` | `src/lib/adminTotp.ts` | TOTP 秘密が null |
+| **`ADMIN_TOTP_REQUIRED`** | `api/admin/auth/route.ts` | `=== 'true'` が false ＝ **admin がパスワードのみで通る** |
+| `NEXT_PUBLIC_SENTRY_DSN` | `sentry.server.config.ts` | dsn が undefined ＝ **サーバ Sentry が無効**（依存 D が崩れる） |
+| `NEXT_PUBLIC_GA_MEASUREMENT_ID` | `src/app/layout.tsx` | GA を描画しない |
+| `INSTAGRAM_ACCESS_TOKEN` | `src/lib/instagram.ts` | 初期トークン（依存 E・L） |
+
+🔴 **`ADMIN_TOTP_REQUIRED` だけ質が違う。** 他は「機能が消える」だが、これは
+**防御が消える**（フェイルオープン）。しかも**サイトは正常に見える**ので気づけない。
+`src/app/api/admin/auth/route.ts` は「秘密鍵が未設定なら**フェイルクローズ**」を
+わざわざ実装してあるのに、**フラグ自体が届かなければその分岐に入らない**。
+＝ **フェイルクローズの設計は、その判断材料が届いていることが前提**である。
+
+#### 対処: `SECRET_NAMES` に足すのではなく、既定値付きの別配列にした
+
+```ts
+const OPTIONAL_SECRET_NAMES = [ … 11本 … ] as const
+const optionalSecretEnv = Object.fromEntries(
+  OPTIONAL_SECRET_NAMES.map((name) => [name, new sst.Secret(name, '').value]),
+)
+```
+
+🔑 **`SECRET_NAMES` に足すのは誤り。** あの配列は**値が無いと `sst deploy` が落ちる**ので、
+足すと **dev にも本番用の秘密の投入を強いる**ことになり、
+「本番と同じ値を dev に入れない」という既存の方針と正面から衝突する。
+既定値 `''` なら **dev は今までどおり（機能オフ）／production だけ実値**にできる。
+📌 同じ形は 10 の `SLACK_WEBHOOK_URL` で先に使っている（＝新しい発明ではなく既存パターンの適用）。
+⚠️ 消費側が**すべて falsy ガード**（`Boolean(a && b)` / `x || null` / `=== 'true'` /
+`{x && <C/>}`）であることを grep で確認したうえで `''` を「無効」の意味に使っている。
+
+#### 今回は**マージ前に**差分を実測した（前回の反省）
+
+12 でトップレベル import を踏んだ直後なので、「CI が緑」で終わらせずに `sst diff --stage dev` を回した:
+
+- 追加されるのは **`environment.variables` の11本だけ**。他は再ビルドに伴う通常の入れ替わり。
+- **`sst secret list --stage dev` は元の9本のまま**＝ `diff` は state を変更していない（副作用なしを確認）。
+
+📌 ついでに `sst secret list` が**値を伏せたまま長さを出せる**ことも確認できた
+（`len=64` など）。教訓32 の「伏せる」と「測る」の使い分けは、この形で実行できる。
+
+---
+
 ## 教訓
 
 他の作業にも移植できる形で残す。

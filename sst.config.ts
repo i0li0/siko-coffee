@@ -78,22 +78,69 @@ export default $config({
       'MAIL_FROM',            // SES 送信元
       'ADMIN_PASSWORD_HASH',  // admin ログイン
       'ADMIN_SESSION_SECRET', // admin セッション署名
-      // ── 任意（その機能を dev で検証したくなったら追加する）──
-      // 'ADMIN_TOTP_SECRET', 'ADMIN_TOTP_REQUIRED',
-      // 'SLACK_WEBHOOK_URL', 'INSTAGRAM_ACCESS_TOKEN',
-      // 'SENTRY_ORG', 'SENTRY_PROJECT', 'SENTRY_AUTH_TOKEN', 'NEXT_PUBLIC_SENTRY_DSN',
-      // 'GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET',   ※ OAuth 側にリダイレクトURI登録が別途必要
-      // 'LINE_CLIENT_ID', 'LINE_CLIENT_SECRET',       ※ 同上
-      //
       // ── 意図的に入れないもの ──
       // STRIPE_* / PAYMENTS_ENABLED … 決済停止中（Phase 0 を維持）
-      // NEXT_PUBLIC_GA_MEASUREMENT_ID … dev のアクセスが本番 GA に混ざるため
       // BLOB_* … ✅ 4 で S3 に置き換え済み。Vercel 側の3本も 15 で捨ててよい
-      // WEBAUTHN_RP_ID / WEBAUTHN_ORIGIN … 未設定ならリクエスト元から自動導出されるので dev では不要
+      // AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY … 実行ロールに置き換えるのが移行の目的
+      // SENTRY_ORG / SENTRY_PROJECT / SENTRY_AUTH_TOKEN … **ビルド時**にしか使われない
+      //   （`next.config.ts`）。Lambda の env に入れても効かないので、ここではなく
+      //   ビルド環境（GitHub Actions）側の話になる。未設定なら `sourcemaps.disable` が
+      //   効くだけで、Vercel でも同じ状態＝移行で失うものは無い（実測済み）。
     ] as const
 
     const secretEnv = Object.fromEntries(
       SECRET_NAMES.map((name) => [name, new sst.Secret(name).value]),
+    )
+
+    // ── 任意のシークレット（Pour Over 13 の前提）──────────────────
+    //
+    // 🔴🔴 **これが無いと production は「デプロイは成功するのに機能が欠けた本番」になる。**
+    // 2026-08-01 の 13 の準備で判明した:（`SECRET_NAMES` は7本しか無く、Lambda の
+    // `environment` に入るのもその7本だけだった）。計画の「シークレットは Vercel 本番の
+    // 30本と突合済みで過不足なし」は **値が Vercel に在ることの確認**であって、
+    // **`sst.config.ts` に配線されていることの確認ではなかった**。
+    //
+    // 欠けたときに起きること（すべて消費側を grep して確認済み）:
+    //   GOOGLE_/LINE_CLIENT_*   → `src/lib/auth.ts` の `oauthEnabled` が false
+    //                             ＝ **ソーシャルログインが黙って消える**
+    //   ADMIN_TOTP_SECRET       → `src/lib/adminTotp.ts` が null を返す
+    //   ADMIN_TOTP_REQUIRED     → `=== 'true'` が false ＝ **admin がパスワードのみで通る**
+    //                             🔴 **これだけはフェイルオープン**。他は機能が消えるだけだが、
+    //                             これは**防御が消える**。soak 中の本番で起きるので最も危険。
+    //   NEXT_PUBLIC_SENTRY_DSN  → `sentry.server.config.ts` の dsn が undefined
+    //                             ＝ **サーバ Sentry が無効**（依存 D が成立しなくなる）
+    //   NEXT_PUBLIC_GA_MEASUREMENT_ID → `src/app/layout.tsx` が GA を描画しない
+    //   INSTAGRAM_ACCESS_TOKEN  → `src/lib/instagram.ts` の初期トークン（依存 E・L）
+    //   WEBAUTHN_RP_ID/ORIGIN   → 未設定ならリクエスト元から導出。Vercel は明示していたので揃える
+    //
+    // 🔑 **`SECRET_NAMES` に足すのではなく既定値付きにするのが要点。**
+    //    あの配列に載せた名前は**値が無いと `sst deploy` 自体が落ちる**ので、
+    //    足すと dev にも本番用の秘密の投入を強いることになる（そして
+    //    「本番と同じ値を dev に入れない」という上の方針と正面から衝突する）。
+    //    既定値 `''` なら **dev は今までどおり（機能オフ）／production だけ実値**にできる。
+    //    ⚠️ 消費側が**すべて falsy ガード**であることを確認済みなので `''` は安全に「無効」を意味する
+    //       （`Boolean(a && b)` / `x || null` / `=== 'true'` / `{x && <C/>}`）。
+    //    📌 同じ形は 10 の `SLACK_WEBHOOK_URL` で先に使っている。
+    // ⚠️ **値は deploy 時に env へ焼き込まれる＝ `sst secret set` だけでは効かず再デプロイが要る。**
+    const OPTIONAL_SECRET_NAMES = [
+      'GOOGLE_CLIENT_ID',
+      'GOOGLE_CLIENT_SECRET',
+      'LINE_CLIENT_ID',
+      'LINE_CLIENT_SECRET',
+      'ADMIN_TOTP_SECRET',
+      'ADMIN_TOTP_REQUIRED',
+      'NEXT_PUBLIC_SENTRY_DSN',
+      'NEXT_PUBLIC_GA_MEASUREMENT_ID',
+      'INSTAGRAM_ACCESS_TOKEN',
+      'WEBAUTHN_RP_ID',
+      'WEBAUTHN_ORIGIN',
+    ] as const
+
+    const optionalSecretEnv = Object.fromEntries(
+      OPTIONAL_SECRET_NAMES.map((name) => [
+        name,
+        new sst.Secret(name, '').value,
+      ]),
     )
 
     // ── 非本番ステージの遮蔽（Pour Over 9）────────────────────────
@@ -605,6 +652,10 @@ export default $config({
 
         // 投入済みシークレット（値は SSM 由来。ここには現れない）
         ...secretEnv,
+
+        // 任意のシークレット（未設定なら `''`＝機能オフ）。production では 13 の
+        // 前に実値を入れる。詳細は上の OPTIONAL_SECRET_NAMES のコメント。
+        ...optionalSecretEnv,
 
         // ステージ判定の入力（Pour Over 1 で `VERCEL_ENV` から移行済み）。
         // `src/lib/stage.ts` がこれを読み、`src/lib/db.ts` のテーブル接頭辞と
