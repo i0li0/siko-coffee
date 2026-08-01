@@ -43,14 +43,27 @@ const OPTIONAL = [
   'GOOGLE_CLIENT_SECRET',
   'LINE_CLIENT_ID',
   'LINE_CLIENT_SECRET',
-  'ADMIN_TOTP_SECRET',
   'ADMIN_TOTP_REQUIRED',
   'NEXT_PUBLIC_SENTRY_DSN',
   'NEXT_PUBLIC_GA_MEASUREMENT_ID',
-  'INSTAGRAM_ACCESS_TOKEN',
   'WEBAUTHN_RP_ID',
   'WEBAUTHN_ORIGIN',
+  // 🔴 2026-08-01 追加。10 で中継 Lambda 用にだけ宣言されており、アプリ本体の
+  //    environment に入っていなかった。無いと `src/lib/slackNotify.ts` が黙って
+  //    return し、6か所の Slack 通知が無言で止まる。
+  'SLACK_WEBHOOK_URL',
 ]
+
+// 🔑 **env に入れる必要が無いもの（DynamoDB が正）。** どちらも
+//   「DynamoDB を先に読み、無ければ env」という実装なので、DynamoDB に実物がある限り
+//   env は使われない。しかも DynamoDB は **Vercel と AWS が同じテーブルを共有する**ので、
+//   soak 中の同期も自動的に取れる。→ **投入しないのが正しい**。
+const DB_BACKED = {
+  ADMIN_TOTP_SECRET:
+    'siko-coffee-config の totp_secret（/admin/settings で登録し直すと入る）',
+  INSTAGRAM_ACCESS_TOKEN:
+    'siko-coffee-config の INSTAGRAM_ACCESS_TOKEN（cron が更新している）',
+}
 
 // 入れてはいけないもの。とくに AWS_* は「静的キーを置かない」という移行最大の成果を打ち消す。
 const FORBIDDEN = [
@@ -139,6 +152,15 @@ for (const key of OPTIONAL) {
   }
 }
 
+// DynamoDB が正のものを**入れてしまっている**場合に知らせる（害はないが不要）。
+for (const key of Object.keys(DB_BACKED)) {
+  if (present.has(key)) {
+    warnings.push(
+      `入れなくてよい: ${key} … ${DB_BACKED[key]} が使われるため env は読まれない`,
+    )
+  }
+}
+
 // ── 出力（値は絶対に出さない）─────────────────────────────
 console.log(`# ${file}（${entries.length} 件）`)
 for (const { key, value } of entries) {
@@ -147,7 +169,9 @@ for (const { key, value } of entries) {
     ? '必須'
     : OPTIONAL.includes(key)
       ? '任意'
-      : '対象外'
+      : key in DB_BACKED
+        ? '不要(DB)'
+        : '対象外'
   console.log(
     `  ${key.padEnd(32)} len=${String(value.length).padStart(4)}  sha=${h}  ${tag}`,
   )
