@@ -12,12 +12,40 @@
 
 ## 0. 実行可能条件
 
+### 🕒 どこが時刻で縛られているか（**文書全体ではない**）
+
+| 節 | 時刻の縛り | いつやるか |
+|---|---|---|
+| **1. シークレット投入** | **無し** | **今すぐやってよい**。むしろ前日までに済ませる |
+| **2. production デプロイ** | **無し**（12 の `dns: false` により DNS を触らない） | 下記の判断による |
+| **3. 切替前の検証** | **無し**（`--resolve` で当てるので実 DNS を使わない） | 同上 |
+| **4. DNS 切替** | 🔴 **依存 F＝ 2026-08-02 17:50 UTC 以降** | ここだけが本当の門 |
+| 5. 切替後の後始末 | 4 の後 | — |
+
+🔑 **依存 F が守っているのは「切替の瞬間に旧 TTL が失効していること」**であって、
+production ステージの存在ではない。2・3 は DNS に一切触らないので、原理的には先に打てる。
+
+**2・3 を先に打つかどうかの判断材料**:
+
+- ✅ **先に打つ利点**: デプロイ時にしか出ない失敗（#124 のトップレベル import がその類）を
+  切替の窓の外で潰せる。当日の作業が「検証 → UPSERT」だけになり短く予測可能になる。
+- 🔴 **先に打つ代償**: `WAF_STAGES` に `production` があるので **web ACL がもう1枚できて +$8/月**。
+  dev と並ぶと月$16 で**予算通知（$12）を超える**。先に打つなら**同時に `WAF_STAGES` から
+  `'dev'` を外す**（6 の検証は完了済みなので外してよい＝5-5 を前倒しする形）。
+- ⚠️ production は `protect: true` / `removal: 'retain'`。作った後は消しにくい。
+  また 5（`oac-with-edge-signing`）の Lambda@Edge は外すのに5〜10分かかる。
+
+📌 **迷うなら計画どおり 2〜4 を1回のセッションでやる**のが安全側。上の前倒しは
+「当日の窓を短くしたい」ときの選択肢であって、必須ではない。
+
+### 前提条件
+
 | # | 条件 | 状態 |
 |---|---|---|
-| 0-1 | **11（TTL 60s）から24時間以上** | ✅ 11 は **2026-08-01 17:50 UTC** に実施 → **2026-08-02 17:50 UTC（8/3 02:50 JST）以降** |
+| 0-1 | **11（TTL 60s）から24時間以上**（※ **4 の直前にだけ効く**） | ✅ 11 は **2026-08-01 17:50 UTC** に実施 → **2026-08-02 17:50 UTC（8/3 02:50 JST）以降** |
 | 0-2 | ワイルドカード証明書が `ISSUED` | ✅ `01195002-…` / Issuer: Amazon / 2027-02-11 まで / `InUseBy` は空 |
 | 0-3 | 本番 DynamoDB テーブルが存在 | ✅ `siko-coffee-*` が16本 |
-| 0-4 | **production の secret が投入済み** | 🔴 **未（0本）**。下の 1 を先にやること |
+| 0-4 | **production の secret が投入済み** | 🔴 **未（0本）**。下の 1 を先にやること。**🔴 これはオーナー本人が対話的なターミナルでやる**（エージェント経由だと Vercel CLI が値を復号せずプレースホルダを返す＝1-3） |
 | 0-5 | main が緑でデプロイも通っている | 実行直前に `gh run list --branch main --limit 1` で確認 |
 
 🔴 **0-4 が最大の落とし穴。** `sst deploy --stage production` は `SECRET_NAMES` の
@@ -25,7 +53,7 @@
 
 ---
 
-## 1. production のシークレット投入（**13 の前日までにやる**）
+## 1. production のシークレット投入（**時刻の縛り無し＝今すぐやってよい**）
 
 ### 1-1. 何を入れるか
 
@@ -69,10 +97,29 @@ INSTAGRAM_ACCESS_TOKEN  WEBAUTHN_RP_ID  WEBAUTHN_ORIGIN
 📌 「dev には本番と同じ値を入れない」という方針（`sst.config.ts` の `SECRET_NAMES` コメント）は
 **dev の話**で、production は Vercel と一致していなければならない。ここは逆になる。
 
-### 1-3. 手順
+### 1-3. 🔴🔴 **この作業はオーナー本人が対話的なターミナルでやること**
+
+**2026-08-01 に実際に踏みかけた。** エージェント（Claude Code など）から
+`npx vercel env pull` を実行すると、**Vercel CLI は値を復号せず全項目に同じ
+プレースホルダ文字列を書く**（CLI 側の保護。`--non-interactive` はエージェント検知時の既定）。
+実測では:
+
+```
+対象18本の相異なる値の数: 1
+AUTH_SECRET と STRIPE_SECRET_KEY の sha が一致
+```
+
+**そのまま `sst secret load` していたら production の18本すべてが同じ固定文字列**になり、
+しかも **`sst deploy` は成功する**。壊れるのは**ユーザーのログインと注文照会リンク**であって、
+デプロイの成否ではない。
+
+🔑 **気づけたのは値を「伏せる」のではなく「測った」から**（長さとハッシュ）。
+`<redacted>` に潰す確認方法だと、**確かめたい性質そのものが消える**（教訓32）。
+
+### 1-4. 手順
 
 ```bash
-# ① Vercel の production env をファイルへ落とす（値は画面に出さない）
+# ① Vercel の production env をファイルへ落とす（★ 対話的なターミナルで）
 umask 077
 npx vercel env pull /tmp/po-prod.env --environment=production \
   --scope team_Evt7nWh10Bz1hbN6Sg75LsOt --project prj_BDqrRMJfhzlF5vrVEtbDK3UK1Vnv
@@ -81,21 +128,39 @@ npx vercel env pull /tmp/po-prod.env --environment=production \
 ```bash
 # ② 投入する18本だけに絞る（AWS_* や STRIPE_* を絶対に混ぜない）
 grep -E '^(AUTH_SECRET|ORDER_TOKEN_SECRET|CRON_SECRET|REVALIDATE_SECRET|MAIL_FROM|ADMIN_PASSWORD_HASH|ADMIN_SESSION_SECRET|GOOGLE_CLIENT_ID|GOOGLE_CLIENT_SECRET|LINE_CLIENT_ID|LINE_CLIENT_SECRET|ADMIN_TOTP_SECRET|ADMIN_TOTP_REQUIRED|NEXT_PUBLIC_SENTRY_DSN|NEXT_PUBLIC_GA_MEASUREMENT_ID|INSTAGRAM_ACCESS_TOKEN|WEBAUTHN_RP_ID|WEBAUTHN_ORIGIN)=' /tmp/po-prod.env > /tmp/po-sst.env
-wc -l < /tmp/po-sst.env   # ← 18 になるはず
 ```
 
 ```bash
-# ③ SST へ一括投入
+# ③ 🔴 投入前に必ず検査する（値は表示されない）
+npm run check:secret-file /tmp/po-sst.env
+```
+
+`scripts/check-secret-file.mjs` が止めるもの:
+
+- **値の重複**（＝復号漏れ・プレースホルダ）… 今回の事故がこれ
+- **空文字**（10 で踏んだ事故と同型）
+- **入れてはいけない値の混入**（`AWS_*` / `STRIPE_*` / `BLOB_*` / `PAYMENTS_ENABLED` /
+  `SENTRY_ORG|PROJECT|AUTH_TOKEN` / `VERCEL*`）
+- **必須7本の欠落**（`sst deploy` がこれで落ちる）
+- 任意11本の欠落は**警告**（`ADMIN_TOTP_REQUIRED` だけ赤字で強調される）
+
+出力は **key・length・sha の先頭8桁だけ**で、値は一切出ない。
+
+```bash
+# ④ SST へ一括投入（③ が通ってから）
 eval "$(aws configure export-credentials --format env)"
 npx sst secret load /tmp/po-sst.env --stage production
 ```
 
 ```bash
-# ④ 後片付け（**必ずやる**）
+# ⑤ 後片付け（**必ずやる**）
 rm -f /tmp/po-prod.env /tmp/po-sst.env
 ```
 
-### 1-4. 検証（🔑 値を出さずに正しさを見る）
+📌 `sst secret load` は **引用符を剥がす**（dev のダミーで実測: `KEY="abc"` → `len=3`）。
+Vercel の pull は `KEY="value"` 形式なので、そのまま渡してよい。
+
+### 1-5. 投入後の検証（🔑 値を出さずに正しさを見る）
 
 ```bash
 npx sst secret list --stage production | sed 's/=.*/=<set>/'
@@ -172,6 +237,10 @@ curl -s -o /dev/null -w "%{http_code}\n" --resolve www.sikocoffee.com:443:$IP ht
 ---
 
 ## 4. DNS 切替（ここから本番が動く）
+
+> 🔴 **ここが依存 F の門。2026-08-02 17:50 UTC（8/3 02:50 JST）より前に打たないこと。**
+> それより前だと旧 TTL（www 500s / apex 300s）を掴んだリゾルバが残っており、
+> **切り戻しに引き下げた 60s が効かない**。
 
 ```bash
 CFZONE=Z2FDTNDATAQYW2      # CloudFront の固定 HostedZoneId
