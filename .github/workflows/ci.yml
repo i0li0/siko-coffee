@@ -24,6 +24,12 @@ jobs:
       - name: Cron schedule (Vercel Hobby ≤ daily)
         run: npm run check:cron
 
+      # 🔴 sst.config.ts のトップレベル import は SST が設定を読む時点で落ちるが、
+      #    tsc も eslint も通してしまう（＝ここで止めないと deploy まで分からない）。
+      #    deploy は main への push でしか走らないので、PR で止まる場所に置く。
+      - name: SST config (no top-level imports)
+        run: npm run check:sst-config
+
       - name: ESLint
         run: npm run lint
 
