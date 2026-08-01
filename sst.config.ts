@@ -692,6 +692,274 @@ export default $config({
         retries: 2,
       })
     }
+
+    // ── 監視（Pour Over 10: CloudWatch Alarms）────────────────────────
+    //
+    // 経路は **CloudWatch Alarm → SNS → 中継 Lambda → Slack Incoming Webhook**。
+    //
+    // 🔑 **なぜメール購読ではないのか。** SNS のメール購読は**購読確認リンクの
+    //    クリックが要る**＝ IaC で完結せず、ステージを作り直すたびに手作業が復活する
+    //    （教訓6 の「コンソールで触ったものは次の deploy で巻き戻る」と同じ穴）。
+    //    Lambda 経由なら全部このファイルの中で閉じ、通知先も既にフィードバック通知が
+    //    流れている Slack に揃う。
+    //
+    // 🔴 **Vercel には無かった機構＝移行で明確に良くなる項目。** 逆に言うと、
+    //    ここを作らずに 13（切替）へ進むと **Vercel の Observability を失ったまま
+    //    代替が無い**状態で本番が AWS に載る。11・12 より前に置く理由がこれ。
+    //
+    // 🔴 **リージョンが2つ要る。** CloudWatch アラームのアクション（SNS）は
+    //    **アラームと同じリージョン**になければならず、**CloudFront のメトリクスは
+    //    us-east-1 にしか出ない**。→ トピックを2本立て、中継 Lambda 1本に集約する。
+    //    SNS → Lambda のクロスリージョン配信は既定有効リージョン間では公式にサポート
+    //    されている（us-east-1 と ap-northeast-1 はいずれも既定有効）。
+    //    ⚠️ **購読リソースはトピック側のリージョンで作る**必要があるので、
+    //       us-east-1 の TopicSubscription には provider を渡している。
+    //
+    // 📌 **`WafUsEast1` を使い回さず新しい provider を足しているのは意図的。**
+    //    provider の論理名を変えると、それを使っている既存リソース（web ACL）が
+    //    置き換え対象になりうる。web ACL は CloudFront に関連付いていて削除に
+    //    時間がかかるため、触らない。provider 自体は AWS 上のリソースではないので
+    //    2つあっても費用も副作用も無い。
+    // 📌 **中継のログを読むときの注意（実際に踏んだ）。** SST はロググループを
+    //    関数とは**別のランダム接尾辞**で作り、`LoggingConfig.LogGroup` で結び付ける。
+    //    つまり `/aws/lambda/<関数名>` は**存在しない**（`ResourceNotFoundException` になる）。
+    //    正しい経路はこれ:
+    //      aws lambda get-function-configuration --function-name <fn> --query LoggingConfig
+    //    「ログが無い＝呼ばれていない」と誤診しやすいので、まず宛先を確認すること。
+    const usEast1 = new aws.Provider('AlarmsUsEast1', { region: 'us-east-1' })
+
+    // 🔑 **SECRET_NAMES には入れない。** あの配列に載せた名前は**値が無いと
+    //    `sst deploy` 自体が落ちる**ので、混ぜると 13（production）でも投入を強いられる。
+    //    9 の PREVIEW_BASIC_AUTH と同じ扱いだが、あちらは非本番だけで生成されるのに対し
+    //    こちらは全ステージで要るため、**placeholder（空文字）付きで宣言**して
+    //    「未設定でもデプロイは通る／鳴ったときに名指しで失敗する」形にする。
+    //      sst secret set SLACK_WEBHOOK_URL '<incoming webhook url>' --stage <stage>
+    //    🔴 **値は deploy 時に環境変数へ焼き込まれる＝ `sst secret set` だけでは効かず、
+    //       再デプロイが要る**（9 の PREVIEW_BASIC_AUTH と同じ性質）。SST のリンク機能で
+    //       実行時に解決させれば再デプロイは不要になるが、それには Lambda に SST の SDK が
+    //       要り、この関数の「node 組み込み以外に依存しない」方針を崩すので採らない。
+    //    ⚠️ 未設定のままだと alarmRelay が例外で終わる（＝ Errors に出る）。
+    //       黙って捨てないのは意図的で、理由は src/functions/alarmRelay.ts の冒頭。
+    //       ✅ dev で実測: 未設定のまま5回発火し、**毎回ペイロード全文を CloudWatch に
+    //          残したうえで例外**になった（＝ Slack に出ないだけで内容は失われない）。
+    const slackWebhookUrl = new sst.Secret('SLACK_WEBHOOK_URL', '')
+
+    const alarmRelay = new sst.aws.Function('AlarmRelay', {
+      handler: 'src/functions/alarmRelay.handler',
+      // Slack へ HTTP を1本投げるだけ。CPU も RAM も要らない。
+      memory: '128 MB',
+      // 自前で最大3回（指数バックオフ）試すので、その合計より余裕を持たせる。
+      timeout: '30 seconds',
+      environment: {
+        SLACK_WEBHOOK_URL: slackWebhookUrl.value,
+        // dev と production のアラートを見分けるため。これが無いと
+        // soak 期間に「どっちのアラートか分からない」通知が並ぶ。
+        STAGE: $app.stage,
+      },
+    })
+
+    // メインリージョン（Lambda・SES）用のトピック。
+    const alarmTopic = new aws.sns.Topic('AlarmTopic', {
+      name: `siko-${$app.stage}-alarms`,
+    })
+
+    // CloudFront 用。**メトリクスが us-east-1 にしか無い**ため別立て。
+    const alarmTopicGlobal = new aws.sns.Topic(
+      'AlarmTopicGlobal',
+      { name: `siko-${$app.stage}-alarms-global` },
+      { provider: usEast1 },
+    )
+
+    for (const [label, topic, provider] of [
+      ['Main', alarmTopic, undefined],
+      ['Global', alarmTopicGlobal, usEast1],
+    ] as const) {
+      // SNS がこの関数を呼べるようにする。**関数側のリソースポリシー**なので
+      // 作るのは関数のリージョン（ap-northeast-1）＝ provider は渡さない。
+      new aws.lambda.Permission(`AlarmRelayInvokeFrom${label}`, {
+        action: 'lambda:InvokeFunction',
+        function: alarmRelay.arn,
+        principal: 'sns.amazonaws.com',
+        sourceArn: topic.arn,
+      })
+
+      // 購読は**トピックのリージョン**で作る（クロスリージョン配信の要件）。
+      new aws.sns.TopicSubscription(
+        `AlarmTopic${label}ToRelay`,
+        {
+          topic: topic.arn,
+          protocol: 'lambda',
+          endpoint: alarmRelay.arn,
+        },
+        provider ? { provider } : undefined,
+      )
+    }
+
+    // 既定値。**`notBreaching` が要点**で、これが無いとトラフィックの無い dev で
+    // 「データが来ない」だけで INSUFFICIENT_DATA が鳴り続ける。
+    // 📌 `okActions` も付けてある。復旧を知らせないと「鳴りっぱなしなのか直ったのか」が
+    //    Slack だけでは分からず、結局コンソールを見に行くことになる。
+    const alarmBase = {
+      evaluationPeriods: 1,
+      treatMissingData: 'notBreaching',
+      actionsEnabled: true,
+    } as const
+
+    // 引数の型から既定値のキーを除いてあるので、**既定値を上書きしたい場合は
+    // alarmBase 側を直す**（呼び出し側で個別に書けないのは意図的な制約）。
+    const makeAlarm = (
+      logicalName: string,
+      args: Omit<aws.cloudwatch.MetricAlarmArgs, keyof typeof alarmBase>,
+      opts?: { provider?: aws.Provider },
+    ) =>
+      new aws.cloudwatch.MetricAlarm(
+        logicalName,
+        { ...alarmBase, ...args },
+        opts?.provider ? { provider: opts.provider } : undefined,
+      )
+
+    const mainActions = [alarmTopic.arn]
+
+    // ① 🔴 **中継 Lambda（8 の申し送り）。** cronRelay は `@sentry/nextjs` を
+    //    引き込まない方針なので **失敗しても Sentry に出ない**。ここが唯一の検知手段。
+    //    cron の実行そのものが落ちている状態は、これが無いと誰も気づけない。
+    makeAlarm('CronRelayErrorsAlarm', {
+      name: `siko-${$app.stage}-cron-relay-errors`,
+      alarmDescription:
+        'cron の中継 Lambda が失敗した。cron ルートが呼ばれていない可能性がある（Sentry には出ない）',
+      namespace: 'AWS/Lambda',
+      metricName: 'Errors',
+      dimensions: { FunctionName: cronRelay.nodes.function.name },
+      statistic: 'Sum',
+      period: 300,
+      threshold: 1,
+      comparisonOperator: 'GreaterThanOrEqualToThreshold',
+      alarmActions: mainActions,
+      okActions: mainActions,
+    })
+
+    // ② server Lambda のクラッシュ・タイムアウト。
+    //    📌 Next.js が握って 500 を返した分はここに出ない（Lambda としては成功）。
+    //       それは Sentry の担当。ここで拾うのは**未捕捉の異常終了**で、
+    //       月 5.5K invocations の規模なら 1 件でも十分な信号になる。
+    makeAlarm('WebServerErrorsAlarm', {
+      name: `siko-${$app.stage}-web-server-errors`,
+      alarmDescription:
+        'サイト本体の Lambda が異常終了した（未捕捉例外・タイムアウト・OOM）',
+      namespace: 'AWS/Lambda',
+      metricName: 'Errors',
+      dimensions: { FunctionName: web.nodes.server!.apply((fn) => fn.name) },
+      statistic: 'Sum',
+      period: 300,
+      threshold: 1,
+      comparisonOperator: 'GreaterThanOrEqualToThreshold',
+      alarmActions: mainActions,
+      okActions: mainActions,
+    })
+
+    // ③ 同時実行の頭打ち。アカウントの同時実行上限に当たると**リクエストが捨てられる**。
+    //    Errors には出ないので別建てが要る。
+    makeAlarm('WebServerThrottlesAlarm', {
+      name: `siko-${$app.stage}-web-server-throttles`,
+      alarmDescription:
+        'サイト本体の Lambda がスロットルされた（同時実行の上限。リクエストは失われる）',
+      namespace: 'AWS/Lambda',
+      metricName: 'Throttles',
+      dimensions: { FunctionName: web.nodes.server!.apply((fn) => fn.name) },
+      statistic: 'Sum',
+      period: 300,
+      threshold: 1,
+      comparisonOperator: 'GreaterThanOrEqualToThreshold',
+      alarmActions: mainActions,
+      okActions: mainActions,
+    })
+
+    // ④ 中継 Lambda 自身。⚠️ **これが鳴っても通知はこの関数を通る**ので、
+    //    恒久的な故障では届かない（詳細は alarmRelay.ts 冒頭の「既知の死角」）。
+    //    一過性の失敗なら次の呼び出しで復旧して遅れて届くため、無意味ではない。
+    makeAlarm('AlarmRelayErrorsAlarm', {
+      name: `siko-${$app.stage}-alarm-relay-errors`,
+      alarmDescription:
+        'アラート中継 Lambda が失敗した。Slack に届いていないアラートがある可能性がある',
+      namespace: 'AWS/Lambda',
+      metricName: 'Errors',
+      dimensions: { FunctionName: alarmRelay.nodes.function.name },
+      statistic: 'Sum',
+      period: 300,
+      threshold: 1,
+      comparisonOperator: 'GreaterThanOrEqualToThreshold',
+      alarmActions: mainActions,
+      okActions: mainActions,
+    })
+
+    // ⑤ CloudFront の 5xx 率。**us-east-1**。
+    //    🔑 image-optimizer の Lambda は SST が nodes に公開しておらず個別に
+    //       アラームを張れないが、その失敗は CloudFront では 5xx として現れる
+    //       ＝ この1本が実質的にオリジン全体の受け皿になる。
+    //    📌 `Region: 'Global'` のディメンションは CloudFront のメトリクスでは必須。
+    makeAlarm(
+      'CloudFront5xxAlarm',
+      {
+        name: `siko-${$app.stage}-cloudfront-5xx`,
+        alarmDescription:
+          'CloudFront の 5xx 率が高い（オリジン障害・image-optimizer の失敗・Lambda@Edge の異常）',
+        namespace: 'AWS/CloudFront',
+        metricName: '5xxErrorRate',
+        dimensions: {
+          DistributionId: web.nodes.cdn!.nodes.distribution.id,
+          Region: 'Global',
+        },
+        statistic: 'Average',
+        period: 300,
+        // 単発の 5xx で鳴らさない。率（%）なので 5 = 5%。
+        threshold: 5,
+        comparisonOperator: 'GreaterThanThreshold',
+        alarmActions: [alarmTopicGlobal.arn],
+        okActions: [alarmTopicGlobal.arn],
+      },
+      { provider: usEast1 },
+    )
+
+    // ⑥⑦ SES の評判（B-11）。**バウンス・苦情が誰にも届いていない**状態の受け皿。
+    //
+    // 🔴 **production ステージでだけ作る。** `Reputation.*` は**アカウント全体**の
+    //    メトリクスで、ステージごとの値ではない。dev にも作ると soak 期間に
+    //    同じ事象で2回鳴り、しかも dev が本番の送信評判について鳴ることになる。
+    // 📌 配信停止のしきい値は AWS 側でバウンス 10% / 苦情 0.5%。**その手前で**気づける
+    //    値にしてある。設定セット無しでアカウント単位に自動発行されるメトリクスなので、
+    //    アプリ側の送信コードには一切手を入れていない。
+    // ⚠️ 個々のバウンスを掴んで宛先を止める仕組み（設定セット + イベント宛先）は
+    //    **これとは別**。率が上がってからでは遅い運用になるが、送信量が桁で増えるまでは
+    //    アカウント停止を避ける方が実利がある。必要になったら別タスクで足す。
+    if (isProd) {
+      makeAlarm('SesBounceRateAlarm', {
+        name: `siko-${$app.stage}-ses-bounce-rate`,
+        alarmDescription:
+          'SES のバウンス率が上昇（10% で送信停止。宛先の質かメール内容を確認する）',
+        namespace: 'AWS/SES',
+        metricName: 'Reputation.BounceRate',
+        statistic: 'Average',
+        period: 900,
+        threshold: 0.05,
+        comparisonOperator: 'GreaterThanThreshold',
+        alarmActions: mainActions,
+        okActions: mainActions,
+      })
+
+      makeAlarm('SesComplaintRateAlarm', {
+        name: `siko-${$app.stage}-ses-complaint-rate`,
+        alarmDescription:
+          'SES の苦情率が上昇（0.5% で送信停止。受信者がスパム報告している）',
+        namespace: 'AWS/SES',
+        metricName: 'Reputation.ComplaintRate',
+        statistic: 'Average',
+        period: 900,
+        threshold: 0.001,
+        comparisonOperator: 'GreaterThanThreshold',
+        alarmActions: mainActions,
+        okActions: mainActions,
+      })
+    }
   },
 })
 
@@ -699,7 +967,8 @@ export default $config({
 // 本番切替までの作業順（プロジェクト「Pour Over」・2026-07-28 再監査・**全21項目**）
 // 📌 2026-07-31 訂正: 長らく「全20項目」と書いていたが、実数は 21（第0群 4 ＋ 本編 17）。
 //    20 は 9.5 を足す前の数で、合計だけが取り残されていた。**番号は動かしていない。**
-// 進捗（2026-08-01）: **14 / 21**。第0群 4/4・第1群 4/4・第2群 5/5・**9.5 完了**。次は 10。
+// 進捗（2026-08-01）: **15 / 21**。第0群 4/4・第1群 4/4・第2群 5/5・**9.5 完了・10 完了**。
+//    次は 11（DNS TTL を 60s へ・**13 の24時間以上前**に打つ必要がある）。
 // 🔴 **9.5 以降、main への push は必ず AWS へデプロイする。＝ マージ順が実害を持つ。**
 //    壊れた状態を直す PR より先に無関係な PR をマージすると、無関係な変更が原因に見える赤が出る。
 //    📌 PR の CI が緑でもデプロイ可否は保証されない（deploy は push 限定で PR ではスキップ）。
@@ -839,8 +1108,17 @@ export default $config({
 //     🔴 **デプロイ先ステージは ci.yml の `strategy.matrix.stage` の1か所で決める。**
 //        今は `[dev]` のみ。`WAF_STAGES` / `CRON_STAGES` と同様、**'production' を足すのは
 //        13 で DNS を切り替えた後**（先に足すと本番ステージが CI から先に出来てしまう）。
-// 10. CloudWatch Alarms を先に用意する（切替後ではなく切替前。観測できない状態で切り替えない）。
-//     ⚠️ SNS トピックが 0 個＝通知先そのものが無い。トピック作成から。
+// 10. ✅ CloudWatch Alarms（切替後ではなく切替前。観測できない状態で切り替えない）。
+//     実体は上の「監視（Pour Over 10）」ブロックと `src/functions/alarmRelay.ts`。
+//     経路は **Alarm → SNS → 中継 Lambda → Slack**（メール購読は購読確認のクリックが要り
+//     IaC で完結しないので採らない）。
+//     🔴 **トピックは2本**。CloudWatch のアクションはアラームと同じリージョンにある必要があり、
+//        **CloudFront のメトリクスは us-east-1 にしか出ない**ため。中継 Lambda は1本に集約し、
+//        us-east-1 → ap-northeast-1 のクロスリージョン配信で受ける（既定有効リージョン間は公式サポート）。
+//     🔴 **SES の Reputation.* はアカウント全体のメトリクス**なので production でだけ作る
+//        （dev にも作ると soak 中に同じ事象で2回鳴り、dev が本番の送信評判で鳴る）。
+//     ⚠️ `SLACK_WEBHOOK_URL` は **SECRET_NAMES に入れない**（未設定で deploy が落ちるのを避け、
+//        placeholder 付きで宣言）。未設定のまま鳴ると中継が例外で終わる＝ Errors に出る。
 // 11. Route53 の TTL を 60s へ。**切替の24時間以上前**（現行 www=500s / apex=300s）。
 // 12. `domain` を設定（name: www.sikocoffee.com / aliases に apex）＋ apex→www の 308 と HSTS を
 //     `edge.viewerRequest.injection` で出す。
@@ -896,8 +1174,9 @@ export default $config({
 //  I. ✅ 解消済（0-c で Amplify を削除した）
 //  J. 0-a → 以降の全デプロイ : npm 10 だと next/image が無言で壊れたままデプロイが成功する
 //  K. 9.5 → 14  : 無いと soak 中に AWS だけが古くなる
-//  L. Instagram トークン更新確認 → 15 : 実測 refreshedAt=2026-07-01 / 60日 ＝ **失効 2026-08-30**。
-//     🔴 AWS の週次スケジュールは 13 まで DISABLED なので、それまで頼れるのは
-//     **Vercel の月次 `0 0 1 * *` ＝ 2026-08-01 00:00 UTC の1回きり**。
+//  L. Instagram トークン更新確認 → 15 : ✅ **2026-08-01 の更新に成功**（実測 refreshedAt が
+//     2026-07-01T00:51:23Z → **2026-08-01T00:21:11.206Z**）＝ **失効は 2026-09-30 へ後退**。
+//     次の機会は 2026-09-01 00:00 UTC。🔴 AWS の週次スケジュールは 13 まで DISABLED なので、
+//     **13 が 9/1 を跨ぐならその時点でも頼れるのは Vercel の月次 `0 0 1 * *` 1本**。
 //     成否は siko-coffee-config の refreshedAt で判定できる。
 // ─────────────────────────────────────────────────────────────
