@@ -122,6 +122,12 @@ export default $config({
     //       （`Boolean(a && b)` / `x || null` / `=== 'true'` / `{x && <C/>}`）。
     //    📌 同じ形は 10 の `SLACK_WEBHOOK_URL` で先に使っている。
     // ⚠️ **値は deploy 時に env へ焼き込まれる＝ `sst secret set` だけでは効かず再デプロイが要る。**
+    // 📌 **`ADMIN_TOTP_SECRET` と `INSTAGRAM_ACCESS_TOKEN` は宣言してあるが、
+    //    production には投入していない**（2026-08-01 の点検で不要と確定）。どちらも
+    //    消費側が **DynamoDB（`siko-coffee-config`）を先に読み、無ければ env** という実装で、
+    //    そのテーブルは **Vercel と AWS が共有する**ため soak 中の同期が自動で取れる。
+    //    ここに残してあるのは「env にも置ける」という逃げ道を消さないためで、
+    //    **空文字のまま＝未設定と同じ**。🔑 **「宣言されている」は「投入が要る」ではない。**
     const OPTIONAL_SECRET_NAMES = [
       'GOOGLE_CLIENT_ID',
       'GOOGLE_CLIENT_SECRET',
