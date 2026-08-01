@@ -4,11 +4,14 @@
 //   node scripts/check-secret-file.mjs /tmp/po-sst.env
 //
 // 🔴 **なぜ要るのか（2026-08-01 に実際に踏みかけた）。**
-//   `vercel env pull` は**環境によって値を復号せず、全項目に同じプレースホルダ文字列を書く**。
-//   実測では対象18本の**相異なる値がちょうど1つ**で、`AUTH_SECRET` と `STRIPE_SECRET_KEY` が
-//   同一文字列だった（Vercel CLI はエージェント実行を検知すると伏せる）。
-//   そのまま `sst secret load` していたら **production の18本すべてが同じ固定文字列**になり、
-//   しかも **`sst deploy` は成功する**。動かなくなるのはユーザーのログインと注文照会リンクである。
+//   `vercel env pull` は **Vercel の `sensitive` 型の変数を復号せず、リテラル
+//   `[SENSITIVE]` を書く**。実測では対象18本の**相異なる値がちょうど1つ**で、
+//   `AUTH_SECRET` と `STRIPE_SECRET_KEY` が同一文字列だった。
+//   そのまま `sst secret load` していたら **production の18本すべてが `[SENSITIVE]` という
+//   固定文字列**になり、しかも **`sst deploy` は成功する**。
+//   動かなくなるのはユーザーのログインと注文照会リンクである。
+//   ⚠️ **これはエージェント検知ではない。** `sensitive` 型は作成後**誰も**復号できない
+//   （ダッシュボードでも REST API でも）。対話的なターミナルで取り直しても同じ結果になる。
 //
 // 🔑 **値を一切表示せずに判定する。** 出すのは key・length・ハッシュの先頭だけ。
 //   「伏せる」と「測る」の使い分け（教訓32）。伏せるだけの確認は、
@@ -96,8 +99,10 @@ for (const [, keys] of byValue) {
   if (keys.length > 1) {
     errors.push(
       `値が重複している: ${keys.join(', ')}\n` +
-        '    → `vercel env pull` が復号せずプレースホルダを書いた可能性が高い。\n' +
-        '      対話的なターミナル（エージェント経由でない）で取り直すこと。',
+        '    → `vercel env pull` が復号せずプレースホルダ（`[SENSITIVE]`）を書いた可能性が高い。\n' +
+        '      🔴 Vercel の `sensitive` 型は作成後**誰も**復号できない（取り直しても同じ）。\n' +
+        '      docs/pour-over-13-runbook.md の 1-3 に沿って、他システムからの復元か\n' +
+        '      両側同時のローテーションで値を用意すること。',
     )
   }
 }
