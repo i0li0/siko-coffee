@@ -81,52 +81,101 @@ INSTAGRAM_ACCESS_TOKEN  WEBAUTHN_RP_ID  WEBAUTHN_ORIGIN
 入れたら移行最大の改善を自分で捨てることになる）**、`SENTRY_ORG` / `SENTRY_PROJECT` /
 `SENTRY_AUTH_TOKEN`（**ビルド時にしか使われない**ので Lambda の env に入れても効かない）。
 
-### 1-2. 🔴 値は Vercel からコピーする。**作り直さない**
+### 1-2. 🔴🔴 **Vercel からは値を取り出せない**（2026-08-01 実測・当初の想定は誤り）
 
-**soak（14）の間は AWS と Vercel の両方が本番を担う。** 乱数系を作り直すと、
-**どちらのバックエンドに当たったかでユーザーの体験が割れる**:
+当初この手順書には「値は Vercel からコピーする。作り直さない」と書いてあった。**実行できない。**
 
-| 値 | 作り直すと起きること |
+`vercel env pull` が書くのはリテラル **`[SENSITIVE]`** で、実測では対象18本の
+**相異なる値がちょうど1つ**、`AUTH_SECRET` と `STRIPE_SECRET_KEY` の sha が一致した。
+
+これは Vercel の環境変数の型 **`sensitive`** による。`plain` / `encrypted` と違い、
+**作成後は誰も復号できない**（ダッシュボードでも REST API でも CLI でも）。
+チームポリシーで production に強制されている場合もある。
+⚠️ **エージェント経由かどうかは関係ない。対話的なターミナルで取り直しても同じ結果になる**
+（実際にオーナーの手元でも `[SENSITIVE]` が返った）。
+
+### 1-3. だから2つに分けて用意する
+
+#### A. 他システムから復元できる（＝作り直しではない）
+
+| 変数 | 取得元 |
 |---|---|
-| `AUTH_SECRET` | 片方で発行した NextAuth のセッションがもう片方で無効＝**ランダムにログアウト** |
-| `ADMIN_SESSION_SECRET` | admin セッションが同上 |
-| `ORDER_TOKEN_SECRET` | **切替前にメールで送った注文照会リンクが片方で 403** |
-| `CRON_SECRET` | Vercel 側の cron が 401（soak 中は両方動く） |
-| `REVALIDATE_SECRET` | オンデマンド再検証が片方で通らない |
+| `MAIL_FROM` | SES の送信元アドレス（既知の値） |
+| `ADMIN_PASSWORD_HASH` | **同じ admin パスワード**から再生成する。ハッシュ値は変わるがログインは変わらない |
+| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | Google Cloud Console |
+| `LINE_CLIENT_ID` / `LINE_CLIENT_SECRET` | LINE Developers |
+| `NEXT_PUBLIC_SENTRY_DSN` | Sentry のプロジェクト設定（そもそも秘密ではない） |
+| `NEXT_PUBLIC_GA_MEASUREMENT_ID` | GA の管理画面（同上） |
+| `WEBAUTHN_RP_ID` / `WEBAUTHN_ORIGIN` | `www.sikocoffee.com` / `https://www.sikocoffee.com` |
+| `ADMIN_TOTP_REQUIRED` | `true` |
+| `INSTAGRAM_ACCESS_TOKEN` | ✅ **DynamoDB `siko-coffee-config`** に実物がある（cron が更新している。2026-08-01 時点で 161文字・`refreshedAt` は `2026-08-01T00:21:11Z`） |
 
-📌 「dev には本番と同じ値を入れない」という方針（`sst.config.ts` の `SECRET_NAMES` コメント）は
-**dev の話**で、production は Vercel と一致していなければならない。ここは逆になる。
+🔴 `ADMIN_TOTP_SECRET` だけは注意。**認証アプリの登録と一致していないといけない**ので、
+手元に控えが無ければ**新しい秘密を作って再登録**する（＝下の B と同じ扱いになる）。
 
-### 1-3. 🔴🔴 **この作業はオーナー本人が対話的なターミナルでやること**
-
-**2026-08-01 に実際に踏みかけた。** エージェント（Claude Code など）から
-`npx vercel env pull` を実行すると、**Vercel CLI は値を復号せず全項目に同じ
-プレースホルダ文字列を書く**（CLI 側の保護。`--non-interactive` はエージェント検知時の既定）。
-実測では:
-
-```
-対象18本の相異なる値の数: 1
-AUTH_SECRET と STRIPE_SECRET_KEY の sha が一致
+```bash
+# INSTAGRAM_ACCESS_TOKEN は AWS 側から取れる
+aws dynamodb get-item --table-name siko-coffee-config --region ap-northeast-1 \
+  --key '{"configKey":{"S":"INSTAGRAM_ACCESS_TOKEN"}}' --query "Item.value.S" --output text
 ```
 
-**そのまま `sst secret load` していたら production の18本すべてが同じ固定文字列**になり、
-しかも **`sst deploy` は成功する**。壊れるのは**ユーザーのログインと注文照会リンク**であって、
-デプロイの成否ではない。
+#### B. 読めないので**両側を同じ新しい値に回す**（5本）
 
-🔑 **気づけたのは値を「伏せる」のではなく「測った」から**（長さとハッシュ）。
-`<redacted>` に潰す確認方法だと、**確かめたい性質そのものが消える**（教訓32）。
+```
+AUTH_SECRET  ADMIN_SESSION_SECRET  ORDER_TOKEN_SECRET  CRON_SECRET  REVALIDATE_SECRET
+```
+
+soak 中は AWS と Vercel の両方が本番を担うので、**片方だけ変えると割れる**。
+**新しい値を作り、Vercel と AWS の両方に同じものを入れる**のが唯一の整合する道。
+
+**影響を本番データで実測した（2026-08-01）**:
+
+| 変数 | 作り直すと | 実測した規模 |
+|---|---|---|
+| `ORDER_TOKEN_SECRET` | 既発行の注文照会リンクが無効 | 🟢 **`siko-coffee-orders` は 0件**＝壊れるリンクが存在しない |
+| `AUTH_SECRET` | 全ユーザーが1回ログアウト | 🟢 `siko-coffee-auth` は **7件**（users/accounts/sessions 合計）＝数名 |
+| `ADMIN_SESSION_SECRET` | admin が1回ログアウト | 🟢 自分だけ |
+| `CRON_SECRET` | Vercel cron の認可 | 🟢 内部のみ。両側同時に変えれば無影響 |
+| `REVALIDATE_SECRET` | オンデマンド再検証の呼び出し元 | 🟢 内部のみ |
+
+＝ **今なら回すコストはほぼゼロ**。決済停止中で注文が無く、利用者もごく少数のうちに済ませられる。
+
+**順序**（Vercel を先に、AWS は 13 のデプロイで入る）:
+
+```bash
+# ① 新しい値を作る（例）
+openssl rand -hex 32
+
+# ② Vercel を更新して再デプロイ（再デプロイしないと反映されない）
+npx vercel env rm AUTH_SECRET production --yes --scope … --project …
+npx vercel env add AUTH_SECRET production --scope … --project …
+
+# ③ 同じ値を SST にも入れる（下の 1-4）
+```
+
+⚠️ **`ADMIN_PASSWORD_HASH` は「同じパスワードの別ハッシュ」でよい**（照合はハッシュ同士ではない）。
+逆に **B の5本は文字列そのものが一致していないといけない**。
 
 ### 1-4. 手順
 
+🔴 **`vercel env pull` からは作れない**（1-2）。1-3 の A（他システムから復元）と
+B（両側ローテーション）で用意した値を、自分で `.env` 形式のファイルに書く。
+
 ```bash
-# ① Vercel の production env をファイルへ落とす（★ 対話的なターミナルで）
+# ① 投入用ファイルを作る（★ 値は 1-3 で用意したもの）
 umask 077
-npx vercel env pull /tmp/po-prod.env --environment=production \
-  --scope team_Evt7nWh10Bz1hbN6Sg75LsOt --project prj_BDqrRMJfhzlF5vrVEtbDK3UK1Vnv
+cat > /tmp/po-sst.env <<'EOF'
+AUTH_SECRET=...
+ORDER_TOKEN_SECRET=...
+（… 18本 …）
+EOF
 ```
 
 ```bash
-# ② 投入する18本だけに絞る（AWS_* や STRIPE_* を絶対に混ぜない）
+# ②（参考）Vercel から取れる非 sensitive の値だけ確認したい場合
+npx vercel env pull /tmp/po-prod.env --environment=production \
+  --scope team_Evt7nWh10Bz1hbN6Sg75LsOt --project prj_BDqrRMJfhzlF5vrVEtbDK3UK1Vnv
+# ⚠️ sensitive のものは [SENSITIVE] になる。絞り込みだけなら次のコマンド
 grep -E '^(AUTH_SECRET|ORDER_TOKEN_SECRET|CRON_SECRET|REVALIDATE_SECRET|MAIL_FROM|ADMIN_PASSWORD_HASH|ADMIN_SESSION_SECRET|GOOGLE_CLIENT_ID|GOOGLE_CLIENT_SECRET|LINE_CLIENT_ID|LINE_CLIENT_SECRET|ADMIN_TOTP_SECRET|ADMIN_TOTP_REQUIRED|NEXT_PUBLIC_SENTRY_DSN|NEXT_PUBLIC_GA_MEASUREMENT_ID|INSTAGRAM_ACCESS_TOKEN|WEBAUTHN_RP_ID|WEBAUTHN_ORIGIN)=' /tmp/po-prod.env > /tmp/po-sst.env
 ```
 
