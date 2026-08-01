@@ -1,0 +1,23 @@
+# ggshield（GitGuardian CLI）の設定。
+#
+# 📌 これは **ローカルの pre-commit フック専用**。PR のスキャンは GitGuardian の
+#    GitHub App（`GitGuardian Security Checks`）が別経路で担当していて、そちらは
+#    ダッシュボード側の設定で動く。このファイルは App 側には効かない。
+#    フックの入れ方は README「シークレット検出（任意）」を参照。
+#
+# 無視はパス単位ではなく match（シークレットのハッシュ）単位で登録する。
+# パスごと除外すると、そのファイルに後から本物のシークレットが入っても検出できなくなるため。
+version: 2
+
+secret:
+  ignored_matches:
+    # 以下2件はいずれも src/__tests__/passwordPolicy.test.ts のテスト入力。
+    # 登録が無いと、この行自体を編集した差分でフックが commit を止める（実測）。
+    #
+    # 「名前を含むパスワードは拒否」ケースの入力値（実在しないテストデータ）
+    - match: 19bb8183dd3ea7c5b196822a33d07474fb0d540158bd6ce59431b4149fc60e89
+      name: "test fixture: 名前含みパスワードの拒否テスト入力"
+    # 「十分に強いパスワードは許可」ケースの入力値。xkcd 936 由来の有名な例文で、
+    # どこの認証情報でもない
+    - match: 2595a1e719c10c5759fabf6188639c4dda64b103ea8028327364e7e78a220781
+      name: "test fixture: 強度OKパスワードのテスト入力 (xkcd 936)"

@@ -47,6 +47,26 @@ http://localhost:3000 で確認できます。
 > `--no-allow-scripts-pin` はバージョンを焼き込まない形（`"pkg": true`）で書きます。
 > 付けないと `"pkg@1.2.3": true` になり、依存を上げるたびに陳腐化します。
 
+## シークレット検出（任意）
+
+PR に対しては GitGuardian の GitHub App（`GitGuardian Security Checks`）が自動で走るので、
+**何もしなくても取りこぼしはありません**。commit の時点で止めたい場合だけ、各自のマシンに
+[ggshield](https://github.com/GitGuardian/ggshield) の pre-commit フックを入れます。
+
+```bash
+brew install ggshield
+ggshield auth login
+ggshield install -m local -t pre-commit
+```
+
+フックは git の管理外なので**クローンごとに入れ直しが必要**です。誤検知は
+`.gitguardian.yaml` の `ignored_matches` にハッシュで登録します（`ggshield secret ignore <SHA>`）。
+
+> ⚠️ **worktree の中では `ggshield install` が失敗します**（`NotADirectoryError: '.git/hooks'`）。
+> worktree の `.git` はディレクトリではなくファイルなのに、ggshield が `.git/hooks` を
+> 決め打ちしているためです。メインのクローンで1度実行すれば、hooks は全 worktree で
+> 共有されるので、それで足ります。
+
 ## コマンド
 
 ```bash
