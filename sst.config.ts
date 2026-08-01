@@ -28,17 +28,6 @@
 // gitignore 対象）が供給する。CI にはそれが無いため `tsconfig.json` の exclude に
 // このファイルを入れてある。
 
-// 📌 **相対パスで書くこと**（`@/` エイリアスは効かない）。SST はこの設定を esbuild で
-//    束ねるだけで、`tsconfig.json` の paths は解決されない。
-// 🔑 12 のリダイレクト本体をここに直書きせず切り出しているのは、**このファイルが
-//    CI で型検査されない唯一のファイル**であり、かつ 12 のコードは dev では一度も
-//    実行されないため（理由と検証方法は当該ファイルの冒頭）。
-import {
-  APEX_HOST,
-  SITE_HOST,
-  buildApexRedirectInjection,
-} from './src/lib/apexRedirect'
-
 export default $config({
   app(input) {
     return {
@@ -55,6 +44,21 @@ export default $config({
   },
 
   async run() {
+    // 🔴 **トップレベル import は使えない。** SST は設定を読むときに
+    //    `Your sst.config.ts has top level imports - this is not allowed.` で**落ちる**。
+    //    自前のモジュールは `run()` の中で**動的 import** すること。
+    //    ⚠️ `npm run check:sst`（tsc）は型検査なのでこの制約を知らず、**通ってしまう**。
+    //       実際に 12 でトップレベル import を書いて `check:sst` は exit 0、CI の
+    //       `SST Deploy` だけが赤くなった（教訓27 と同型／教訓35）。
+    // 📌 **相対パスで書くこと**（`@/` エイリアスは効かない）。SST はこの設定を esbuild で
+    //    束ねるだけで、`tsconfig.json` の paths は解決されない。
+    // 🔑 12 のリダイレクト本体をここに直書きせず切り出しているのは、**このファイルが
+    //    CI で型検査されない唯一のファイル**であり、かつ 12 のコードは dev では一度も
+    //    実行されないため（理由と検証方法は当該ファイルの冒頭）。
+    const { APEX_HOST, SITE_HOST, buildApexRedirectInjection } = await import(
+      './src/lib/apexRedirect'
+    )
+
     const isProd = $app.stage === 'production'
 
     // ── シークレット ────────────────────────────────────────────
@@ -1189,8 +1193,8 @@ export default $config({
 //        （dev にも作ると soak 中に同じ事象で2回鳴り、dev が本番の送信評判で鳴る）。
 //     ⚠️ `SLACK_WEBHOOK_URL` は **SECRET_NAMES に入れない**（未設定で deploy が落ちるのを避け、
 //        placeholder 付きで宣言）。未設定のまま鳴ると中継が例外で終わる＝ Errors に出る。
-// 11. ✅ Route53 の TTL を 60s へ（**完了 2026-08-02**）。apex A 300→60 / www CNAME 500→60。
-//     依存 F は解消＝ **13 は 2026-08-03 17:50 UTC 以降ならいつでも打てる**。
+// 11. ✅ Route53 の TTL を 60s へ（**完了 2026-08-01**）。apex A 300→60 / www CNAME 500→60。
+//     依存 F は解消＝ **13 は 2026-08-02 17:50 UTC 以降ならいつでも打てる**。
 // 12. ✅ `domain` を設定（name: www.sikocoffee.com / aliases に apex）＋ apex→www の 308 と HSTS を
 //     `edge.viewerRequest.injection` で出す（**実装済み。実測は 13 で行う**）。
 //     実体は上の「本番ドメインと apex 正規化」ブロックと `src/lib/apexRedirect.ts`、
