@@ -193,6 +193,11 @@ rm -f /tmp/po-a.env /tmp/po-b.env /tmp/po-sst.env
 `scripts/check-secret-file.mjs` が止めるもの:
 
 - **値の重複**（＝復号漏れ・`[SENSITIVE]` の混入）… 2026-08-01 に実際に踏みかけた
+- **形式の違い**（`ADMIN_PASSWORD_HASH` の `scrypt:<salt>:<hash>`、`ADMIN_TOTP_REQUIRED` の
+  `true`/`false`、DSN や webhook の URL 形など）… **2026-08-01 に実際に踏んだ**。
+  `<salt>:<hash>` は正しく作れていたのに **`scrypt:` の接頭辞が欠けており**（161文字／正しくは168）、
+  `verifyScrypt` が即 false を返すため **本番の admin が絶対にログインできない**状態だった。
+  しかも症状は「パスワードが違う」としか見えない。**長さも重複も通ってしまう**ので形で見る
 - **空文字**（10 で踏んだ事故と同型）
 - **入れてはいけない値の混入**（`AWS_*` / `STRIPE_*` / `BLOB_*` / `PAYMENTS_ENABLED` /
   ビルド時にしか効かない `SENTRY_ORG|PROJECT|AUTH_TOKEN` / `VERCEL*`）
