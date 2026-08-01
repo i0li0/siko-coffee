@@ -55,37 +55,41 @@ production ステージの存在ではない。2・3 は DNS に一切触らな�
 
 ## 1. production のシークレット投入（**時刻の縛り無し＝今すぐやってよい**）
 
-### 1-1. 何を入れるか
+### 1-1. 何を入れるか（**17本**・2026-08-01 に全項目を消費側から確認）
 
-**必須7本**（`SECRET_NAMES`・欠けると deploy が落ちる）:
+| 変数 | 区分 | 一致 | 備考 |
+|---|---|---|---|
+| `AUTH_SECRET` | **B** | 🔴 Vercel と一致 | NextAuth のセッション |
+| `ADMIN_SESSION_SECRET` | **B** | 🔴 一致 | admin セッション Cookie |
+| `ORDER_TOKEN_SECRET` | **B** | 🔴 一致 | 注文照会リンクの HMAC |
+| `REVALIDATE_SECRET` | **B** | 🔴 一致 | 外部から叩かれる（リポジトリ内に呼び出し元なし） |
+| `CRON_SECRET` | **B** | 🟢 **一致不要** | Vercel cron は Vercel のルート、AWS 中継は AWS のルートしか叩かず**経路が交差しない** |
+| `MAIL_FROM` | A | — | `Sikō Coffee <noreply@sikocoffee.com>`（`src/lib/email.ts:5` の例と From ヘッダと dev の36文字が一致） |
+| `ADMIN_PASSWORD_HASH` | A | — | **同じパスワードから再生成**。`scrypt:<salt>:<hash>` の168文字 |
+| `GOOGLE_CLIENT_ID` / `_SECRET` | A | — | Google Cloud Console |
+| `LINE_CLIENT_ID` / `_SECRET` | A | — | LINE Developers |
+| `ADMIN_TOTP_REQUIRED` | A | — | `true`。🔴 欠けると admin がパスワードのみで通る |
+| `NEXT_PUBLIC_SENTRY_DSN` | A | — | ✅ `src/instrumentation-client.ts:8` にハードコード済み |
+| `NEXT_PUBLIC_GA_MEASUREMENT_ID` | A | — | GA 管理画面 |
+| `SLACK_WEBHOOK_URL` | A | — | dev と同じ webhook で可。**投稿先チャンネルは目視で確認** |
+| `WEBAUTHN_RP_ID` / `_ORIGIN` | A | — | `www.sikocoffee.com` / `https://www.sikocoffee.com` |
 
-```
-AUTH_SECRET  ORDER_TOKEN_SECRET  CRON_SECRET  REVALIDATE_SECRET
-MAIL_FROM    ADMIN_PASSWORD_HASH  ADMIN_SESSION_SECRET
-```
+#### 🟢 調べた結果「入れなくてよい」と分かったもの
 
-**任意12本**（未設定でも deploy は通るが**機能が欠けた本番**になる）:
+| 変数 | 理由 |
+|---|---|
+| `ADMIN_TOTP_SECRET` | `src/lib/adminTotp.ts` は **DynamoDB → 無ければ env** の順で読む。`/admin/settings` から登録し直すと `siko-coffee-config` の `totp_secret` に入り、**Vercel と AWS が同じテーブルを共有する**ので自動的に揃う |
+| `INSTAGRAM_ACCESS_TOKEN` | `src/lib/instagram.ts` の `getToken()` が同じ形。DynamoDB に実物がある（161文字・cron が更新中）。cron 側も `if (!currentToken)` の後段でしか env を見ない |
+| `SENTRY_ORG` / `SENTRY_PROJECT` / `SENTRY_AUTH_TOKEN` | **ビルド時**にしか使われない（`next.config.ts`）。Lambda の env に入れても効かない |
+| `STRIPE_*` / `PAYMENTS_ENABLED` | 決済停止中（Phase 0 維持） |
+| `BLOB_*` | 4 で S3 に置き換え済み |
+| **`AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`** | 🔴 実行ロールに置き換えるのが移行の目的。入れたら移行最大の改善を自分で捨てることになる |
 
-```
-GOOGLE_CLIENT_ID  GOOGLE_CLIENT_SECRET  LINE_CLIENT_ID  LINE_CLIENT_SECRET
-ADMIN_TOTP_SECRET  ADMIN_TOTP_REQUIRED
-NEXT_PUBLIC_SENTRY_DSN  NEXT_PUBLIC_GA_MEASUREMENT_ID
-INSTAGRAM_ACCESS_TOKEN  WEBAUTHN_RP_ID  WEBAUTHN_ORIGIN
-SLACK_WEBHOOK_URL
-```
-
-🔴 **`SLACK_WEBHOOK_URL` は 2026-08-01 に追加した（合計 18 → 19本）。** 10 で中継 Lambda 用にだけ
-宣言されており、**アプリ本体の `environment` に入っていなかった**。`src/lib/slackNotify.ts` は
-未設定なら黙って `return` するので、**6か所の Slack 通知（ユーザー登録・パスキー登録/管理・
-フィードバック・配送遅延）が無言で止まる**ところだった。
-
-🔴 **`ADMIN_TOTP_REQUIRED` を落とすと admin がパスワードのみで通る。**
-他の任意項目は「機能が消える」だけだが、これは**防御が消える**（フェイルオープン）。
-
-**入れないもの**: `STRIPE_*` / `PAYMENTS_ENABLED`（Phase 0 維持）、`BLOB_*`（4 で不要）、
-**`AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`（実行ロールに置き換えるのが移行の目的＝
-入れたら移行最大の改善を自分で捨てることになる）**、`SENTRY_ORG` / `SENTRY_PROJECT` /
-`SENTRY_AUTH_TOKEN`（**ビルド時にしか使われない**ので Lambda の env に入れても効かない）。
+🔑 **「必要そうに見えるが要らない」は実際に2本あった**（`ADMIN_TOTP_SECRET` と
+`INSTAGRAM_ACCESS_TOKEN`）。どちらも **DynamoDB を先に読む実装**で、しかも
+そのテーブルは Vercel と AWS が共有している。**env に入れるより DynamoDB に任せるほうが
+soak の同期が自動で取れる**ぶん優れている。判断は「Vercel にあるか」ではなく
+**「消費側が何を先に読むか」**で決める。
 
 ### 1-2. 🔴🔴 **Vercel からは値を取り出せない**（2026-08-01 実測・当初の想定は誤り）
 
@@ -102,123 +106,106 @@ SLACK_WEBHOOK_URL
 
 ### 1-3. だから2つに分けて用意する
 
-#### A. 他システムから復元できる（＝作り直しではない）
+区分と取得元は **1-1 の表が正本**。ここには手を動かす部分だけ置く。
 
-| 変数 | 取得元 |
-|---|---|
-| `MAIL_FROM` | SES の検証済み identity は **`sikocoffee.com`（ドメイン）と `siko.is.coffee@gmail.com`** の2つ（実測）。実際に届いたメールの From を見るのが確実。📌 dev の値は 36文字＝`表示名 <アドレス>` 形式とみられる |
-| `ADMIN_PASSWORD_HASH` | **同じ admin パスワード**から再生成する。形式は `scrypt:<salt>:<hash>`（`src/lib/adminPassword.ts` の `hashPassword()`）。照合はハッシュ同士ではないので**値が変わってよい**唯一の項目 |
-| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | Google Cloud Console |
-| `LINE_CLIENT_ID` / `LINE_CLIENT_SECRET` | LINE Developers |
-| `NEXT_PUBLIC_SENTRY_DSN` | ✅ **リポジトリに実物がある**（`src/instrumentation-client.ts:8` にハードコード）。DSN はブラウザに配られるので秘密ではない |
-| `NEXT_PUBLIC_GA_MEASUREMENT_ID` | GA の管理画面（同上） |
-| `WEBAUTHN_RP_ID` / `WEBAUTHN_ORIGIN` | `www.sikocoffee.com` / `https://www.sikocoffee.com` |
-| `ADMIN_TOTP_REQUIRED` | `true`（4文字） |
-| `INSTAGRAM_ACCESS_TOKEN` | ✅ **DynamoDB `siko-coffee-config`** に実物がある（cron が更新している。2026-08-01 時点で 161文字・`refreshedAt` は `2026-08-01T00:21:11Z`） |
-| `SLACK_WEBHOOK_URL` | Slack アプリの Incoming Webhook 設定（**dev には投入済み**なので `npx sst secret list --stage dev` でも形が分かる。同じ webhook を使ってよいが、投稿先チャンネルは目視で確認する） |
-
-🔴 **`ADMIN_TOTP_SECRET` は復元できない可能性が高い。** 実測すると
-DynamoDB の `siko-coffee-config` に **`totp_secret` は無く、`totp_last_step` だけがある**
-＝ **秘密は環境変数側にしか無く、TOTP は実際に使われている**（最後に検証したステップが記録されている）。
-`src/lib/adminTotp.ts` は「DynamoDB → 無ければ env」の順で読むので、この状態は env 頼り。
-→ 認証アプリ側に控え（1Password 等は秘密文字列を表示できる）が無ければ、
-**新しい秘密を作って再登録**する（＝下の B と同じ扱い）。
+#### A（12本）… 他システムから復元。**Vercel は触らない**
 
 ```bash
-# INSTAGRAM_ACCESS_TOKEN は AWS 側から取れる
-aws dynamodb get-item --table-name siko-coffee-config --region ap-northeast-1 \
-  --key '{"configKey":{"S":"INSTAGRAM_ACCESS_TOKEN"}}' --query "Item.value.S" --output text
+# 既に確定している値（テンプレートに記入済み）
+#   MAIL_FROM=Sikō Coffee <noreply@sikocoffee.com>
+#   ADMIN_TOTP_REQUIRED=true
+#   WEBAUTHN_RP_ID=www.sikocoffee.com
+#   WEBAUTHN_ORIGIN=https://www.sikocoffee.com
+#   NEXT_PUBLIC_SENTRY_DSN=（src/instrumentation-client.ts:8 の値）
+
+# ADMIN_PASSWORD_HASH は同じパスワードから作り直す（履歴に残さない）
+read -rs "?admin パスワード: " PW; echo
+PW="$PW" node -e 'const{scryptSync,randomBytes}=require("crypto");const s=randomBytes(16).toString("hex");console.log(`scrypt:${s}:${scryptSync(process.env.PW,s,64,{N:32768,r:8,p:1,maxmem:67108864}).toString("hex")}`)'
+unset PW
 ```
 
-#### B. 読めないので**両側を同じ新しい値に回す**（5本）
+⚠️ `maxmem` の指定は必須（N=32768・r=8 で約33.5MB 要り、既定の 32MB 上限を超えるため）。
+出力は **168文字**になる（dev の値と同じ長さ＝形式が合っている確認になる）。
 
+#### B（5本）… 読めないので新しく作る
+
+🔴 **うち4本は Vercel と AWS で一致が要る**（`AUTH_SECRET` / `ADMIN_SESSION_SECRET` /
+`ORDER_TOKEN_SECRET` / `REVALIDATE_SECRET`）。soak 中は両方が本番を担い、
+**同じ Cookie・同じリンクが両方に飛ぶ**ため。
+🟢 **`CRON_SECRET` は一致不要**。Vercel の cron は Vercel 自身のルートだけを、
+AWS の中継 Lambda は AWS のルートだけを叩き、**経路が交差しない**（`src/lib/cronAuth.ts` は
+どちらの形式も受けるが、検証するのは**その環境自身の** `CRON_SECRET`）。
+
+```bash
+SCOPE=(--scope team_Evt7nWh10Bz1hbN6Sg75LsOt --project prj_BDqrRMJfhzlF5vrVEtbDK3UK1Vnv)
+umask 077
+: > /tmp/po-b.env
+for K in AUTH_SECRET ADMIN_SESSION_SECRET ORDER_TOKEN_SECRET REVALIDATE_SECRET; do
+  V=$(openssl rand -hex 32)
+  printf '%s=%s\n' "$K" "$V" >> /tmp/po-b.env
+  printf '%s' "$V" | npx vercel env add "$K" production --force --sensitive "${SCOPE[@]}"
+done
+printf 'CRON_SECRET=%s\n' "$(openssl rand -hex 32)" >> /tmp/po-b.env   # AWS 側だけ
 ```
-AUTH_SECRET  ADMIN_SESSION_SECRET  ORDER_TOKEN_SECRET  CRON_SECRET  REVALIDATE_SECRET
-```
 
-soak 中は AWS と Vercel の両方が本番を担うので、**片方だけ変えると割れる**。
-**新しい値を作り、Vercel と AWS の両方に同じものを入れる**のが唯一の整合する道。
+📌 `--force` があるので `env rm` は要らない。値は **stdin 経由**なのでシェル履歴にも `ps` にも残らない。
+🔴 **生成した値は今すぐパスワードマネージャに保存する。** Vercel に `sensitive` で入った時点で
+二度と読み出せない（今回詰まった原因そのもの）。
+📌 Vercel 側の反映には**再デプロイが要る**。main への push で自動デプロイされるので、
+この後に何か1つマージすれば足りる。
 
-**影響を本番データで実測した（2026-08-01）**:
+**回すコストは本番データで実測済み（2026-08-01）**:
 
-| 変数 | 作り直すと | 実測した規模 |
+| 変数 | 影響 | 実測 |
 |---|---|---|
-| `ORDER_TOKEN_SECRET` | 既発行の注文照会リンクが無効 | 🟢 **`siko-coffee-orders` は 0件**＝壊れるリンクが存在しない |
-| `AUTH_SECRET` | 全ユーザーが1回ログアウト | 🟢 `siko-coffee-auth` は **7件**（users/accounts/sessions 合計）＝数名 |
+| `ORDER_TOKEN_SECRET` | 既発行の注文照会リンクが無効 | 🟢 `siko-coffee-orders` **0件**＝壊れるリンクが無い |
+| `AUTH_SECRET` | 全ユーザーが1回ログアウト | 🟢 `siko-coffee-auth` **7件**＝数名 |
 | `ADMIN_SESSION_SECRET` | admin が1回ログアウト | 🟢 自分だけ |
-| `CRON_SECRET` | Vercel cron の認可 | 🟢 内部のみ。両側同時に変えれば無影響 |
-| `REVALIDATE_SECRET` | オンデマンド再検証の呼び出し元 | 🟢 内部のみ |
+| `REVALIDATE_SECRET` | 外部の呼び出し元 | 🟢 リポジトリ内に呼び出し元なし |
 
-＝ **今なら回すコストはほぼゼロ**。決済停止中で注文が無く、利用者もごく少数のうちに済ませられる。
+＝ **決済停止中で注文が無く利用者も数名の今が、いちばん安いタイミング。**
 
-**順序**（Vercel を先に、AWS は 13 のデプロイで入る）:
+#### TOTP は env ではなく `/admin/settings` で登録し直す
 
-```bash
-# ① 新しい値を作る（例）
-openssl rand -hex 32
-
-# ② Vercel を更新して再デプロイ（再デプロイしないと反映されない）
-npx vercel env rm AUTH_SECRET production --yes --scope … --project …
-npx vercel env add AUTH_SECRET production --scope … --project …
-
-# ③ 同じ値を SST にも入れる（下の 1-4）
-```
-
-⚠️ **`ADMIN_PASSWORD_HASH` は「同じパスワードの別ハッシュ」でよい**（照合はハッシュ同士ではない）。
-逆に **B の5本は文字列そのものが一致していないといけない**。
+`saveTotpSecret()` は **DynamoDB `siko-coffee-config` の `totp_secret`** に書く。
+そのテーブルは **Vercel と AWS が共有する**ので、一度登録すれば両方が同じものを読む。
+＝ `ADMIN_TOTP_SECRET` を投入する必要はない。**切替の前後どちらでもよい**（Vercel 側の
+admin からやれば今できる）。
 
 ### 1-4. 手順
 
-🔴 **`vercel env pull` からは作れない**（1-2）。1-3 の A（他システムから復元）と
-B（両側ローテーション）で用意した値を、自分で `.env` 形式のファイルに書く。
-
 ```bash
-# ① 投入用ファイルを作る（★ 値は 1-3 で用意したもの）
+# ① A と B を1つにまとめる（17本）
 umask 077
-cat > /tmp/po-sst.env <<'EOF'
-AUTH_SECRET=...
-ORDER_TOKEN_SECRET=...
-（… 19本 …）
-EOF
-```
+cat /tmp/po-a.env /tmp/po-b.env > /tmp/po-sst.env
 
-```bash
-# ②（参考）Vercel から取れる非 sensitive の値だけ確認したい場合
-npx vercel env pull /tmp/po-prod.env --environment=production \
-  --scope team_Evt7nWh10Bz1hbN6Sg75LsOt --project prj_BDqrRMJfhzlF5vrVEtbDK3UK1Vnv
-# ⚠️ sensitive のものは [SENSITIVE] になる。絞り込みだけなら次のコマンド
-grep -E '^(AUTH_SECRET|ORDER_TOKEN_SECRET|CRON_SECRET|REVALIDATE_SECRET|MAIL_FROM|ADMIN_PASSWORD_HASH|ADMIN_SESSION_SECRET|GOOGLE_CLIENT_ID|GOOGLE_CLIENT_SECRET|LINE_CLIENT_ID|LINE_CLIENT_SECRET|ADMIN_TOTP_SECRET|ADMIN_TOTP_REQUIRED|NEXT_PUBLIC_SENTRY_DSN|NEXT_PUBLIC_GA_MEASUREMENT_ID|INSTAGRAM_ACCESS_TOKEN|WEBAUTHN_RP_ID|WEBAUTHN_ORIGIN)=' /tmp/po-prod.env > /tmp/po-sst.env
-```
-
-```bash
-# ③ 🔴 投入前に必ず検査する（値は表示されない）
+# ② 🔴 投入前に必ず検査する（値は表示されない）
 npm run check:secret-file /tmp/po-sst.env
+
+# ③ ② が通ってから投入
+eval "$(aws configure export-credentials --format env)"
+npx sst secret load /tmp/po-sst.env --stage production
+
+# ④ 後片付け（**必ずやる**）
+rm -f /tmp/po-a.env /tmp/po-b.env /tmp/po-sst.env
 ```
 
 `scripts/check-secret-file.mjs` が止めるもの:
 
-- **値の重複**（＝復号漏れ・プレースホルダ）… 今回の事故がこれ
+- **値の重複**（＝復号漏れ・`[SENSITIVE]` の混入）… 2026-08-01 に実際に踏みかけた
 - **空文字**（10 で踏んだ事故と同型）
 - **入れてはいけない値の混入**（`AWS_*` / `STRIPE_*` / `BLOB_*` / `PAYMENTS_ENABLED` /
-  `SENTRY_ORG|PROJECT|AUTH_TOKEN` / `VERCEL*`）
+  ビルド時にしか効かない `SENTRY_ORG|PROJECT|AUTH_TOKEN` / `VERCEL*`）
 - **必須7本の欠落**（`sst deploy` がこれで落ちる）
-- 任意11本の欠落は**警告**（`ADMIN_TOTP_REQUIRED` だけ赤字で強調される）
+
+警告として出るもの: 任意の欠落（`ADMIN_TOTP_REQUIRED` は強調）、
+および **DynamoDB が正のものを入れてしまっている場合**（`ADMIN_TOTP_SECRET` /
+`INSTAGRAM_ACCESS_TOKEN`）。
 
 出力は **key・length・sha の先頭8桁だけ**で、値は一切出ない。
 
-```bash
-# ④ SST へ一括投入（③ が通ってから）
-eval "$(aws configure export-credentials --format env)"
-npx sst secret load /tmp/po-sst.env --stage production
-```
-
-```bash
-# ⑤ 後片付け（**必ずやる**）
-rm -f /tmp/po-prod.env /tmp/po-sst.env
-```
-
 📌 `sst secret load` は **引用符を剥がす**（dev のダミーで実測: `KEY="abc"` → `len=3`）。
-Vercel の pull は `KEY="value"` 形式なので、そのまま渡してよい。
+`MAIL_FROM` のように空白を含む値も、クォート無しでそのまま書いてよい。
 
 ### 1-5. 投入後の検証（🔑 値を出さずに正しさを見る）
 
