@@ -50,6 +50,10 @@ const OPTIONAL = [
   'INSTAGRAM_ACCESS_TOKEN',
   'WEBAUTHN_RP_ID',
   'WEBAUTHN_ORIGIN',
+  // 🔴 2026-08-01 追加。10 で中継 Lambda 用にだけ宣言されており、アプリ本体の
+  //    environment に入っていなかった。無いと `src/lib/slackNotify.ts` が黙って
+  //    return し、6か所の Slack 通知が無言で止まる。
+  'SLACK_WEBHOOK_URL',
 ]
 
 // 入れてはいけないもの。とくに AWS_* は「静的キーを置かない」という移行最大の成果を打ち消す。

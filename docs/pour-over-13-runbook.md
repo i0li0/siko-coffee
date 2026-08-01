@@ -64,14 +64,20 @@ AUTH_SECRET  ORDER_TOKEN_SECRET  CRON_SECRET  REVALIDATE_SECRET
 MAIL_FROM    ADMIN_PASSWORD_HASH  ADMIN_SESSION_SECRET
 ```
 
-**任意11本**（`OPTIONAL_SECRET_NAMES`・未設定でも deploy は通るが**機能が欠けた本番**になる）:
+**任意12本**（未設定でも deploy は通るが**機能が欠けた本番**になる）:
 
 ```
 GOOGLE_CLIENT_ID  GOOGLE_CLIENT_SECRET  LINE_CLIENT_ID  LINE_CLIENT_SECRET
 ADMIN_TOTP_SECRET  ADMIN_TOTP_REQUIRED
 NEXT_PUBLIC_SENTRY_DSN  NEXT_PUBLIC_GA_MEASUREMENT_ID
 INSTAGRAM_ACCESS_TOKEN  WEBAUTHN_RP_ID  WEBAUTHN_ORIGIN
+SLACK_WEBHOOK_URL
 ```
+
+🔴 **`SLACK_WEBHOOK_URL` は 2026-08-01 に追加した（合計 18 → 19本）。** 10 で中継 Lambda 用にだけ
+宣言されており、**アプリ本体の `environment` に入っていなかった**。`src/lib/slackNotify.ts` は
+未設定なら黙って `return` するので、**6か所の Slack 通知（ユーザー登録・パスキー登録/管理・
+フィードバック・配送遅延）が無言で止まる**ところだった。
 
 🔴 **`ADMIN_TOTP_REQUIRED` を落とすと admin がパスワードのみで通る。**
 他の任意項目は「機能が消える」だけだが、これは**防御が消える**（フェイルオープン）。
@@ -100,18 +106,23 @@ INSTAGRAM_ACCESS_TOKEN  WEBAUTHN_RP_ID  WEBAUTHN_ORIGIN
 
 | 変数 | 取得元 |
 |---|---|
-| `MAIL_FROM` | SES の送信元アドレス（既知の値） |
-| `ADMIN_PASSWORD_HASH` | **同じ admin パスワード**から再生成する。ハッシュ値は変わるがログインは変わらない |
+| `MAIL_FROM` | SES の検証済み identity は **`sikocoffee.com`（ドメイン）と `siko.is.coffee@gmail.com`** の2つ（実測）。実際に届いたメールの From を見るのが確実。📌 dev の値は 36文字＝`表示名 <アドレス>` 形式とみられる |
+| `ADMIN_PASSWORD_HASH` | **同じ admin パスワード**から再生成する。形式は `scrypt:<salt>:<hash>`（`src/lib/adminPassword.ts` の `hashPassword()`）。照合はハッシュ同士ではないので**値が変わってよい**唯一の項目 |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | Google Cloud Console |
 | `LINE_CLIENT_ID` / `LINE_CLIENT_SECRET` | LINE Developers |
-| `NEXT_PUBLIC_SENTRY_DSN` | Sentry のプロジェクト設定（そもそも秘密ではない） |
+| `NEXT_PUBLIC_SENTRY_DSN` | ✅ **リポジトリに実物がある**（`src/instrumentation-client.ts:8` にハードコード）。DSN はブラウザに配られるので秘密ではない |
 | `NEXT_PUBLIC_GA_MEASUREMENT_ID` | GA の管理画面（同上） |
 | `WEBAUTHN_RP_ID` / `WEBAUTHN_ORIGIN` | `www.sikocoffee.com` / `https://www.sikocoffee.com` |
-| `ADMIN_TOTP_REQUIRED` | `true` |
+| `ADMIN_TOTP_REQUIRED` | `true`（4文字） |
 | `INSTAGRAM_ACCESS_TOKEN` | ✅ **DynamoDB `siko-coffee-config`** に実物がある（cron が更新している。2026-08-01 時点で 161文字・`refreshedAt` は `2026-08-01T00:21:11Z`） |
+| `SLACK_WEBHOOK_URL` | Slack アプリの Incoming Webhook 設定（**dev には投入済み**なので `npx sst secret list --stage dev` でも形が分かる。同じ webhook を使ってよいが、投稿先チャンネルは目視で確認する） |
 
-🔴 `ADMIN_TOTP_SECRET` だけは注意。**認証アプリの登録と一致していないといけない**ので、
-手元に控えが無ければ**新しい秘密を作って再登録**する（＝下の B と同じ扱いになる）。
+🔴 **`ADMIN_TOTP_SECRET` は復元できない可能性が高い。** 実測すると
+DynamoDB の `siko-coffee-config` に **`totp_secret` は無く、`totp_last_step` だけがある**
+＝ **秘密は環境変数側にしか無く、TOTP は実際に使われている**（最後に検証したステップが記録されている）。
+`src/lib/adminTotp.ts` は「DynamoDB → 無ければ env」の順で読むので、この状態は env 頼り。
+→ 認証アプリ側に控え（1Password 等は秘密文字列を表示できる）が無ければ、
+**新しい秘密を作って再登録**する（＝下の B と同じ扱い）。
 
 ```bash
 # INSTAGRAM_ACCESS_TOKEN は AWS 側から取れる
@@ -167,7 +178,7 @@ umask 077
 cat > /tmp/po-sst.env <<'EOF'
 AUTH_SECRET=...
 ORDER_TOKEN_SECRET=...
-（… 18本 …）
+（… 19本 …）
 EOF
 ```
 

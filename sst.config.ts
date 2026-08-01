@@ -143,6 +143,17 @@ export default $config({
       ]),
     )
 
+    // 🔴 **アプリ本体と 10 の中継 Lambda の両方が要る**ので、ここで1回だけ宣言して共有する。
+    //    2026-08-01 に判明: これは 10 で中継 Lambda 用にだけ宣言されており、
+    //    **web の `environment` に入っていなかった**。`src/lib/slackNotify.ts` は
+    //    未設定なら `return` するだけなので、AWS 本番では **6か所の Slack 通知
+    //    （ユーザー登録・パスキー登録/管理・フィードバック・配送遅延）が黙って止まる**。
+    //    ＝ #125 で塞いだ「配線されていない任意シークレット」の同型がもう1本あった。
+    // 📌 `OPTIONAL_SECRET_NAMES` に入れないのは、同じ名前で `new sst.Secret` が
+    //    2回走るとリソースが重複するため（下の中継 Lambda もこの値を使う）。
+    // ⚠️ 値は deploy 時に焼き込まれる＝ `sst secret set` だけでは効かず再デプロイが要る。
+    const slackWebhookUrl = new sst.Secret('SLACK_WEBHOOK_URL', '')
+
     // ── 非本番ステージの遮蔽（Pour Over 9）────────────────────────
     //
     // Vercel は Deployment Protection（Vercel Authentication = Require Log In）で
@@ -657,6 +668,11 @@ export default $config({
         // 前に実値を入れる。詳細は上の OPTIONAL_SECRET_NAMES のコメント。
         ...optionalSecretEnv,
 
+        // 🔴 `src/lib/slackNotify.ts` が読む。無いと6か所の Slack 通知
+        // （ユーザー登録・パスキー登録/管理・フィードバック・配送遅延）が**黙って止まる**
+        // （あの関数は未設定なら `return` するだけ）。10 の中継 Lambda と同じ値を共有する。
+        SLACK_WEBHOOK_URL: slackWebhookUrl.value,
+
         // ステージ判定の入力（Pour Over 1 で `VERCEL_ENV` から移行済み）。
         // `src/lib/stage.ts` がこれを読み、`src/lib/db.ts` のテーブル接頭辞と
         // `sentry.*.config.ts` の environment / tracesSampleRate を決める。
@@ -867,7 +883,9 @@ export default $config({
     //       黙って捨てないのは意図的で、理由は src/functions/alarmRelay.ts の冒頭。
     //       ✅ dev で実測: 未設定のまま5回発火し、**毎回ペイロード全文を CloudWatch に
     //          残したうえで例外**になった（＝ Slack に出ないだけで内容は失われない）。
-    const slackWebhookUrl = new sst.Secret('SLACK_WEBHOOK_URL', '')
+    // 🔴 宣言は上の「任意のシークレット」ブロックへ移した。**アプリ本体も同じ値を要る**
+    //    ため（`src/lib/slackNotify.ts`）、ここで初めて宣言すると web の environment に
+    //    間に合わない。同じ名前で2回 `new sst.Secret` するとリソースが重複する。
 
     const alarmRelay = new sst.aws.Function('AlarmRelay', {
       handler: 'src/functions/alarmRelay.handler',
