@@ -838,6 +838,100 @@ SES DKIM の3本は 13 で書き換えないので触っていない。
 
 ---
 
+### 2026-08-02 — 12（`domain` 設定＋apex→www の 308 と HSTS）
+
+実体は `sst.config.ts` の「本番ドメインと apex 正規化」ブロックと **`src/lib/apexRedirect.ts`**、
+回帰テストは `src/__tests__/apexRedirect.test.ts`（13ケース）。
+
+#### 🔴🔴 計画に無かった発見: `dns` を有効のままにすると **deploy がそのまま DNS 切替になる**
+
+計画には「**`dns` は有効のままでよい。`dns: false` にする必要があるのは非対応 DNS
+プロバイダの場合だけ**」と書いてあった。**これは誤りだった。** SST のソースを読んで確定した:
+
+```
+.sst/platform/src/components/aws/cdn.ts  createDnsRecords()
+  → domain.name と domain.aliases の **すべて** について dns.createAlias()
+.sst/platform/src/components/aws/dns.ts  createAlias()
+  → ["A","AAAA"] を CloudFront への ALIAS として作成
+     _createRecord() の allowOverwrite は args.override（**既定 undefined**）
+```
+
+＝ `dns` を既定のままにすると、**production を deploy した瞬間に
+`www.sikocoffee.com` と `sikocoffee.com` の A/AAAA が CloudFront を向く**。
+13 の手順「production デプロイ → **検証** → DNS 切替」は、この構成では成立しない。
+検証する前に切り替わってしまうからである。
+
+しかも `allowOverwrite` が既定 false で、**現に www には CNAME・apex には A が存在する**ので、
+実際には**デプロイが RRSet の衝突で落ちる**公算のほうが高い（www は CNAME と A の共存自体が
+禁止されている）。つまり結果は「予告なく本番が切り替わる」か「デプロイが落ちる」の二択で、
+**どちらも受け入れられない**。
+
+→ **`dns: false` ＋ `cert`（0-b のワイルドカード ARN）を採用した。**
+SST は「alternate domain name を distribution に設定する」ところまでをやり、
+**Route53 のレコードは作らない**。切替も切り戻しも Route53 の UPSERT で人が行う。
+
+🔑 **11 で TTL を 60s にした意味は、この構成でだけ生きる。** レコードが IaC 管理下にあると、
+ロールバックは「`domain` を外して再デプロイ」になり CloudFront の更新待ちで数分〜十数分かかる。
+管理外に置けば切り戻しは **UPSERT 1回＝秒**で、60s の TTL がそのまま効く。
+📌 **教訓6（IaC 管理下のリソースを CLI で触らない）は当てはまらない。** あれは
+**SST が作ったリソース**の話で、最初から SST の外に置くと決めたものには適用されない
+（9.5 の OIDC ロールを `sst.config.ts` に入れなかったのと同じ整理）。
+
+📌 **副作用**: `domain` を付けると SST が `*.cloudfront.net` 宛を自動で 403 にする
+（`CF_BLOCK_CLOUDFRONT_URL_INJECTION`）。**13 の事前検証を CloudFront の URL では行えない**。
+→ `curl --resolve www.sikocoffee.com:443:<配信IP> https://www.sikocoffee.com/...` で
+SNI と Host を本番ドメインのまま当てる。**これが 13 の検証手順の前提になる**ので先に書いておく。
+
+#### 検証が dev でできない唯一のタスクなので、単体テストを検証手段にした
+
+`domain` は production にしか付かない＝ **`sikocoffee.com` という Host が dev の
+CloudFront に届くことはない**。5・6・9 でやった「dev に当てて curl で測る」が
+**原理的にできない**。加えて `sst.config.ts` は **CI で型検査されない唯一のファイル**である。
+
+→ リダイレクト本体を **`src/lib/apexRedirect.ts` に切り出し**、
+**生成される関数本体を `new Function` で実際に評価する**テストを書いた。
+「文字列に `308` が含まれること」を見るだけのテストにはしていない（それは「書いた」の
+確認であって「動く」の確認ではない＝教訓27 と同型）。
+
+**負の対照を含む13ケース**: www 宛は素通り（ここで返すと無限ループ）／CloudFront ドメインは素通り／
+Host ヘッダ欠落でも例外を投げない（投げると 500）／`SikoCoffee.COM` も 308／
+パスのパーセントエンコード保存／クエリ保存／**同名パラメータ（`multiValue`）を落とさない**／
+クエリ無しで `?` を付けない／`${` と バッククォートを含まない（SST の interpolate に食われる）／
+`let`・`const`・アロー関数を使わない（CFF ランタイム）。
+
+🔑 **テスト自体にも負の対照を取った。** 実装に3つの変異を入れて、**落ちること**を確認している:
+
+| 変異 | 結果 |
+|---|---|
+| `308` → `301` | **2件 failed** |
+| `toLowerCase()` を外す | **1件 failed** |
+| `multiValue` 分岐を殺す | **1件 failed** |
+
+＝ このテストは通ることではなく**壊れたときに落ちること**まで確かめてある。
+`check:sst` も同様に、`dns: 'yes'` を入れて **TS2322 が出ること**を確認した（教訓19）。
+
+#### そのほかの設計判断
+
+- **308 であって 301 ではない。** 301/302 はメソッドを GET に変えてよいことになっており、
+  apex 宛の POST が黙って GET になる。`next.config.ts` も `permanent: true`＝308 なので同値。
+- **HSTS の値は `next.config.ts` の `securityHeaders` と同一**（`max-age=63072000; includeSubDomains; preload`）。
+  テストで値そのものを固定してあるので、片方だけ直る事故が落ちる。
+- **`domain.redirects` は使わない**（既定方針どおり）。SST の `HttpsRedirect` は
+  S3 website リダイレクト＋CloudFront で **Response Headers Policy が付かない＝HSTS が乗らない**。
+- **クエリの組み立ては AWS 公式の正規化サンプルと同じ形**（`multiValue` があればそちらが正）。
+  📌 `?foo`（値なし）は CFF 側で `foo: {value: ''}` になるため `?foo=` に正規化される。
+  実害のない差だが、**完全な素通しではない**ことは記録しておく。
+- **9 と 12 は排他**（9＝非本番のみ／12＝本番のみ）なので注入口の取り合いは起きない。
+  🔴 両方を要するステージができたら**文字列を連結する**こと（9 からの申し送りどおり）。
+
+**⚠️ 12 は「実装済み・未実測」である。** apex の 308 も HSTS も `domain` も、
+**production ステージが存在しない今は一度も動いていない**。実測は 13 で行う
+（教訓27: 型が通ったことも、テストが通ったことも、「本番の CloudFront でそう動く」の証明ではない）。
+
+**ここまでで 12 は実装完了＝進捗 17/21。次は 13（production デプロイ → 検証 → DNS 切替）。**
+
+---
+
 ## 教訓
 
 他の作業にも移植できる形で残す。
@@ -1492,3 +1586,35 @@ AWS_CREDENTIAL_EXPIRATION` を入れた（古い `AWS_SESSION_TOKEN` だけが�
    差し替え、その環境で `aws configure export-credentials` が実際に
    `The config profile (default) could not be found` で落ちることまで確かめている。
    ＝ **この枝を飛ばす必要が本当にあること**を、想像ではなく実測で固定した。
+
+### 34. IaC の「宣言した対象」と「実際に書き換える範囲」はずれる
+
+12 で `domain` を設定するとき、計画には **「`dns` は有効のままでよい」** と書いてあった。
+書いた本人（＝過去の自分）は「`domain` はディストリビューションに
+alternate domain name を足す設定」だと思っていた。実際には SST の `Cdn` は
+**Route53 のレコードまで作る**。つまり `domain` は CloudFront の設定ではなく、
+**CloudFront と DNS の両方を動かす設定**だった。
+
+これが効いたのは、**その差が手順の順序を壊すから**である。
+13 は「production デプロイ → **検証** → DNS 切替」の3段で、
+**切替が最後にあることが安全性の源**（検証で問題が出たら切り替えなければよい）。
+`dns` が有効だと、**1段目が3段目を兼ねてしまう**＝検証の機会が消える。
+リソースが1つ余計にできる、という程度の話ではなかった。
+
+🔑 **一般形: 「この設定は何を作るか」ではなく「この設定は何を書き換えるか」を確かめる。**
+特に **DNS・証明書・IAM のような共有資源**は、コンポーネントの宣言範囲の外に見えるのに
+実際には触られることがある。触られた瞬間に**他のタスクの前提が消える**。
+
+🔑 **そして確かめる先はドキュメントではなくソースだった。** SST のドキュメントは
+`dns: false` を「非対応 DNS プロバイダ向けの回避策」として説明していて、
+**「レコードを作らせたくないとき」という用途を書いていない**。嘘ではないが、
+こちらの用途からは見えない書き方になっている。`cdn.ts` の `createDnsRecords()` と
+`dns.ts` の `createAlias()` を読んで初めて、`allowOverwrite` が既定 false であることまで含めて確定した。
+
+📌 **教訓6（IaC 管理下のリソースを CLI で触らない）との関係を混同しないこと。**
+今回の結論は「Route53 のレコードを **IaC の管理下に置かない**」で、一見すると逆向きに見える。
+だが教訓6 は **SST が作ったもの**を手で触るなという話で、
+**最初から管理外に置くと決めたもの**には及ばない（9.5 の OIDC ロールと同じ）。
+判断の軸は「IaC か手作業か」ではなく、**壊れたときにどちらが速く戻せるか**である。
+ここでは切り戻し速度（UPSERT 1回＝秒 vs 再デプロイ＝数分〜十数分）が決め手になった。
+＝ **11 で TTL を 60s へ下げた投資は、この選択とセットで初めて回収される。**
