@@ -53,7 +53,7 @@
 
 | | 期限 | 確認方法 |
 |---|---|---|
-| Instagram 長期トークン | **2026-08-30 失効** / 次の更新機会 **2026-08-01 00:00 UTC（Vercel の月次・この1回きり）** | `siko-coffee-config` の `INSTAGRAM_ACCESS_TOKEN` の `refreshedAt`（Vercel のログは不要）<br>🔴 8 で AWS 側を**週次**にしたが、production のスケジュールは 13 まで DISABLED なので、それまで頼れるのは Vercel の月次だけ |
+| Instagram 長期トークン | **2026-09-30 失効**（2026-08-01 の更新に成功して 60 日後退）/ 次の更新機会 **2026-09-01 00:00 UTC** | `siko-coffee-config` の `INSTAGRAM_ACCESS_TOKEN` の `refreshedAt`（Vercel のログは不要）<br>✅ 2026-08-01 実測: `2026-07-01T00:51:23Z` → **`2026-08-01T00:21:11.206Z`**<br>🔴 8 で AWS 側を**週次**にしたが、production のスケジュールは 13 まで DISABLED なので、**13 が 9/1 を跨ぐならその時点でも頼れるのは Vercel の月次だけ** |
 | ワイルドカード証明書 | 2027-02-11 | 使用開始後に ACM が自動更新（検証レコードが要る） |
 
 ---
@@ -701,6 +701,102 @@ API がある、という点だけ覚えておく（タグの Value や S3 の�
 切り替えた後**。先に足すと本番ステージが CI から先に作られ、13 の「production デプロイ →
 検証 → DNS 切替」という順序が飛ぶ。`CRON_STAGES` に production を足すのが 13 の後なのと同じ理由。
 
+### 2026-08-01 — 依存 L の確認（Instagram トークン）
+
+**期限が当日だった唯一の項目**で、結果は **更新成功**。
+
+| | 値 |
+|---|---|
+| 更新前 | `refreshedAt: 2026-07-01T00:51:23Z` |
+| 更新後（実測） | **`refreshedAt: 2026-08-01T00:21:11.206Z`** / `expiresIn: 5184000` |
+| 失効日 | 2026-08-30 → **2026-09-30** |
+
+🔑 **00:00 UTC 指定に対して発火は 00:21 UTC。** Hobby の flexible window（1時間）の内側で、
+**遅れて発火する**。朝の時点で見に行くと「更新されていない」ではなく**「まだ観測できない」**
+状態を掴むので、判定は窓が閉じた後にやること。
+
+🔑 **`release-reservations` は回らず `instagram-refresh` は回った。** Vercel の cron は
+「全部動く／全部動かない」ではなく **本ごとにまだら**だった。1本の実行実績を他の本の
+根拠にしてはいけない。
+
+📌 次の確認は **2026-09-02**（9/1 の月次の翌日）。13 が済んでいれば AWS の週次に替わっている。
+**13 が 9/1 を跨ぐなら、その時点でも頼れるのは Vercel の月次1本**（production の
+スケジュールは 13 まで DISABLED）。
+
+### 2026-08-01 — 10（CloudWatch Alarms）実装とデプロイ
+
+**経路は Alarm → SNS → 中継 Lambda → Slack。** 実体は `sst.config.ts` の「監視」ブロックと
+`src/functions/alarmRelay.ts`、回帰テストは `src/__tests__/alarmRelay.test.ts`（8ケース）。
+
+**設計判断**
+
+- **メール購読を採らなかった。** SNS のメール購読は**購読確認リンクのクリック**が要る＝
+  IaC で完結せず、ステージを作り直すたびに手作業が復活する。通知先も既にフィードバック通知が
+  流れている Slack と分断される。
+- 🔴 **トピックは2本要る。** CloudWatch アラームのアクションは**アラームと同じリージョン**に
+  なければならず、**CloudFront のメトリクスは us-east-1 にしか出ない**。→ us-east-1 と
+  ap-northeast-1 に1本ずつ立て、**中継 Lambda 1本**に集約した（SNS → Lambda のクロスリージョン
+  配信は既定有効リージョン間では公式サポート。購読リソースは**トピック側のリージョン**で作る）。
+- 📌 **provider を使い回さず `AlarmsUsEast1` を新設した。** 既存の `WafUsEast1` の論理名を
+  共用に変えると、それを使っている web ACL が置き換え対象になりうる。web ACL は CloudFront に
+  関連付いていて削除が遅く脆いので触らない。provider は AWS 上のリソースではないので2つでも無害。
+- 🔴 **SES の `Reputation.*` は production でだけ作る。** アカウント全体のメトリクスなので、
+  dev にも作ると soak 中に同じ事象で2回鳴り、しかも dev が本番の送信評判で鳴る。
+- **`src/lib/slackNotify.ts` は流用しない。** あれは `r.ok` を見ず失敗を握り潰す。
+  ユーザー操作をブロックしない目的では正しいが、**アラート中継でそれをやると
+  「鳴ったのに届かない」が無音で起きる**。
+
+**dev での実測**
+
+| 確認したもの | 実測 |
+|---|---|
+| アラーム（ap-northeast-1） | 4本（cron-relay-errors / web-server-errors / web-server-throttles / alarm-relay-errors） |
+| アラーム（us-east-1） | 1本（cloudfront-5xx・`DistributionId` + `Region: Global`） |
+| **SES の2本** | **dev には作られない**（`isProd` ゲートの負の対照） |
+| 購読 | 両リージョンとも confirmed（`PendingConfirmation` ではない）。**us-east-1 のトピックが ap-northeast-1 の Lambda を指す** |
+| Lambda リソースポリシー | `sns.amazonaws.com` × `SourceArn` 2本（Main / Global）に限定 |
+| **クロスリージョン配信** | ✅ **手動 publish と実アラーム遷移の両方で到達を確認**（下記） |
+| `treatMissingData` | INSUFFICIENT_DATA → **自力で OK へ遷移**（約2分）＝ `notBreaching` が効いている |
+| 中継の消費 | Max Memory 80MB / 128MB・実行 2〜37ms |
+
+🔑 **クロスリージョンは「構造」ではなく「配信」で確かめた。** 購読が存在することと
+実際に届くことは別（教訓27 と同型）。us-east-1 のトピックへ手動 publish して
+ap-northeast-1 の中継が起動することを見たうえで、さらに **us-east-1 の
+`siko-dev-cloudfront-5xx` が INSUFFICIENT_DATA → OK に遷移した本物の通知**が
+同じ経路で届いたことも確認した。
+
+🔑 **`SLACK_WEBHOOK_URL` は placeholder 付きで宣言し、`SECRET_NAMES` には入れていない。**
+あの配列は値が無いと `sst deploy` 自体が落ちるので、混ぜると 13 でも投入を強いられる。
+実測でも**未設定のままデプロイは通り**（Lambda の env は `SLACK_WEBHOOK_URL: ""`）、
+発火時に**ペイロード全文を CloudWatch に残したうえで例外**になった（5回）。
+＝ **Slack に出ないだけで内容は失われない**。
+🔴 値は deploy 時に env へ焼き込まれる＝ **`sst secret set` だけでは効かず再デプロイが要る**
+（9 の `PREVIEW_BASIC_AUTH` と同じ性質）。
+
+**✅ 最後の1ホップ（中継 → Slack）も実測済み**
+
+`SLACK_WEBHOOK_URL` を dev に投入して再デプロイし、両経路から publish して確認した。
+
+| 経路 | 中継のログ | 結果 |
+|---|---|---|
+| us-east-1 → ap-northeast-1 | `forwarding: 🔴 ALARM *siko-dev-cloudfront-5xx* _[dev]_` | **例外なく完了** |
+| ap-northeast-1（同一） | `forwarding: ✅ OK *siko-dev-cron-relay-errors* _[dev]_` | **例外なく完了** |
+
+🔑 **「正常終了」が到達の証明になるのは、コードが 2xx 以外を必ず例外にしているから。**
+`r.ok` を見ない実装（`src/lib/slackNotify.ts` の形）だと、この観測は何も証明しない。
+**検証可能性は実装の性質**であって、後から観測手段を足して得られるものではない。
+
+📌 実行時間は 2〜37ms から **約 2.5 秒**へ増えた（Slack への HTTPS 往復＋コールド起動 130ms）。
+timeout 30 秒に対して十分な余裕がある。Max Memory は 91MB / 128MB。
+
+✅ **Slack の画面で3件（ALARM 1・OK 2）の到達をオーナーが目視確認済み**。
+📌 **ここだけは AWS 側からは確認できない。** 中継の正常終了が示すのは
+「Slack API が 2xx を返した」ことまでで、**投稿先チャンネルが期待どおりか**は分からない
+（webhook の向き先を間違えても 2xx は返る）。**経路の検証と宛先の検証は別物**なので、
+新しい webhook を使うときは1回だけ人の目で確かめる工程を残す。
+
+**ここまでで 10 は完了＝進捗 15/21。**
+
 ---
 
 ## 教訓
@@ -758,6 +854,8 @@ HTTPS を張れない＝鶏と卵）。**TTL 引き下げ・WAF・アラーム�
 「8 → 15（Instagram トークンは月次 cron で延長。60日止まると恒久失効）」は正しいが、
 実際に効くのは **「失効は 2026-08-30、次の更新機会は 2026-08-01」**という日付だった。
 実測（`refreshedAt` と `expiresIn`）から出せる。
+✅ **その 8/1 の機会は実際に成功し、失効は 2026-09-30 へ後退した**（上の「依存 L の確認」の節）。
+＝ 日付にしておいたおかげで**当日に確認すべきことが一意に決まった**。
 
 → **順序制約のうち、時間が理由のものは日付に変換しておく。** 監視方法も一緒に書く。
 
@@ -1204,3 +1302,103 @@ sharp 0.35 系は `@img/sharp-<os>-<cpu>` の optional 依存で解決される�
    **今回それらは一致していた**ので原因に辿り着けない。別 CPU のパッケージが入っている
    場合は `--cpu` の不足を名指しするようにした。**「よくある原因」を指す固定文言は、
    別の原因で同じ症状が出たときに積極的に人を迷わせる。**
+
+### 30. ロググループ名は関数名から導けない（SST v4）
+
+`/aws/lambda/<関数名>` を決め打ちで引いて **`ResourceNotFoundException`** を踏んだ。
+SST は**ロググループを関数とは別のランダム接尾辞で作り**、`LoggingConfig` で結び付けている。
+
+```
+関数名        siko-coffee-dev-AlarmRelayFunction-nufmtvtf
+ロググループ  /aws/lambda/siko-coffee-dev-AlarmRelayFunction-ffmdukos   ← 接尾辞が違う
+```
+
+正しい経路は `aws lambda get-function-configuration --query LoggingConfig`。
+
+🔴 **これは単なる不便ではなく誤診の温床。** 「ログが無い」を「呼ばれていない」と読むと、
+実際には正常に動いているものを壊れていると判断する。**宛先を確かめる前に不在を結論にしない。**
+教訓14（指標が反応するか）の裏返しで、**見ている場所が正しいか**を先に問う話。
+
+### 31. 通知系の故障は、その通知系では通知できない
+
+`alarm-relay-errors`（中継 Lambda 自身の Errors）が実際に **ALARM に遷移し、
+その通知もまた同じ中継を通ろうとして失敗した**。設計時にコメントへ「既知の死角」と
+書いていたことが、初日にそのまま実演された形。
+
+🔑 **これは実装のバグではなく構造の帰結**なので、押し出し（push）を増やしても解けない。
+中継を二重化しても「二重化した両方が死ぬ経路」（＝ Slack 側の障害・webhook の失効）が残る。
+
+→ **埋めるのは引き（pull）側**。soak（14）の点検項目に入れる:
+
+```bash
+aws cloudwatch describe-alarms --state-value ALARM --query "MetricAlarms[].AlarmName"
+```
+
+📌 一過性の失敗（Slack の 5xx・スロットル）なら次の呼び出しで復旧して**遅れて届く**ので、
+自己監視のアラーム自体は無駄ではない。効かないのは**恒久的な故障のとき**だけ、と切り分けておく。
+
+✅ **この「効く側」も実測できた（同日）。** webhook を投入して中継が直った後、
+`alarm-relay-errors` は自力で ALARM → OK に戻り、**その復旧通知は中継を通って届いた**:
+
+```
+13:40 UTC  中継が壊れている → ALARM に遷移 → 通知は届かない（死角の実演）
+13:44 UTC  webhook を投入して再デプロイ
+13:50 UTC  ALARM → OK（"1 datapoint [0.0] was not greater than or equal to the threshold"）
+13:50 UTC  [alarm] relay forwarding: ✅ OK *siko-dev-alarm-relay-errors* _[dev]_   ← 届いた
+```
+
+🔑 **つまり「壊れたことは分からないが、直ったことは分かる」という非対称がある。**
+沈黙は正常と故障のどちらでもありうるが、**復旧通知が来たら、それは
+「その間なにかを取りこぼしていた」ことの事後的な証拠**になる。引き（pull）側の点検で
+拾うべきなのは、この沈黙している期間のほう。
+
+### 32. 「保存された」と「正しい値が保存された」は別
+
+`sst secret set` は成功し、`sst secret list` にも `SLACK_WEBHOOK_URL` が出た。しかし
+デプロイは中継 Lambda を**一切更新しなかった**。値が**空文字**で保存されていたためで、
+SST から見れば placeholder の `''` から変化していない＝更新不要、という判定は正しかった。
+
+原因は投入コマンドの `read -rs`（非エコー読み取り）が値を拾えていなかったこと。
+`printf '%s' "$url" | sst secret set ...` は**空文字でも何事もなく成功する**。
+
+🔴 **より悪かったのは確認方法のほうだった。** 秘密を伏せるつもりで
+`sed -E 's/[=[:space:]].*$/ = <redacted>/'` を通したので、**空の値も 81 文字の値も
+同じ `<redacted>` になった**。＝ **確かめようとしていた性質そのものを、確認の手段が消していた。**
+長さを出す形（`awk` で `=` 以降の length）に変えて即座に判明した。
+
+```
+SLACK_WEBHOOK_URL: length=0    ← 投入直後（壊れていた）
+SLACK_WEBHOOK_URL: length=81   ← 検証付きコマンドで入れ直した後
+```
+
+🔑 **秘密を扱う検証では「値を出さない」と「何も分からない」の間に線を引く。**
+長さ・接頭辞・ホスト名・件数は、値を露出せずに正誤を判定できる。
+[[feedback-verification-baseline]] の「変えたはずの属性を実環境に問い合わせる」の変種で、
+**問い合わせても、返ってきたものを潰したら意味がない**。
+
+📌 対処として、投入コマンド自体に形式検査を入れた（`case "$url" in https://hooks.slack.com/*)`）。
+**空文字が静かに通る経路を残さない**のが本筋で、確認の改善はその次。
+
+### 33. 回避策として環境に入れたものが、後続コマンドの分岐を黙って変える
+
+`sst secret set` は `scripts/deploy.sh` を経由しないので、0-a の②（`login_session` を
+SST が解釈できない問題）が手動に戻る。そこで
+`eval "$(aws configure export-credentials --format env)"` を打った。
+
+その **1時間後、同じシェルで `npm run sst:deploy` が `ExpiredTokenException` で落ちた。**
+`deploy.sh` の②はこう分岐している:
+
+```bash
+if [[ -n "${AWS_ACCESS_KEY_ID:-}" ]]; then   # CI とみなして展開をスキップ
+```
+
+CI（OIDC で環境変数に入っている）を想定した条件だが、**手で展開して期限切れになった
+ローカルのシェルも同じ枝に落ちる**。結果、`deploy.sh` は自前の新鮮な資格情報を取りに行かず、
+腐った値を使い続けた。**`aws` CLI 単体では通る**ので「AWS にログインしていない」にも見えない。
+
+🔑 **回避策には寿命があり、寿命が切れたことは回避策自身からは見えない。**
+一時的に環境へ入れた値は、それを前提にしていない別のコマンドの判定材料になりうる。
+
+→ **別タスクとして起票**（10 のスコープ外）。②の条件を `AWS_ACCESS_KEY_ID` の**存在**ではなく
+CI 固有の変数（`GITHUB_ACTIONS`）にするか、`AWS_CREDENTIAL_EXPIRATION` を見て
+期限切れなら展開し直すのが素直。

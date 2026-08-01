@@ -1,0 +1,175 @@
+// CloudWatch アラームの通知中継 Lambda（Pour Over 10）。
+//
+// CloudWatch Alarm → SNS トピック → **この関数** → Slack Incoming Webhook。
+//
+// 🔑 **なぜ SNS のメール購読ではなく Lambda なのか**
+// メール購読は購読確認リンクのクリックが要る＝ IaC で完結せず、`sst deploy` の後に
+// 手作業が1回挟まる（しかもステージを作り直すたびに再発する）。加えて通知先が
+// メールだけになり、既にフィードバック通知が流れている Slack と分断される。
+// Lambda 経由なら全部 sst.config.ts の中で閉じ、教訓6（IaC 管理下のものを
+// コンソールで触らない）を崩さずに済む。
+//
+// 🔑 **なぜ `src/lib/slackNotify.ts` を使い回さないのか**
+// あれは Next 側のコードで、この関数は node 組み込み以外に依存しない方針
+// （cronRelay.ts と同じ理由）。加えて `notifySlack()` は **失敗を握り潰し
+// `r.ok` も見ない**。ユーザー操作をブロックしない目的ではそれで正しいが、
+// **アラートの中継でそれをやると「鳴ったのに届かない」が無言で起きる**。
+// ここでは逆に、送れなかったら**必ず例外にする**（下記）。
+//
+// 🔴 **既知の死角: この関数自身が壊れると、その事実を知らせる経路も同時に死ぬ。**
+// AlarmRelay の Errors にもアラームを張ってあるが、その通知もこの関数を通る。
+// ただし無意味ではない — 一過性の失敗（Slack 側の 5xx・スロットル）なら次の
+// 呼び出しで復旧し、遅れて届く。**恒久的な故障は CloudWatch の Errors を
+// 自分で見に行くまで分からない**。これは cronRelay が Sentry に出ないのと同種の
+// 「中継自身は中継できない」問題で、構造上ここでは解けない。
+//   → 実運用では月1回でも `aws cloudwatch describe-alarms --state-value ALARM` を
+//     見る習慣で補う（14 の soak 中の点検項目）。
+
+/** CloudWatch Alarm が SNS に流す本文。必要な分だけ。 */
+interface CloudWatchAlarmMessage {
+  AlarmName?: string;
+  AlarmDescription?: string | null;
+  NewStateValue?: string;
+  OldStateValue?: string;
+  NewStateReason?: string;
+  StateChangeTime?: string;
+  Region?: string;
+  AlarmArn?: string;
+  Trigger?: {
+    Namespace?: string;
+    MetricName?: string;
+    Statistic?: string;
+    Period?: number;
+    Threshold?: number;
+    ComparisonOperator?: string;
+  };
+}
+
+interface SnsEventRecord {
+  Sns?: {
+    Message?: string;
+    Subject?: string | null;
+    Timestamp?: string;
+  };
+}
+
+export interface AlarmRelayEvent {
+  Records?: SnsEventRecord[];
+}
+
+const PREFIX = '[alarm] relay';
+
+// Slack 側の一時的な失敗で取りこぼさないための再試行。SNS も Lambda 失敗時に
+// 再試行するが（既定2回）、そちらは**数十秒〜数分空く**ので、まず自前で詰める。
+const MAX_ATTEMPTS = 3;
+const RETRY_BASE_MS = 300;
+
+const STATE_MARK: Record<string, string> = {
+  ALARM: '🔴 ALARM',
+  OK: '✅ OK',
+  INSUFFICIENT_DATA: '⚠️ INSUFFICIENT_DATA',
+};
+
+function formatAlarm(alarm: CloudWatchAlarmMessage, stage: string): string {
+  const state = alarm.NewStateValue ?? 'UNKNOWN';
+  const mark = STATE_MARK[state] ?? `❔ ${state}`;
+  const trigger = alarm.Trigger
+
+  const lines = [
+    `${mark} *${alarm.AlarmName ?? '(no name)'}*  _[${stage}]_`,
+  ]
+
+  if (alarm.AlarmDescription) lines.push(alarm.AlarmDescription)
+  if (alarm.NewStateReason) lines.push('```' + alarm.NewStateReason + '```')
+
+  const meta: string[] = []
+  if (trigger?.Namespace && trigger?.MetricName) {
+    meta.push(`metric: ${trigger.Namespace}/${trigger.MetricName}`)
+  }
+  if (alarm.OldStateValue) meta.push(`from: ${alarm.OldStateValue}`)
+  if (alarm.Region) meta.push(`region: ${alarm.Region}`)
+  if (alarm.StateChangeTime) meta.push(`at: ${alarm.StateChangeTime}`)
+  if (meta.length > 0) lines.push(meta.join(' | '))
+
+  return lines.join('\n')
+}
+
+async function postToSlack(webhookUrl: string, text: string): Promise<void> {
+  let lastError: unknown
+
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    try {
+      const res = await fetch(webhookUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text }),
+        signal: AbortSignal.timeout(5_000),
+      })
+
+      // 🔴 **`r.ok` を必ず見る。** Slack の Incoming Webhook は無効な URL でも
+      // TCP レベルでは成功し、`404 invalid_token` / `403 action_prohibited` を
+      // 本文で返す。fetch が解決しただけで「送れた」と見なすと、
+      // **設定ミスの間じゅうアラートが無音で捨てられる**。
+      if (res.ok) return
+
+      const body = (await res.text()).slice(0, 200)
+      lastError = new Error(`${PREFIX} slack responded ${res.status}: ${body}`)
+
+      // 4xx は再試行しても同じ（トークン失効・URL 間違い）。すぐ諦めて例外にする。
+      if (res.status < 500) break
+    } catch (err) {
+      lastError = err
+    }
+
+    if (attempt < MAX_ATTEMPTS) {
+      await new Promise((r) => setTimeout(r, RETRY_BASE_MS * attempt))
+    }
+  }
+
+  throw lastError instanceof Error
+    ? lastError
+    : new Error(`${PREFIX} slack post failed: ${String(lastError)}`)
+}
+
+export async function handler(event: AlarmRelayEvent): Promise<void> {
+  const webhookUrl = process.env.SLACK_WEBHOOK_URL
+  const stage = process.env.STAGE ?? 'unknown'
+
+  const records = event?.Records ?? []
+  if (records.length === 0) {
+    // スキーマ違いを黙って成功させない（＝「動いているのに何も送らない」を作らない）。
+    throw new Error(`${PREFIX} event had no SNS records: ${JSON.stringify(event).slice(0, 300)}`)
+  }
+
+  if (!webhookUrl) {
+    // 🔴 **握り潰さない。** 未設定のまま「アラームは鳴っているのに Slack に来ない」
+    // 状態が続くのが最悪なので、名指しで落として Errors メトリクスに出す。
+    // 内容は捨てずにログへ残す（CloudWatch には届く）。
+    for (const record of records) {
+      console.error(`${PREFIX} SLACK_WEBHOOK_URL is not set. dropped: ${record.Sns?.Message}`)
+    }
+    throw new Error(
+      `${PREFIX} SLACK_WEBHOOK_URL is not set ` +
+        `(sst secret set SLACK_WEBHOOK_URL '<url>' --stage ${stage})`,
+    )
+  }
+
+  for (const record of records) {
+    const raw = record.Sns?.Message
+    if (!raw) continue
+
+    let text: string
+    try {
+      const parsed = JSON.parse(raw) as CloudWatchAlarmMessage
+      // CloudWatch 以外（手動 publish・将来の別用途）も素通しで届ける。
+      text = parsed.AlarmName
+        ? formatAlarm(parsed, stage)
+        : `📣 *${record.Sns?.Subject ?? 'notification'}*  _[${stage}]_\n\`\`\`${raw.slice(0, 1500)}\`\`\``
+    } catch {
+      text = `📣 *${record.Sns?.Subject ?? 'notification'}*  _[${stage}]_\n${raw.slice(0, 1500)}`
+    }
+
+    console.log(`${PREFIX} forwarding: ${text.split('\n')[0]}`)
+    await postToSlack(webhookUrl, text)
+  }
+}
