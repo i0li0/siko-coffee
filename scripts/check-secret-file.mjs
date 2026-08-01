@@ -65,6 +65,37 @@ const DB_BACKED = {
     'siko-coffee-config の INSTAGRAM_ACCESS_TOKEN（cron が更新している）',
 }
 
+// 🔴 **形式が決まっている値。** 2026-08-01 に `ADMIN_PASSWORD_HASH` で実際に踏んだ:
+//   `<salt>:<hash>` は正しく作れていたのに **先頭の `scrypt:` が欠けていた**（161文字。
+//   正しくは 168）。`src/lib/adminPassword.ts` の `verifyScrypt` は
+//   `parts.length !== 3 || parts[0] !== 'scrypt'` で**即 false** を返すので、
+//   **本番の admin が絶対にログインできず、しかも「パスワードが違う」ようにしか見えない**。
+//   長さや重複の検査は通ってしまうので、**形が決まっているものは形で見る**。
+// 🔑 ここに書けるのは「値を知らなくても判定できる性質」だけ。中身の正しさ（その
+//   パスワードのハッシュか等）は別問題で、それは投入後に本人が確かめる。
+const FORMATS = {
+  ADMIN_PASSWORD_HASH: {
+    re: /^scrypt:[0-9a-f]{32}:[0-9a-f]{128}$/,
+    hint: 'scrypt:<salt32桁hex>:<hash128桁hex>（全長168）。src/lib/adminPassword.ts の hashPassword() の出力そのまま',
+  },
+  ADMIN_TOTP_REQUIRED: {
+    re: /^(true|false)$/,
+    hint: "'true' か 'false'（api/admin/auth は === 'true' で判定する）",
+  },
+  MAIL_FROM: { re: /@/, hint: 'メールアドレスを含む（例: 表示名 <user@example.com>）' },
+  NEXT_PUBLIC_SENTRY_DSN: { re: /^https:\/\//, hint: 'https:// で始まる Sentry の DSN' },
+  NEXT_PUBLIC_GA_MEASUREMENT_ID: { re: /^G-/, hint: 'G- で始まる測定 ID' },
+  SLACK_WEBHOOK_URL: {
+    re: /^https:\/\/hooks\.slack\.com\//,
+    hint: 'https://hooks.slack.com/ で始まる Incoming Webhook の URL',
+  },
+  WEBAUTHN_ORIGIN: { re: /^https:\/\//, hint: 'https:// から始まるオリジン' },
+  WEBAUTHN_RP_ID: {
+    re: /^[a-z0-9.-]+$/,
+    hint: 'ホスト名のみ（スキームやスラッシュを含めない）',
+  },
+}
+
 // 入れてはいけないもの。とくに AWS_* は「静的キーを置かない」という移行最大の成果を打ち消す。
 const FORBIDDEN = [
   /^AWS_ACCESS_KEY_ID$/,
@@ -134,7 +165,15 @@ for (const { key } of entries) {
   }
 }
 
-// ── ④ 必須の充足 ──────────────────────────────────────────
+// ── ④ 形式 ────────────────────────────────────────────────
+for (const { key, value } of entries) {
+  const spec = FORMATS[key]
+  if (spec && !spec.re.test(value)) {
+    errors.push(`形式が違う: ${key}\n    → 期待: ${spec.hint}`)
+  }
+}
+
+// ── ⑤ 必須の充足 ──────────────────────────────────────────
 const present = new Set(entries.map((e) => e.key))
 for (const key of REQUIRED) {
   if (!present.has(key)) {

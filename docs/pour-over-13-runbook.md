@@ -45,15 +45,25 @@ production ステージの存在ではない。2・3 は DNS に一切触らな�
 | 0-1 | **11（TTL 60s）から24時間以上**（※ **4 の直前にだけ効く**） | ✅ 11 は **2026-08-01 17:50 UTC** に実施 → **2026-08-02 17:50 UTC（8/3 02:50 JST）以降** |
 | 0-2 | ワイルドカード証明書が `ISSUED` | ✅ `01195002-…` / Issuer: Amazon / 2027-02-11 まで / `InUseBy` は空 |
 | 0-3 | 本番 DynamoDB テーブルが存在 | ✅ `siko-coffee-*` が16本 |
-| 0-4 | **production の secret が投入済み** | 🔴 **未（0本）**。下の 1 を先にやること。**🔴 これはオーナー本人が対話的なターミナルでやる**（エージェント経由だと Vercel CLI が値を復号せずプレースホルダを返す＝1-3） |
+| 0-4 | **production の secret が投入済み** | ✅ **完了（2026-08-01）＝ 17/17**。Vercel 側の4本も新値に更新済み。下の 1 は**実施記録として残してある**（再実行は不要） |
 | 0-5 | main が緑でデプロイも通っている | 実行直前に `gh run list --branch main --limit 1` で確認 |
 
-🔴 **0-4 が最大の落とし穴。** `sst deploy --stage production` は `SECRET_NAMES` の
-**7本が1本でも欠けると落ちる**。2026-08-01 時点で production の secret は **0本**だった。
+📌 **0-4 は最大の落とし穴だった。** `sst deploy --stage production` は `SECRET_NAMES` の
+**7本が1本でも欠けると落ちる**が、着手前の点検では production の secret が **0本**だった
+＝ **13 はそのままでは1行目から進まなかった**。2026-08-01 に解消済み。
+
+⏳ **残っている手作業が1つ**: `/admin/settings` で **TOTP を登録し直す**
+（`ADMIN_TOTP_SECRET` は投入していない。DynamoDB `siko-coffee-config` の `totp_secret` が正で、
+そこに入れば Vercel と AWS の両方が読む）。**切替の前後どちらでもよい**が、
+`ADMIN_TOTP_REQUIRED=true` を入れてあるので**登録しないと AWS 側の admin ログインが
+フェイルクローズで塞がる**（`api/admin/auth` は「TOTP 必須なのに秘密が無い」を設定ミスとして拒否する）。
 
 ---
 
-## 1. production のシークレット投入（**時刻の縛り無し＝今すぐやってよい**）
+## 1. production のシークレット投入（✅ **2026-08-01 に完了**）
+
+> **この節は実施済み。** 以下は**何をどう決めたかの記録**として残してある。
+> 作り直しが必要になったときはここに戻る。実測値と罠は全て残してある。
 
 ### 1-1. 何を入れるか（**17本**・2026-08-01 に全項目を消費側から確認）
 
@@ -193,6 +203,11 @@ rm -f /tmp/po-a.env /tmp/po-b.env /tmp/po-sst.env
 `scripts/check-secret-file.mjs` が止めるもの:
 
 - **値の重複**（＝復号漏れ・`[SENSITIVE]` の混入）… 2026-08-01 に実際に踏みかけた
+- **形式の違い**（`ADMIN_PASSWORD_HASH` の `scrypt:<salt>:<hash>`、`ADMIN_TOTP_REQUIRED` の
+  `true`/`false`、DSN や webhook の URL 形など）… **2026-08-01 に実際に踏んだ**。
+  `<salt>:<hash>` は正しく作れていたのに **`scrypt:` の接頭辞が欠けており**（161文字／正しくは168）、
+  `verifyScrypt` が即 false を返すため **本番の admin が絶対にログインできない**状態だった。
+  しかも症状は「パスワードが違う」としか見えない。**長さも重複も通ってしまう**ので形で見る
 - **空文字**（10 で踏んだ事故と同型）
 - **入れてはいけない値の混入**（`AWS_*` / `STRIPE_*` / `BLOB_*` / `PAYMENTS_ENABLED` /
   ビルド時にしか効かない `SENTRY_ORG|PROJECT|AUTH_TOKEN` / `VERCEL*`）
