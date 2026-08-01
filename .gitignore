@@ -69,3 +69,6 @@ src/app/api/sentry-example-api/
 
 # SST が自動生成する型定義（デプロイのたびに再生成される）
 /sst-env.d.ts
+
+# ggshield がスキャン結果を貯めるローカルキャッシュ（ggshield が自分で追記する）
+.cache_ggshield
