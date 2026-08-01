@@ -28,6 +28,17 @@
 // gitignore 対象）が供給する。CI にはそれが無いため `tsconfig.json` の exclude に
 // このファイルを入れてある。
 
+// 📌 **相対パスで書くこと**（`@/` エイリアスは効かない）。SST はこの設定を esbuild で
+//    束ねるだけで、`tsconfig.json` の paths は解決されない。
+// 🔑 12 のリダイレクト本体をここに直書きせず切り出しているのは、**このファイルが
+//    CI で型検査されない唯一のファイル**であり、かつ 12 のコードは dev では一度も
+//    実行されないため（理由と検証方法は当該ファイルの冒頭）。
+import {
+  APEX_HOST,
+  SITE_HOST,
+  buildApexRedirectInjection,
+} from './src/lib/apexRedirect'
+
 export default $config({
   app(input) {
     return {
@@ -174,6 +185,60 @@ export default $config({
           },
           viewerResponse: { injection: NOINDEX_INJECTION },
         }
+
+    // ── 本番ドメインと apex 正規化（Pour Over 12）─────────────────
+    //
+    // 🔴 **証明書は SST に作らせない。** 既定では `domain.name` に対して証明書を作るが、
+    //    `www.sikocoffee.com` は Vercel への CNAME で、RFC 8659 により CA は
+    //    **CNAME 先の CAA** を見る。その先は amazon.com を許可していないので
+    //    www 単独の証明書は自ゾーンの CAA を直しても `CAA_ERROR` になる（0-b で実証）。
+    //    → 0-b で発行済みの**ワイルドカード**証明書の ARN を渡す（評価が
+    //      sikocoffee.com から始まるので通る／apex も SAN に含まれる）。
+    //    ⚠️ 検証レコード `_c84c530444dc328407ddf8a6cf46916b.sikocoffee.com` を消さないこと。
+    const SITE_CERT_ARN =
+      'arn:aws:acm:us-east-1:654512230021:certificate/01195002-424e-44b1-9425-aff38c879765'
+
+    // 🔴🔴 **`dns: false` にしてある＝ SST に Route53 レコードを作らせない。**
+    //   計画には「`dns` は有効のままでよい／`dns: false` が要るのは非対応 DNS
+    //   プロバイダの場合だけ」と書いてあったが、**実装時に SST のソースを読んで誤りと判明した**。
+    //   `cdn.ts` の `createDnsRecords()` は `domain.name` と `aliases` の**すべて**について
+    //   `dns.createAlias()` を呼び、CloudFront への A/AAAA ALIAS を作る。つまり
+    //   **`dns` を有効にしたまま production を deploy すると、その deploy 自体が DNS 切替になる**。
+    //   これは 13 の手順「production デプロイ → **検証** → DNS 切替」を成立させない。
+    //   しかも `allowOverwrite` は既定 false なので、実際には www に既存の CNAME・
+    //   apex に既存の A があるぶん**デプロイが衝突で落ちる**公算が高い（落ちなければ
+    //   予告なく本番が切り替わる）。どちらも受け入れられない。
+    //
+    // 🔑 **11 で TTL を 60s にした意味を保つのはこちら側。** レコードを SST の管理外に
+    //   置けば、切り戻しは Route53 の UPSERT 1回＝秒で終わる。IaC 管理下に置くと
+    //   ロールバックが「`domain` を外して再デプロイ」になり、CloudFront の更新待ちで
+    //   数分〜十数分かかる（教訓6 の「CLI で触らない」は SST が作ったリソースの話で、
+    //   最初から SST の外に置いたものには当てはまらない＝ 9.5 の OIDC ロールと同じ整理）。
+    //
+    // 📌 副作用: `domain` を付けると SST が `*.cloudfront.net` 宛を自動で 403 にする
+    //   （CF_BLOCK_CLOUDFRONT_URL_INJECTION）。**13 の事前検証を CloudFront の URL では
+    //   できない**ので、`curl --resolve www.sikocoffee.com:443:<配信IP>` の形で
+    //   SNI と Host を本番ドメインにしたまま当てること。
+    const prodDomain = isProd
+      ? {
+          name: SITE_HOST,
+          aliases: [APEX_HOST],
+          cert: SITE_CERT_ARN,
+          dns: false as const,
+        }
+      : undefined
+
+    // apex → www の 308 と HSTS。**`domain.redirects` を使ってはいけない**（SST の
+    // HttpsRedirect は S3 website リダイレクト＋CloudFront で Response Headers Policy が
+    // 付かない＝ HSTS が乗らず、`next.config.ts` の現行設計を壊す）。
+    //
+    // 🔗 **9 との関係**: CloudFront Function は1ビヘイビアに1つしか付かず、SST は
+    //    injection を自前の関数へ合成する方式なので **注入口は1つしかない**。
+    //    9（非本番のみ）と 12（本番のみ）は**排他**なので今は選択で足りる。
+    //    🔴 両方を要するステージができたら**文字列を連結する**こと（関数を足そうとしない）。
+    const prodEdge = isProd
+      ? { viewerRequest: { injection: buildApexRedirectInjection() } }
+      : undefined
 
     // ── アバター画像の保管（Pour Over 4: Vercel Blob → S3）──────────
     //
@@ -447,10 +512,15 @@ export default $config({
       //   全エッジロケーションから消えるまで削除がブロックされるため。
       protection: 'oac-with-edge-signing',
 
-      // ── 非本番の遮蔽（Pour Over 9）───────────────────────────────
-      // production では `undefined`＝ CloudFront Function に何も足さない。
-      // 本番に noindex が漏れるのが最悪の事故なので、判定は上の1か所（isPreviewStage）だけ。
-      edge: previewEdge,
+      // ── 本番ドメイン（Pour Over 12）──────────────────────────────
+      // 非本番は `undefined`＝ `*.cloudfront.net` のまま（dev に本番ドメインは付けない）。
+      domain: prodDomain,
+
+      // ── エッジで返すもの（Pour Over 9 / 12）──────────────────────
+      // 9（noindex ＋ Basic 認証）は**非本番のみ**、12（apex→www の 308 ＋ HSTS）は
+      // **本番のみ**で、注入口は1つしかないため排他に選ぶ。
+      // 本番に noindex が漏れるのが最悪の事故なので、判定はこの1か所だけに置く。
+      edge: isProd ? prodEdge : previewEdge,
 
       // ── WAF の紐付け（Pour Over 6）───────────────────────────────
       // `sst.aws.Nextjs` には webAcl を渡す引数が無く、内部の Cdn コンポーネントの
@@ -1119,13 +1189,26 @@ export default $config({
 //        （dev にも作ると soak 中に同じ事象で2回鳴り、dev が本番の送信評判で鳴る）。
 //     ⚠️ `SLACK_WEBHOOK_URL` は **SECRET_NAMES に入れない**（未設定で deploy が落ちるのを避け、
 //        placeholder 付きで宣言）。未設定のまま鳴ると中継が例外で終わる＝ Errors に出る。
-// 11. Route53 の TTL を 60s へ。**切替の24時間以上前**（現行 www=500s / apex=300s）。
-// 12. `domain` を設定（name: www.sikocoffee.com / aliases に apex）＋ apex→www の 308 と HSTS を
-//     `edge.viewerRequest.injection` で出す。
+// 11. ✅ Route53 の TTL を 60s へ（**完了 2026-08-02**）。apex A 300→60 / www CNAME 500→60。
+//     依存 F は解消＝ **13 は 2026-08-03 17:50 UTC 以降ならいつでも打てる**。
+// 12. ✅ `domain` を設定（name: www.sikocoffee.com / aliases に apex）＋ apex→www の 308 と HSTS を
+//     `edge.viewerRequest.injection` で出す（**実装済み。実測は 13 で行う**）。
+//     実体は上の「本番ドメインと apex 正規化」ブロックと `src/lib/apexRedirect.ts`、
+//     回帰テストは `src/__tests__/apexRedirect.test.ts`（13ケース・生成コードを実際に評価する）。
+//     🔴🔴 **`dns: false` にしてある。** 計画の「`dns` は有効のままでよい」は**誤りだった**
+//        （SST のソースで確認）。`cdn.ts` の `createDnsRecords()` は name と aliases の
+//        すべてに CloudFront への A/AAAA ALIAS を作るので、**有効のままだと production の
+//        deploy 自体が DNS 切替になり、13 の「デプロイ → 検証 → 切替」が成立しない**。
+//        しかも `allowOverwrite` 既定 false ＋ 既存レコードありなので**衝突で落ちる**公算が高い。
+//        → レコードは SST の管理外に置き、切替も切り戻しも Route53 の UPSERT で行う
+//          （11 で TTL を 60s にした意味はこの構成でだけ生きる）。
+//     📌 `domain` を付けると SST が `*.cloudfront.net` 宛を自動で 403 にするため、
+//        **13 の事前検証は `curl --resolve www.sikocoffee.com:443:<配信IP>` で行う**。
 //     ⚠️ **`domain.redirects` を使ってはいけない**。SST の HttpsRedirect は S3 website リダイレクトで
 //        **HSTS ヘッダが付かず**、現行設計（リダイレクト応答にも完全な HSTS を乗せる）を壊す。
 //     ⚠️ CloudFront Function は**1ビヘイビアに1つ**しか付かない。SST 生成の関数に injection が
 //        合成される仕組みなので、独立した関数を足そうとしないこと。
+//        9（非本番のみ）と 12（本番のみ）は排他なので今は選択で足りる。
 //     🔴 **証明書は SST に自動作成させないこと。`domain.cert` に下記 ARN を渡す。**
 //        arn:aws:acm:us-east-1:654512230021:certificate/01195002-424e-44b1-9425-aff38c879765
 //        （sikocoffee.com + *.sikocoffee.com / Issuer: Amazon / 2027-02-11 まで）
@@ -1141,6 +1224,11 @@ export default $config({
 //
 // ── 第4群｜切替と観測 ────────────────────────────────────────
 // 13. production ステージへデプロイ → 検証 → DNS 切替。
+//     🔴 **DNS 切替は手作業**（12 で `dns: false` にしたため）。Route53 の apex A と www CNAME を
+//        CloudFront への ALIAS へ UPSERT する。**切り戻しは同じ操作で Vercel へ戻すだけ**。
+//     🔴 **事前検証は CloudFront の URL ではできない**（`domain` を付けると 403 になる）。
+//        `curl --resolve www.sikocoffee.com:443:<配信IP> https://www.sikocoffee.com/...` の形で
+//        SNI と Host を本番ドメインにしたまま当てる。**12 の apex 308 と HSTS はここで初めて実測できる**。
 //     🔴 **5 の確認をこのステージでもやり直す**（protection はステージごと。dev で閉じても production は別）。
 //     🔴 **4 の積み残し②③をここで回収する**（production のバケット名で Vercel に AVATAR_* を投入し、
 //        Vercel の IAM ユーザーに S3 権限を追加）。それまで本番のアイコン設定は 503 のまま。

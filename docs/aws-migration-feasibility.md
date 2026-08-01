@@ -397,8 +397,14 @@ AWS リソースはまだ1つも作っていない。ローカルで確かめら
 🔴 **番号そのものは正しく、動かしていない。** 直したのは合計だけなので、
 「20タスク」と書かれた古い文書が別の割り当てを指しているわけではない。
 
-**進捗（2026-08-01 時点）: 15 / 21。** 第0群 4/4・第1群 4/4・**第2群 5/5**・**9.5 完了・10 完了**。
-次は **11（DNS TTL を 60s へ）**。🔴 **13 の24時間以上前**に打たないと旧 TTL が失効せず効かない（依存 F）。
+**進捗（2026-08-02 時点）: 17 / 21。** 第0群 4/4・第1群 4/4・**第2群 5/5**・
+**9.5 完了・10 完了・11 完了・12 実装完了**。次は **13（production デプロイ → 検証 → DNS 切替）**。
+✅ **依存 F は解消**（2026-08-02 17:50 UTC に TTL を 60s へ引き下げ・権威 NS 4本で実測）。
+＝ **13 は 2026-08-03 17:50 UTC 以降ならいつでも実行できる**。日程を先に決める必要はもう無い。
+🔴 **12 は「実装済み・未実測」**。`domain` は production にしか付かないので、apex の 308 も HSTS も
+**まだ一度も動いていない**（dev で当てる経路が原理的に無い唯一のタスク）。実測は 13 で行う。
+🔴 **12 で `dns: false` を採った＝ DNS 切替は SST ではなく人が Route53 で行う。**
+計画の「`dns` は有効のままでよい」は**誤りだった**（SST のソースで確認・下記）。
 ✅ 「SNS トピックが0個」は解消。✅「CronRelay の Errors」も含め、**両リージョンの経路を dev で実測**済み
 （詳細は `docs/pour-over-log.md` の 2026-08-01 の節）。
 
@@ -460,8 +466,21 @@ AWS リソースはまだ1つも作っていない。ローカルで確かめら
 >
 > - **SST に証明書を自動作成させてはいけない。** 既定では `domain.name` に対して証明書を作るため、
 >   `www.sikocoffee.com` で同じ CAA_ERROR を踏む。**上記 ARN を `domain.cert` に渡す**こと。
->   SST の `cdn.ts` は `cert` が与えられていれば自作をスキップする（`dns` は有効のままでよい。
->   `dns: false` にする必要があるのは非対応 DNS プロバイダの場合だけ）。
+>   SST の `cdn.ts` は `cert` が与えられていれば自作をスキップする。
+>   ~~`dns` は有効のままでよい。`dns: false` にする必要があるのは非対応 DNS プロバイダの場合だけ~~
+>   → 🔴 **この一文は誤りだった（2026-08-02・12 の実装時に SST のソースで確認）。**
+>   `cdn.ts` の `createDnsRecords()` は `domain.name` と `aliases` の**すべて**について
+>   `dns.createAlias()` を呼び、CloudFront への A/AAAA ALIAS を作る。つまり **`dns` を
+>   有効のままにすると production の deploy 自体が DNS 切替になり、13 の
+>   「デプロイ → 検証 → 切替」が成立しない**（検証の前に切り替わる）。さらに
+>   `_createRecord()` の `allowOverwrite` は既定 false で、www には既存の CNAME・apex には
+>   既存の A があるため、**実際にはデプロイが RRSet の衝突で落ちる公算が高い**。
+>   → **`dns: false` を採用した。** レコードは SST の管理外に置き、切替も切り戻しも
+>   Route53 の UPSERT で人が行う（**11 で TTL を 60s にした投資はこの構成でだけ回収される**）。
+> - 📌 **`domain` を付けると SST が `*.cloudfront.net` 宛を自動で 403 にする**
+>   （`CF_BLOCK_CLOUDFRONT_URL_INJECTION`）＝ **13 の事前検証を CloudFront の URL では行えない**。
+>   `curl --resolve www.sikocoffee.com:443:<配信IP> https://www.sikocoffee.com/...` の形で
+>   SNI と Host を本番ドメインにしたまま当てること。
 > - 📌 **切替後は www が Route53 の ALIAS（A レコード）になり CNAME ではなくなる**ため、
 >   以後の更新は自ゾーンの CAA で評価される。それでもワイルドカードのまま運用するのが安全。
 > - ⚠️ **`_c84c530444dc328407ddf8a6cf46916b.sikocoffee.com` を削除しないこと。**
@@ -713,8 +732,8 @@ AWS リソースはまだ1つも作っていない。ローカルで確かめら
 >    実デプロイの結果は **AWS 側に問い合わせて**確かめる（例: `aws lambda get-function-configuration`
 >    の `LastModified` が CI 実行時刻に更新されているか）。
 | 10 | ✅ **CloudWatch Alarms を先に用意**（完了・**dev で実測検証済み**） | 観測できない状態で切り替えない。Vercel に無い機構＝移行で明確に良くなる項目。経路は **Alarm → SNS → 中継 Lambda → Slack**（メール購読は購読確認のクリックが要り IaC で完結しないので不採用）。<br>🔴 **トピックは2本**。アクションはアラームと同一リージョン必須で、**CloudFront のメトリクスは us-east-1 にしか出ない**ため。中継 Lambda 1本にクロスリージョンで集約する。<br>🔴 **SES の `Reputation.*` は production でだけ作る**（アカウント全体のメトリクスなので dev にも作ると soak 中に二重に鳴る）。<br>⚠️ `SLACK_WEBHOOK_URL` は `SECRET_NAMES` に入れず placeholder 付きで宣言（未設定でも deploy は通る）。**値は deploy 時に焼き込まれるので `sst secret set` 後に再デプロイが要る**。<br>📌 **13 での再確認**: production では SES の2本が新規に作られる＝そこで初めて有効になる |
-| 11 | **Route53 の TTL を 60s へ**（切替の**24時間以上前**） | 実測の権威 TTL は www=500s / apex=300s ＝切り戻しに5〜8分。60s なら1分台になる |
-| 12 | **`domain` を設定**（`name: www.sikocoffee.com` / `aliases` に apex）＋ apex→www の 308 と HSTS を `edge.viewerRequest.injection` で | 🔴 **証明書は SST に自動作成させず、0-b で発行済みのワイルドカード証明書の ARN を `domain.cert` に渡す**。自動作成させると `www.sikocoffee.com` が Vercel への CNAME であるために **Vercel 側の CAA が効いて `CAA_ERROR` で発行できない**（0-b で実証）。〜〜手動の事前発行は不要〜〜 という当初の記述は**誤り**だった |
+| 11 | ✅ **Route53 の TTL を 60s へ**（切替の**24時間以上前**・**完了 2026-08-02**） | **完了**。apex A **300s → 60s** / www CNAME **500s → 60s**（値は不変・権威 NS 4本で実測）。対象は 13 で書き換える2本だけで、ACM 検証 CNAME と SES DKIM は据え置き。**依存 F は解消**＝ 13 は **2026-08-03 17:50 UTC 以降**ならいつでも打てる。<br>🔴 **「60s だから切り戻し1分」と見積もらないこと。** 24時間は 500s から計算した値ではなく、TTL を守らない／下限を設けるリゾルバと OS・ブラウザのキャッシュを吸収するための余裕。期待できるのは 5〜8分が**1分台に近づく**ことまで（詳細は `docs/pour-over-log.md` の 2026-08-02 の節） |
+| 12 | ✅ **`domain` を設定**（`name: www.sikocoffee.com` / `aliases` に apex）＋ apex→www の 308 と HSTS を `edge.viewerRequest.injection` で（**実装完了 2026-08-02・実測は 13**） | 🔴 **証明書は SST に自動作成させず、0-b で発行済みのワイルドカード証明書の ARN を `domain.cert` に渡す**。自動作成させると `www.sikocoffee.com` が Vercel への CNAME であるために **Vercel 側の CAA が効いて `CAA_ERROR` で発行できない**（0-b で実証）。〜〜手動の事前発行は不要〜〜 という当初の記述は**誤り**だった<br>🔴🔴 **`dns: false` を採用**。`dns` を有効のままにすると **deploy 自体が DNS 切替になり 13 の「デプロイ→検証→切替」が壊れる**（`allowOverwrite` 既定 false ＋既存レコードありでデプロイが落ちる公算も高い）。切替・切り戻しは Route53 の UPSERT で人が行う<br>🔴 **dev で実測できない唯一のタスク**（`domain` は production 限定＝ apex の Host が dev に届かない）。代わりに `src/lib/apexRedirect.ts` へ切り出して**生成コードを実際に評価する**回帰テスト `src/__tests__/apexRedirect.test.ts`（13ケース・変異3件で落ちることまで確認）を検証手段にした |
 
 > 🔴 **12 の前に必須の前提作業が2件ある**（2026-07-28 の AWS 側実地調査で判明）。
 > どちらも 12 を物理的に実行不能にするため、番号は増やさず**12 の前提**として扱う。
@@ -754,7 +773,7 @@ AWS リソースはまだ1つも作っていない。ローカルで確かめら
 
 | # | 作業 | 期待できる結果 |
 |---|---|---|
-| 13 | **production ステージへデプロイ → 検証 → DNS 切替** | シークレットは Vercel 本番の30本と突合済みで過不足なし（AWSキー3本は廃止、BLOB3本は不要、`SITE_URL`/`NEXTAUTH_URL` はコードに `https://www.sikocoffee.com` のフォールバックあり）<br>🔴 **5 の確認をこのステージでもやり直すこと**（`protection` はステージごとに効くので、dev で閉じても production は別）。`AuthType: AWS_IAM` と直叩き 403 を再測する<br>🔴 **4 の積み残し②③をここで回収する**: production のバケット名で `AVATAR_UPLOAD_BUCKET` / `AVATAR_BUCKET` / `AVATAR_BASE_URL` を Vercel 本番にも入れ、Vercel の IAM ユーザーに S3 権限を足す。**それまで本番のアイコン設定は 503 のまま**（オーナー判断・2026-07-29。理由は `docs/pour-over-log.md` 教訓20）<br>🔴 **8 の cron を DNS 切替の“あと”で有効化する**: `sst.config.ts` の `CRON_STAGES` に `'production'` を足して再デプロイ。それまで production のスケジュールは DISABLED で作られており、cron は Vercel 側だけが回している。**先に有効化すると `instagram-refresh` が Vercel と二重に走り、長期トークンの更新が競合する** |
+| 13 | **production ステージへデプロイ → 検証 → DNS 切替** | 🔴 **DNS 切替は SST ではなく人が Route53 で行う**（12 で `dns: false` にしたため）。apex の A と www の CNAME を CloudFront への ALIAS へ UPSERT する。**切り戻しは同じ操作で Vercel へ戻すだけ＝ 11 の 60s TTL がここで効く**<br>🔴 **事前検証は CloudFront の URL ではできない**（`domain` を付けると SST が `*.cloudfront.net` を 403 にする）。`curl --resolve www.sikocoffee.com:443:<配信IP> https://www.sikocoffee.com/...` で SNI と Host を本番ドメインのまま当てる。**12 の apex 308 ＋ HSTS はここで初めて実測できる**（dev では原理的に動かない）<br>シークレットは Vercel 本番の30本と突合済みで過不足なし（AWSキー3本は廃止、BLOB3本は不要、`SITE_URL`/`NEXTAUTH_URL` はコードに `https://www.sikocoffee.com` のフォールバックあり）<br>🔴 **5 の確認をこのステージでもやり直すこと**（`protection` はステージごとに効くので、dev で閉じても production は別）。`AuthType: AWS_IAM` と直叩き 403 を再測する<br>🔴 **4 の積み残し②③をここで回収する**: production のバケット名で `AVATAR_UPLOAD_BUCKET` / `AVATAR_BUCKET` / `AVATAR_BASE_URL` を Vercel 本番にも入れ、Vercel の IAM ユーザーに S3 権限を足す。**それまで本番のアイコン設定は 503 のまま**（オーナー判断・2026-07-29。理由は `docs/pour-over-log.md` 教訓20）<br>🔴 **8 の cron を DNS 切替の“あと”で有効化する**: `sst.config.ts` の `CRON_STAGES` に `'production'` を足して再デプロイ。それまで production のスケジュールは DISABLED で作られており、cron は Vercel 側だけが回している。**先に有効化すると `instagram-refresh` が Vercel と二重に走り、長期トークンの更新が競合する** |
 | 14 | **soak 期間**。**Vercel は `main` 自動デプロイのまま生かす** | ロールバック先が常に最新に保たれる。この期間は Vercel の設定に一切触らない |
 
 ### 第5群｜後始末
@@ -792,7 +811,7 @@ AWS リソースはまだ1つも作っていない。ローカルで確かめら
 | C | **6 → 13** | WAF 不在で切り替えると admin の防御が丸ごと消える |
 | D | **1 → 13** | Sentry が無効のままだと切替後に何を観測しても信用できない |
 | E | **8 → 15** | Instagram の長期トークンは cron で延長する方式。**60日止まると恒久失効**し手動再認証が要る。✅ 8 で **月次 → 週次**にしたので、60日の窓に取れる更新機会は 2回 → **8回**になった |
-| F | **11 → 13** | 24時間以上前でないと旧 TTL が失効せず引き下げが効かない |
+| F | ✅ **11 → 13** | 24時間以上前でないと旧 TTL が失効せず引き下げが効かない。**2026-08-02 17:50 UTC に 11 を実施済み＝ 13 は 8/3 17:50 UTC 以降なら可** |
 | G | **12 → 16** | 先に `redirects()` を消すと apex が無正規化になる。テストも同時に消さないと CI が落ちる |
 | H | **0-b（CAA 修正）→ 12** | Amazon CA が CAA で許可されていないと ACM が発行できず、`domain` 設定が完了しない |
 | ~~I~~ | ~~**Amplify 削除 → 12**~~ | ✅ **解消済（2026-07-28）**。0-c で association・app・role・孤児 CNAME を削除した |
