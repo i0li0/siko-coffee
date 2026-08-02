@@ -17,13 +17,18 @@
 | 節 | 時刻の縛り | いつやるか |
 |---|---|---|
 | **1. シークレット投入** | **無し** | **今すぐやってよい**。むしろ前日までに済ませる |
-| **2. production デプロイ** | **無し**（12 の `dns: false` により DNS を触らない） | 下記の判断による |
-| **3. 切替前の検証** | **無し**（`--resolve` で当てるので実 DNS を使わない） | 同上 |
+| **2. production デプロイ** | **無し**（12 の `dns: false` により DNS を触らない） | ✅ **2026-08-02 に実施済み** |
+| **3. 切替前の検証** | **無し**（`--resolve` で当てるので実 DNS を使わない） | ✅ **2026-08-02 に全項目合格** |
 | **4. DNS 切替** | 🔴 **依存 F＝ 2026-08-02 17:50 UTC 以降** | ここだけが本当の門 |
 | 5. 切替後の後始末 | 4 の後 | — |
 
 🔑 **依存 F が守っているのは「切替の瞬間に旧 TTL が失効していること」**であって、
 production ステージの存在ではない。2・3 は DNS に一切触らないので、原理的には先に打てる。
+
+✅ **2026-08-02 に前倒しを実施した＝当日は 4 から始まる。** 以下は当時の判断材料（記録）。
+🔑 **前倒しの利点は実際に回収された**: 1回目のデプロイが依存不足と資格情報切れで落ち、
+state ロックまで残ったが、**切替の窓の外だったので落ち着いて直せた**（教訓38・39）。
+当日にこれを踏んでいたら、依存 F の門の直後という最も時間の無いところで詰まっていた。
 
 **2・3 を先に打つかどうかの判断材料**:
 
@@ -244,7 +249,18 @@ npx sst secret list --stage production \
 
 ---
 
-## 2. production へデプロイ
+## 2. production へデプロイ（✅ **2026-08-02 に実施済み**）
+
+> ✅ **完了。当日この節を再実行する必要は無い**（コードを変えたなら別）。
+> 実施ログは `docs/pour-over-log.md`「2026-08-02 — 13 の 2 と 3」。
+> **production の CloudFront は `d38zi1bm4zf9e3.cloudfront.net`**（alias に apex と www）。
+>
+> 🔴 **踏んだ罠2つ（再実行するなら先に潰す）**:
+> ① **main リポの `node_modules` が古く**ビルドが `Module not found` で落ちた
+>    （#106 の `@aws-sdk/client-s3` / `s3-request-presigner`）→ **先に `npm ci`**（教訓38）
+> ② **資格情報が表示された期限より7分早く切れた** → 部分適用＋**state ロック残留**。
+>    復旧は `npx sst unlock --stage production`（教訓39）。窓は実測 **10〜15分**しかないので、
+>    **`npm run build` 単体で exit 0 を確認してから**デプロイに入る
 
 ```bash
 npm run sst:deploy -- --stage production
@@ -261,7 +277,17 @@ npm run sst:deploy -- --stage production
 
 ---
 
-## 3. DNS を切り替える**前**の検証
+## 3. DNS を切り替える**前**の検証（✅ **2026-08-02 に全項目合格**）
+
+> ✅ **3-a〜3-i すべて合格済み**（実測値は `docs/pour-over-log.md` の同日の節）。
+> 当日は **4（DNS 切替）から始めてよい**。ただしコードを変えたなら 3 をやり直すこと。
+>
+> 🔴 **3-b の `/account` は 200 ではなく 307 →`/login` が正しい。** 下の表の「200」は不正確だった。
+>    同じ手段で測った **Vercel 本番も 307**＝移行による差ではない。
+> 🔴 **レート制限（3-f）は想像より発火が早く、解除が遅い。**
+>    dev の「T+45s から 403」と違い、production は **1発目から 403・解除まで約15分**
+>    （無負荷にしても続くことを実測で確認済み）。**当日 admin ログインを連打して自分が
+>    締め出されると15分待つ**ことになる。急いでいるときほど注意。
 
 🔴 **`*.cloudfront.net` は 403 になる**（`domain` を設定すると SST が
 `CF_BLOCK_CLOUDFRONT_URL_INJECTION` で塞ぐ）。**CloudFront の URL では検証できない。**
@@ -281,11 +307,11 @@ curl -s -o /dev/null -w "%{http_code}\n" --resolve www.sikocoffee.com:443:$IP ht
 | # | 確認 | 期待 |
 |---|---|---|
 | 3-a | `https://www.sikocoffee.com/`（--resolve） | **200** |
-| 3-b | `/shop` `/shop/catalog` `/account` | 200 |
+| 3-b | `/shop` `/shop/catalog` `/account` | `/shop` `/shop/catalog` は 200／**`/account` は 307 → `/login`**（Vercel も同じ。未ログインなので飛ぶのが正しい） |
 | 3-c | **12: apex → www の 308** … `--resolve sikocoffee.com:443:$IP https://sikocoffee.com/shop?a=1` | **308** ＋ `location: https://www.sikocoffee.com/shop?a=1` ＋ `strict-transport-security` |
 | 3-d | **9 が production に漏れていないこと**（負の対照） | **401 が返らない**／`x-robots-tag` が**付かない** |
 | 3-e | **5 の再確認**（ステージごとに効く） | `aws lambda get-function-url-config` の `AuthType` が **`AWS_IAM`**、Function URL 直叩きが **403** |
-| 3-f | **6 の再確認**（🔴 **「再」ではなく初回の実測**＝ 2026-08-02 に `WAF_STAGES` から `'dev'` を外したので、web ACL が存在するステージは production だけ。ここで落ちたら dev で切り分けられない） | `/admin` が **202**（challenge）、`/api/admin/auth` 40連打で **T+45s 以降 403** |
+| 3-f | **6 の実測**（✅ 2026-08-02 に合格。`WAF_STAGES` から `'dev'` を外したので web ACL は production のみ） | `/admin` が **202**（challenge）／`/api/admin/auth` の連打で **403**（dev と違い**1発目から**・解除まで**約15分**）／どのルールが撃ったかは `aws wafv2 get-sampled-requests --rule-metric-name siko-production-admin-*` で確定できる |
 | 3-g | DynamoDB を本番テーブルに向いているか | `/shop` に実データが出る（preview の空データでない） |
 | 3-h | 10 のアラーム | production では **SES の `Reputation.*` 2本が新規に**でき、計6本になる |
 | 3-i | cron が**まだ止まっている**こと | production のスケジュールが **DISABLED**（`CRON_STAGES` に production が無い） |

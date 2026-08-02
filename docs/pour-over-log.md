@@ -1101,6 +1101,126 @@ dev の web ACL（`AdminWaf-a3068a4`）は次の dev デプロイで削除され
 
 ---
 
+### 2026-08-02 — 13 の 2（production デプロイ）と 3（切替前検証）
+
+🔑 **DNS には一切触れていない**（12 の `dns: false`）＝この節の作業中も**本番トラフィックは Vercel のまま**。
+手順4（DNS 切替）は依存 F の門（2026-08-02 17:50 UTC）まで打っていない。
+
+#### 前提の実測（着手直前）
+
+| # | 条件 | 実測 |
+|---|---|---|
+| 0-2 | 証明書 | `ISSUED` / `sikocoffee.com`+`*.sikocoffee.com` / 2027-02-11 / `InUseBy` は空 |
+| 0-3 | 本番 DynamoDB | **16本**（`list-tables` の17件目は SST が作った dev の revalidation テーブル） |
+| 0-4 | production の secret | **17/17・すべて非空**。`ADMIN_PASSWORD_HASH` は **168**（教訓37 の欠落が直っている）、`ADMIN_TOTP_REQUIRED` は `len=4` |
+| 0-5 | main が緑 | run 30725206853 success（#130） |
+
+📌 **`MAIL_FROM` は `len=37` と出るが 36文字**。`Sikō` の `ō` が UTF-8 で2バイトで、`awk` の
+`length()` が数えているのは**バイト数**。長さで検査するときは文字数と混同しないこと。
+
+#### 1回目のデプロイは失敗した（原因2つ・無関係）
+
+🔴 **① main リポジトリの `node_modules` が古かった。** `@aws-sdk/client-s3` と
+`@aws-sdk/s3-request-presigner`（#106 で追加）が **package.json と lockfile には有るのに実体が無く**、
+`npm run build` が `Module not found` で落ちた。
+**教訓26 の「worktree の node_modules は固まる」と同じ罠だが、踏んだのは worktree ではなく main リポ。**
+「デプロイは main リポから」という原則は**この罠からは守ってくれない**（→ 教訓38）。
+→ `npm ci`（npm 11）で復旧。lockfile は汚れない（`git status` clean を確認）。
+
+🔴 **② 資格情報が、表示された期限より早く死んだ。** `deploy.sh` の ② は
+「期限 **00:46:44** UTC」と表示したが、**00:39:58 の時点で `aws sts get-caller-identity` が
+既に `ExpiredToken`**（環境に残った `AWS_*` は0本＝教訓33 の再発ではない）。
+結果 `AvatarCdnCdnWaiter` が `GetDistribution` で 403 になった。
+
+⚠️ **1回目は部分適用で終わった**（CloudFront 2本・S3 3本・Lambda@Edge・CronV2 4本・
+SNS/アラーム・**`AdminWaf` web ACL** まで作られ、**Web 本体だけ未完**）。
+さらに **state ロックが残った**（異常終了で解放されない）＝ `npx sst unlock --stage production` が要る。
+
+#### 2回目（`npm ci` → 再ログイン → unlock → 再実行）で成功
+
+`✓ Complete` / exit 0。`deploy.sh` ④ の画像最適化検証も通過（sharp は **Linux arm64 ネイティブ**）。
+**production の CloudFront は `d38zi1bm4zf9e3.cloudfront.net`**（alias に apex と www・`Deployed`）。
+
+🔑 **再実行の前に `npm run build` を単体で回して exit 0 を確認した。**
+資格情報の窓が実測で10〜15分しかないので、**ビルド失敗で窓を溶かさない**ための順序。
+
+#### 3-a〜3-i の実測（**全項目合格**）
+
+| # | 実測 |
+|---|---|
+| 3-a | `/` = **200** |
+| 3-b | `/shop` 200 / `/shop/catalog` 200 / `/account` **307 → `/login`** |
+| 3-c | apex `/shop?a=1` = **308** ＋ `location: https://www.sikocoffee.com/shop?a=1`（クエリ保持）＋ `strict-transport-security: max-age=63072000; includeSubDomains; preload` |
+| 3-d | 200 の応答に **`x-robots-tag` も `www-authenticate` も無い**（負の対照・合格） |
+| 3-e | server / image-optimizer とも **`AWS_IAM`**、Function URL 直叩きは**両方 403** |
+| 3-f | 下記 |
+| 3-g | `/shop` の抽出が **Vercel と完全一致**（ブラジル/エチオピア/コロンビア 各6）＝本番テーブルを向いている |
+| 3-h | ap-northeast-1 に **6本**（dev は4本＝ **SES の `Reputation.*` 2本が新規**）＋ us-east-1 に `cloudfront-5xx` |
+| 3-i | production のスケジュール **4本すべて `DISABLED`** |
+
+🔑 **3-b の `/account` 307 は異常ではない。手順書の「200」が不正確だった。**
+未ログインだと `/login` へ飛ぶのが正しく、**同じ手段で測った Vercel 本番も 307 → `/login`**。
+**期待値が合わないときは、まず同じ手段で変更前を測る**（[[feedback-verification-baseline]] の実践）。
+
+#### 3-f（WAF）は production が初回の実測 — dev と挙動が違った
+
+`WAF_STAGES` から dev を外した（#130）ので、**production が唯一 web ACL を持つステージ**。
+
+✅ **合格した内容**（`get-sampled-requests` で**どのルールが撃ったか**まで確定させた）:
+- `AdminUiBotChallenge` → **CHALLENGE** 4件（`/admin` `/admin/login` `/%61dmin` `/Admin`・国は `JP`）
+  ＝ **`URL_DECODE`+`LOWERCASE` の2段変換が production でも効いている**
+- `AdminLoginRateLimit` → **BLOCK**（POST `/api/admin/auth`）
+- `AdminGeoRestrictJp` → **0件**（日本からは撃たない＝負の対照）
+- **scope-down も確認**: ブロック中も `/admin` は 202・`/` は 200・`/api/admin/orders` は 401（アプリ応答）
+- ルール設定は `Limit: 30` / `EvaluationWindowSec: 60` / `AggregateKeyType: IP`（Vercel の live 設定と一致）
+
+🔴 **dev と違ったのは発火と解除のタイミング。**
+dev は「40連打は全部素通り → T+45s 以降 403」だったが、production は **1発目から403**、
+そして **解除まで約15分**かかった（連打 01:04:05 → 解除は 01:19:06〜01:19:51 の間）。
+⚠️ **観測の交絡を潰してある**: 30秒ごとの自分のプローブが延長している可能性を排除するため
+**01:14:06 から完全に無負荷**にしたが、**それでもさらに5分以上ブロックが続いた**。
+📌 **なぜ即座に発火したかは断定できていない。** ACL 作成（00:35）から連打（01:04）まで30分空いて
+いたので「dev の遅延は ACL 作成直後だったせい＝教訓22 は恒久的な性質ではない」という説明は
+立つが、**未検証の仮説として書いておく**。
+🔑 **運用上の帰結**: 想像より**発火は早く・解除は遅い**。13 当日に admin ログインを連打して
+自分が締め出されると **15分待つ**ことになる。防御が緩む方向ではないので切替の可否は左右しない。
+
+#### 途中で立った別の疑いと、それを潰した実験
+
+`/api/admin/auth` の 403 には**2つの説明が付いた** — WAF のブロックか、アプリの Origin 検査か。
+さらに悪い可能性として「**POST がエッジで壊れている**」（5 の `oac-with-edge-signing` の失敗）もあった。
+これは Stripe webhook・NextAuth・フォーム送信に及ぶのでレート制限より重大。
+
+**区別する実験**（[[feedback-verification-baseline]]「2つの説明が付くなら区別する実験を先に」）:
+
+| 実験 | 結果 | 分かること |
+|---|---|---|
+| 403 のヘッダと body を見る | `server: CloudFront` / `x-cache: Error from cloudfront` / CloudFront の HTML | **エッジ生成**。アプリなら JSON |
+| Origin ヘッダの有無で変えて叩く | どちらも同じ 403 | アプリの Origin 検査**ではない** |
+| `get-sampled-requests` | `AdminLoginRateLimit` の **BLOCK** | **どのルールか確定** |
+| scope-down 外への POST（`/api/feedback`） | **AWS 400 / Vercel 400 で一致** | **POST は壊れていない**（疑いを排除） |
+
+#### admin ログインも Vercel と同一挙動
+
+| リクエスト | AWS | Vercel |
+|---|---|---|
+| POST `/api/admin/auth` body `{}` | **500** | **500** |
+| POST `/api/admin/auth` 誤ったパスワード | **401** `{"error":"パスワードが違います"}` | **401** 同一 |
+
+📌 **空 body の 500 は移行で入った不具合ではない**（両側一致＝元からの挙動）。
+✅ 誤パスワードで「パスワードが違います」まで到達している＝ **`ADMIN_PASSWORD_HASH`（教訓37 で
+161→168 に直したもの）が production で正しく読めている**ことの実証。教訓37 が残した
+「そのパスワードのハッシュかは投入後に本人が確かめる工程」は、ここで半分回収できた
+（正しいパスワードでの成功は TOTP 登録後）。
+
+#### 残っている手作業
+
+⏳ **`/admin/settings` で TOTP を登録し直す**。`ADMIN_TOTP_REQUIRED=true` を入れてあるので、
+登録しないと **AWS 側の admin ログインがフェイルクローズで塞がる**。切替の前後どちらでもよいが、
+**切替後に気づくと締め出される**。
+
+---
+
 ## 教訓
 
 他の作業にも移植できる形で残す。
@@ -1942,6 +2062,43 @@ if (parts.length !== 3 || parts[0] !== 'scrypt') return false
 
 📌 **同じ日の教訓36 と対になっている。** 36 は「秘密を伏せると確認もできなくなる」、
 37 は「測っていたから気づけた」。**測れる性質を増やすほど、秘密のまま検証できる範囲が広がる。**
+
+### 38. 「正しい場所で作業する」は、その場所が最新であることを保証しない
+
+13 の 2 で `sst deploy --stage production` が `Module not found: '@aws-sdk/client-s3'` で落ちた。
+原因は **main リポジトリの `node_modules` が #106 より古かった**こと。
+
+🔴 **原則どおりに振る舞っていたのに踏んだ。** 教訓26 は「worktree の `node_modules` は固まる」で、
+その対策として「**デプロイはメインリポジトリから**」を守っていた。だが**メインリポジトリの
+`node_modules` も、`npm ci` を打たなければ同じように古くなる**。git は `node_modules` を追跡
+しないので、`git pull` で最新にしても**依存の実体は付いてこない**。
+
+🔑 **一般化: 「どこで作業するか」の規則は、「その場所の状態が正しいか」を代替しない。**
+場所を正しくすると安心してしまい、**状態の検査を省く**ようになる。これが罠の本体。
+規則が守るのは「間違った場所を使わないこと」だけで、**正しい場所が正しい状態であることは
+別途測る必要がある**。
+
+→ **判定は変わらず `grep <pkg> package.json` と `ls node_modules/<pkg>` の突き合わせ**。
+両方に有って実体だけ無ければ環境要因。**デプロイ系を打つ前に `npm ci` を済ませるのが最も安い**
+（教訓26 の結論はそのまま main リポにも適用する）。
+
+### 39. 資格情報の「期限」は、いつまで使えるかの保証ではない
+
+同じデプロイで、`deploy.sh` の ② が **「期限 2026-08-02T00:46:44 UTC」と表示した**のに、
+**00:39:58 の時点で `aws sts get-caller-identity` が既に `ExpiredToken`** を返した。
+7分の食い違い。環境に残った `AWS_*` は0本なので**教訓33 の再発ではない**。
+
+🔴 **害は「落ちること」ではなく「途中で落ちること」。** デプロイは部分適用で終わり、
+**state ロックが残った**（異常終了なので解放されない）。次の実行は `Locked` で即死し、
+`sst unlock --stage production` が要る。＝ **1つの期限切れが、2つの後始末を生む。**
+
+🔑 **長い処理の前に「窓」を測り、窓に収まらない作業を始めない。**
+実測でこのプロジェクトの窓は **10〜15分**しかない。だから 2回目は
+**`npm run build` を単体で回して exit 0 を確認してからデプロイした**
+（ビルド失敗で窓を溶かさない）。**表示された期限を信じて逆算しない。**
+
+📌 教訓23（`| tail` で終了ステータスが化ける）と同じ構図。**そこに出ている数字が、
+自分の知りたい命題を答えているとは限らない。**
 
 ---
 
