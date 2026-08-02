@@ -34,13 +34,53 @@
 |---|---|---|---|
 | ~~**13-4**~~ | ~~**DNS 切替**~~ | — | ✅ **完了**（`2026-08-02T19:39:15Z`）。🔴 www は **UPSERT では通らず `DELETE`＋`CREATE`** が要った（教訓40） |
 | ~~5-1~~ | ~~3-a〜3-h を実 DNS でやり直す~~ | — | ✅ **完了・全項目合格**（`x-amz-cf-pop: KIX56-P4` で AWS 配信を直接確認） |
-| 5-2 | **4 の②③回収** — Vercel に `AVATAR_UPLOAD_BUCKET` / `AVATAR_BUCKET` / `AVATAR_BASE_URL` ＋ IAM に S3 権限 | 切替後 | 🔴 **未着手**＝ Vercel 本番 env に `AVATAR_*` は**1本も無い**。**本番のアイコン設定は今も 503** |
-| 5-3 | `CRON_STAGES` に `'production'` を足して再デプロイ | 🔴 5-4 の**あと**（単独で） | 現在 `['dev']`。🔴 **5-4 と同じ PR に入れない**（1デプロイで2変数動かさない） |
+| ~~5-2~~ | ~~**4 の②③回収**~~ | — | ✅ **完了（2026-08-02）。ただし前提が2つとも変わっていた**（下記） |
+| 5-3 | `CRON_STAGES` に `'production'` ＋ **Vercel の発火窓の外へずらす** | 5-4 の**あと**（単独で） | ⏳ **PR #135**。🔴 計画の「切替後なら安全」は誤りだった（下記） |
 | 5-4 | `ci.yml` の `matrix.stage` に `production` | 切替後**速やかに** | ✅ **本 PR で実施**＝ `[dev, production]`。🔴 **ここから main への push は本番に入る** |
 | 5-6 | Instagram トークンの確認 | 2026-09-02 | `refreshedAt` = **2026-08-01T00:21:11Z**＝失効 **2026-09-30**・次の更新機会 9/1。🔴 **5-3 が済むまで頼りは Vercel の月次1本**（production の cron は DISABLED） |
 | **14** | **soak 期間**（Vercel を生かしたまま観測） | 切替後 | Vercel の設定に一切触らない＝ロールバック先を最新に保つ |
-| **15** | **Vercel 解約 ＋ 決済再開** | soak の後 | ①Stripe 新キー →②`PAYMENTS_ENABLED=true` →③再デプロイ の順厳守 |
+| **15** | **Vercel 解約 ＋ 決済再開** | soak の後 | ①Stripe 新キー →②`PAYMENTS_ENABLED=true` →③再デプロイ の順厳守。🔴 **IAM アクセスキー `AKIAZQY7YB2C3BYMZCYG`（`shun` / AdministratorAccess）の削除を必ず含める**＝解約しても AWS 側に残る |
 | **16** | **Vercel 依存の撤去（①〜⑧）** | 15 の後 | 🔴 `vercel.json` だけ消すと **build が全環境で落ちる**（`prebuild` → `check-cron-schedule.mjs`）。📌 計画の表は長く「①〜⑦」と書いていたが**本文には⑧まである**（本作業で訂正） |
+
+### 🔴 5-2 の前提は2つとも変わっていた（2026-08-02 に実測して判明）
+
+計画は「Vercel に `AVATAR_*` 3本を投入し、Vercel の IAM ユーザーに S3 権限を追加する。
+**それまで本番のアイコン設定は 503**」と書いていた。**どちらも今は成り立たない。**
+
+- 🟢 **③（IAM に S3 権限）は最初から満たされていた。** Vercel が使う AWS キー
+  `AKIAZQY7YB2C3BYMZCYG` は IAM ユーザー **`shun`**（グループ `administrator`
+  ＝ **`AdministratorAccess`**）のもの。最終使用が **2026-08-02T20:02:00Z / dynamodb /
+  ap-northeast-1** ＝ これが Vercel の実行時キーであることの実測。S3 も Rekognition も既に通る。
+  **IAM の変更は不要だった。**
+- 🟢 **「本番のアイコンが 503」は DNS 切替そのもので解消した。** 503 を返すのは
+  `isAvatarStorageConfigured()`（`AVATAR_UPLOAD_BUCKET` と `AVATAR_BUCKET` の有無）で、
+  **AWS の production Lambda には SST が3本とも注入済み**（実測）。本番を担うのが
+  Vercel から AWS に移った時点で条件が消えている。
+  → **今 Vercel に入れる意味は「ロールバック時のパリティ」**に変わった（soak 中に切り戻したら
+  Vercel 側でアップロードが壊れる、を防ぐ）。**目的が変わったので優先度も変わる。**
+
+🔑 **積み残しは「やること」だけでなく「なぜ要るか」を持たないと腐る。**
+この2件は、理由のほうが先に消えていたのに作業だけが残っていた。
+
+⚠️ **投入した値は検証できない。** Vercel 本番 env は **`sensitive` 型**なので
+`vercel env pull` はリテラル `[SENSITIVE]` を書く（3本とも `len=11`）。
+＝ **投入されたことは確認できたが、値が正しいかは Vercel 側からは分からない。**
+実際に確かめられるのは **Vercel へデプロイして動かしたとき＝切り戻したとき**だけ。
+📌 投入値は AWS の production Lambda の env から読んだもの（＝ SST が生成した実測値）:
+`siko-coffee-production-avataruploadsbucket-baruzmbz` /
+`siko-coffee-production-avatarsbucket-mrvrrdnf` / `https://d1hd0wz5s5nlam.cloudfront.net`
+
+### 🔴 新しく見つかった負債: Vercel が **AdministratorAccess の静的キー**を持っている
+
+上の調査で判明。**`R-7`（実行ロールを絞る）と同じ問題が Vercel 側にもある**が、
+こちらは**静的キー**なので失効しない分だけ悪い。**15（Vercel 解約）の作業に
+「このアクセスキーを削除する」を必ず含めること**（解約してもキーは AWS 側に残る）。
+📌 アカウントにルートのアクセスキーは無い（`AccountAccessKeysPresent = 0`）。
+
+```bash
+aws iam get-access-key-last-used --access-key-id AKIAZQY7YB2C3BYMZCYG
+aws iam list-groups-for-user --user-name shun
+```
 
 ```bash
 # A の現況をまとめて確認する
@@ -168,8 +208,8 @@ aws cloudfront get-distribution-config --id <production の Id> \
 13-4（DNS 切替）✅ 2026-08-02T19:39:15Z 完了
   ├→ 5-1（実 DNS で再検証）✅ 完了
   ├→ 5-4（matrix に production）✅ 完了 … やるまで production が main から取り残される
-  │    └→ 5-3（cron 有効化）… 🔴 5-4 と分ける（1デプロイで2変数動かさない）
-  ├→ 5-2（AVATAR_* 回収）……… 本番のアイコン設定 503 の解消
+  │    └→ 5-3（cron 有効化＋発火窓ずらし）⏳ PR #135 … 🔴 5-4 と分ける
+  ├→ 5-2（AVATAR_*）✅ 完了 … 🔴 503 の解消は切替そのものが済ませた＝残る意味は切り戻し時のパリティ
   └→ 14（soak）
        ├→ B-2 / R-6（warmer）… 本番のコールド率が測れるようになる
        └→ 15（Vercel 解約＋決済再開）
