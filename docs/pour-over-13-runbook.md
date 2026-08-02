@@ -462,22 +462,50 @@ done
 
 🔑 **DNS を戻すだけでよい。** これが 11（TTL 60s）と 12（`dns: false`）の投資の回収先。
 
+### 🔴🔴 **こちらも `DELETE` ＋ `CREATE` が要る**（§4 と同じ穴）
+
+**切替で www は CNAME → A(ALIAS) に変わった。戻すときも型が変わる**ので、
+**UPSERT では同じく `InvalidChangeBatch` で拒否される**。
+apex は A のままなので UPSERT でよい（ALIAS → 通常の A レコードは型が同じ）。
+
+⚠️ **この節はかつて UPSERT 2本で書かれていた**（2026-08-02 に §4 で同じ誤りを実際に踏んで訂正）。
+**緊急時に使う経路なので、ここが動かないのが一番まずい。**
+
+🔑 **`DELETE` は既存レコードと完全一致でないと通らない。** ALIAS の場合は `TTL` /
+`ResourceRecords` ではなく **`AliasTarget` をそのまま**書く。しかも Route53 は `DNSName` を
+**末尾ドット付き**（`d38zi1bm4zf9e3.cloudfront.net.`）で返す。
+
+🔴 **ここで「正規化されるから手打ちでも通るはず」と推論しないこと**（それが教訓40 そのもの）。
+**現物から生成する。** 緊急時に一致ミスで止まるのが最悪なので、手で書き写す工程を無くす:
+
 ```bash
-cat > /tmp/rollback.json <<'EOF'
-{ "Comment": "Pour Over 13: rollback to Vercel",
-  "Changes": [
-    { "Action": "UPSERT", "ResourceRecordSet": {
-        "Name": "sikocoffee.com.", "Type": "A", "TTL": 60,
-        "ResourceRecords": [{ "Value": "216.198.79.1" }] } },
-    { "Action": "UPSERT", "ResourceRecordSet": {
-        "Name": "www.sikocoffee.com.", "Type": "CNAME", "TTL": 60,
-        "ResourceRecords": [{ "Value": "724b9301c41a7c8f.vercel-dns-017.com." }] } }
-  ] }
-EOF
+# ① 現物の www A(ALIAS) をそのまま DELETE 節にして、rollback バッチを組み立てる
+aws route53 list-resource-record-sets --hosted-zone-id Z0281603UIOXAI0M8P8R \
+  --query "ResourceRecordSets[?Name=='www.sikocoffee.com.']|[?Type=='A']|[0]" --output json \
+| jq '{
+    Comment: "Pour Over 13: rollback to Vercel",
+    Changes: [
+      { Action: "UPSERT", ResourceRecordSet: {
+          Name: "sikocoffee.com.", Type: "A", TTL: 60,
+          ResourceRecords: [{ Value: "216.198.79.1" }] } },
+      { Action: "DELETE", ResourceRecordSet: . },
+      { Action: "CREATE", ResourceRecordSet: {
+          Name: "www.sikocoffee.com.", Type: "CNAME", TTL: 60,
+          ResourceRecords: [{ Value: "724b9301c41a7c8f.vercel-dns-017.com." }] } }
+    ] }' > /tmp/rollback.json
+
+# ② 目で確認してから打つ（DELETE 節が現物のコピーになっているか）
+cat /tmp/rollback.json
 
 aws route53 change-resource-record-sets --hosted-zone-id Z0281603UIOXAI0M8P8R \
   --change-batch file:///tmp/rollback.json
 ```
+
+⚠️ **① が空を返したら、それは「もう A ではない」＝既に切り戻し済みか誰かが触った**ということ。
+そのまま `jq` に流すと壊れたバッチができるので、**空でないことを見てから ② へ進む**。
+
+📌 バッチはアトミックなので、拒否されても部分適用は起きない（**片方だけ戻る事故は無い**）。
+📌 apex は A のままなので UPSERT でよい（ALIAS → 通常の A は型が同じ）。
 
 🔴 **「60s だから1分で戻る」と見積もらないこと。** 24時間の待ちは 500s から計算した値ではなく、
 TTL を守らない／独自の下限を持つリゾルバと OS・ブラウザのキャッシュを吸収するための余裕。
