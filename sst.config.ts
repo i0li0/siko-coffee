@@ -806,17 +806,31 @@ export default $config({
       ],
     })
 
-    // 🔴 **上の `permissions`（アイデンティティ側）と対になるリソース側の許可。**
-    //    両方が要る。片方だけだと Function URL は 403 を返す。
-    //    📌 5 の `protection: 'oac-with-edge-signing'` が作るのは **CloudFront 向けの2本だけ**で、
-    //       cron の経路（CloudFront を通さず Function URL を直叩き）は含まれない。
+    // 🔴🔴 **リソース側の許可は「2本ペア」で要る。** ここは2回間違えた場所なので経緯を残す。
+    //
+    //    Function URL 経由の呼び出しには**別々の2つの許可**が要る:
+    //      ① `lambda:InvokeFunctionUrl` … **その URL を使ってよいか**
+    //      ② `lambda:InvokeFunction`    … **その関数を実行してよいか**
+    //    5 の `protection` が作る CloudFront 向け statement が**必ず2本ペア**
+    //    （`WebCloudFrontFunctionUrlAccess*` と `WebCloudFrontInvokeFunction*`）なのはこのため。
+    //
+    //    🔴 **1回目の誤り**: ①だけ足して直ったつもりになった → **403 のまま**。
+    //       dev の残骸をよく読むと `FunctionURLAllowInvokeAction` の Action は
+    //       **`lambda:InvokeFunction`（②）**であって①ではなかった。**似た名前を読み違えた。**
+    //    🔑 **dev で実際に動いている構成**は「①＝アイデンティティ側／②＝リソース側（残骸の
+    //       `Principal:"*"`）」。ここではそれを**送信元をロールに限って**忠実に再現する。
     //    📌 `principal` にロール ARN を渡すと `"Principal": {"AWS": "<role-arn>"}` になる。
-    //       **`Principal:"*"` にしないこと**＝それは今回の原因になった残骸そのものの形。
+    //       **`Principal:"*"` にしないこと**＝それが今回の原因になった残骸そのものの形。
     new aws.lambda.Permission('CronRelayInvokeServerFunctionUrl', {
       action: 'lambda:InvokeFunctionUrl',
       function: web.nodes.server!.apply((fn) => fn.name),
       principal: cronRelay.nodes.role.arn,
       functionUrlAuthType: 'AWS_IAM',
+    })
+    new aws.lambda.Permission('CronRelayInvokeServerFunction', {
+      action: 'lambda:InvokeFunction',
+      function: web.nodes.server!.apply((fn) => fn.name),
+      principal: cronRelay.nodes.role.arn,
     })
 
     // 🔴 **実際に発火させるステージ。** WAF_STAGES と同じ運用（1か所の配列で切り替える）。
