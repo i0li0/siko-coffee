@@ -19,7 +19,7 @@
 | **ワイルドカード証明書** | `arn:aws:acm:us-east-1:654512230021:certificate/01195002-424e-44b1-9425-aff38c879765`<br>`sikocoffee.com` + `*.sikocoffee.com` / Issuer: Amazon / **2027-02-11 まで** |
 | dev の CloudFront | `https://d3ejmruzea0u7a.cloudfront.net`（ディストリビューション `E2KRJP9NS7XXWC`） |
 | dev の AvatarCdn | `https://d22i7l6gqogfbs.cloudfront.net`（`E1PTASTVVV2I6E`・**WAF は付けない**） |
-| dev の web ACL（6） | `AdminWaf-a3068a4` / us-east-1 / scope `CLOUDFRONT`<br>⚠️ **ステージごとに1枚できる**（$8/月）。`WAF_STAGES` で作るステージを絞る |
+| dev の web ACL（6） | ~~`AdminWaf-a3068a4`~~ **2026-08-02 に削除**（`WAF_STAGES` から `'dev'` を外した）<br>⚠️ **ステージごとに1枚できる**（$8/月）。`WAF_STAGES` で作るステージを絞る。今は `['production']` |
 | dev の cron（8） | EventBridge Scheduler 4本 → 中継 Lambda `siko-coffee-dev-CronRelayFunction-*` 1つ<br>⚠️ **production は DISABLED で作られる**。有効化は `CRON_STAGES` に `'production'` を足す＝ **13 の DNS 切替後** |
 | デプロイの入口 | **`npm run sst:deploy -- --stage <stage>`**（素の `npx sst deploy` を打たない） |
 | CI のデプロイロール（9.5） | `arn:aws:iam::654512230021:role/siko-coffee-github-deploy`<br>信頼するのは **`repo:i0li0/siko-coffee:ref:refs/heads/main` のみ**／権限は `AdministratorAccess`<br>リポジトリ変数 **`AWS_DEPLOY_ROLE_ARN`** に同じ値。作り直しは `scripts/bootstrap-github-oidc.sh`（冪等） |
@@ -354,6 +354,7 @@ challenge は静かな JS チャレンジで、突破コストは 5 分でも 1 
 ⚠️ **費用はステージごとに掛かる。** web ACL は Pulumi のスタック単位なので dev と production で
 共有されず、soak 期間は **月$16**＝予算通知のしきい値 $12 を超える。
 → `WAF_STAGES` を配列にしてあるので、**dev の検証が済んだら 'dev' を外して再デプロイする**。
+✅ **2026-08-02 に外した**（下の「6 の後始末」の節）。
 
 ⚠️ **海外渡航時の一時解除の手順が変わった。** Vercel は `vercel firewall rules disable <id>` で
 よかったが、AWS では web ACL が IaC 管理下にある。**`AdminGeoRestrictJp` の action を
@@ -1068,6 +1069,35 @@ const optionalSecretEnv = Object.fromEntries(
 
 📌 ついでに `sst secret list` が**値を伏せたまま長さを出せる**ことも確認できた
 （`len=64` など）。教訓32 の「伏せる」と「測る」の使い分けは、この形で実行できる。
+
+---
+
+### 2026-08-02 — 6 の後始末（`WAF_STAGES` から `'dev'` を外す）
+
+**やったこと**: `sst.config.ts` の `WAF_STAGES` を `['production', 'dev']` → `['production']` に。
+dev の web ACL（`AdminWaf-a3068a4`）は次の dev デプロイで削除される。
+
+**判断の根拠**:
+
+| 論点 | 結論 |
+|---|---|
+| dev に WAF を入れた目的は何だったか | **6 のルールが効くことを production の外で実測すること**。2026-07-31 に完了済み（公開パス 200 のまま／`/admin` `/admin/login` が 202 challenge／`/api/admin/auth` 40連打で T+45s 以降 403／`/%61dmin` `/Admin` も 202）。目的を果たした ACL に月$8 は払わない |
+| 外すと dev が無防備になるか | **ならない**。9 の CloudFront Function（Basic 認証＋`noindex`）は WAF とは別に全パスへ掛かったままで、dev はドメインを張っていない（`*.cloudfront.net`）。失うのは「Basic 認証を突破した相手に対する admin のレート制限と geo deny」だけ |
+| 費用 | $5/ACL＋$1/rule×3＝**月$8/ステージ**。dev と production が並ぶと月$16 で**予算通知（$12）を超える**。ただし**時間割の課金**なので数日の重複なら実額は 1日約$0.27（予測値で通知が鳴ることはある） |
+| 実施のタイミング | **13 より前**。計画では 5-5（切替後）だったが、先に外せば production ACL との重複期間がゼロになる。先に外して困ることは無い |
+
+🔴 **代償**: `WAF_STAGES` に `'dev'` が無いと `adminWaf` の**構築ごとスキップされる**ため、
+ルール定義を壊しても **dev のデプロイは素通りし、production の `sst deploy` で初めて落ちる**。
+#124 のトップレベル import と同じ構図（教訓「デプロイでしか落ちない失敗」）。
+→ **WAF のルールをいじるときは一時的に `'dev'` を足して実測し、確認できたら外す。**
+
+📌 **副作用: dev の `/admin*` の応答が変わる。** WAF は CloudFront Function より先に評価される
+ので、以前は資格情報の有無に関わらず 202（challenge）だった。今は 9 の Basic 認証がそのまま
+出る＝**資格情報なしで 401 / ありで 200**。上の 2026-07-31（9）の節にある
+「`/admin*` は資格情報の有無に関わらず 202 のまま」は**この変更以前の観測**である。
+
+⚠️ **13 への影響**: dev で先に試す道が無くなったので、**13 の production 検証が WAF の初回実測**
+になる。手順書 5-5（`WAF_STAGES` から `'dev'` を外す）は本作業で消化済み。
 
 ---
 

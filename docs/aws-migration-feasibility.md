@@ -591,7 +591,7 @@ AWS リソースはまだ1つも作っていない。ローカルで確かめら
 | 6 | ✅ **WAF 3ルール**を AWS WAF で再構築（**CLOUDFRONT スコープ＝us-east-1 固定**・`transform.cdn` で `webAclArn`） | **完了（2026-07-31・dev で実測検証）。** 値は推測せず `vercel firewall rules ls --json` の live 設定から採った。公開パス（`/`・`/shop`・`/api/health`）は **200 のまま不変**、`/admin`・`/admin/login` は 307/200 → **202（`x-amzn-waf-action: challenge`）**、`/api/admin/auth` は変更前 40連打が全部 405 だったのに対し **T+45s 以降は 403**。レート制限のブロック中も `/admin` は 202 のままで、**スコープが2つのログインパスに限定されている**ことも確認できた |
 | 7 | ✅ **`server.memory` 1024 → 2048 MB** | **完了（2026-07-31・dev で実測検証）。** Lambda の CPU はメモリ比例で **1769MB＝1vCPU 相当**なので 0.58vCPU → **約1.16vCPU**。同一手段（CloudWatch Logs の `REPORT`）で前後を測り、コールド／ウォームを分けた結果、**コールド p50 は 2,041ms → 1,068ms（−48%・n=21）**、ウォーム p50 は 73.8ms → 51.3ms（−30%・n=123）。`maxMemoryUsed` は **231MB → 230MB で不変**＝ RAM は元から余っており、効いたのは純粋に CPU。8 の実行予算（30秒）にも効く。⚠️ 費用は「相殺」ではなく GB-秒で**約 +10%**（月 $0.003 相当＝誤差） |
 | 8 | ✅ **cron 4本 → `sst.aws.CronV2`（EventBridge Scheduler）＋中継 Lambda** | **完了（2026-07-31・dev で実測検証）。** 経路は **Scheduler → 中継 Lambda（`src/functions/cronRelay.ts`）→ server の Function URL を SigV4 で直叩き → cron ルート**。`release-reservations` は日次から **`rate(10 minutes)`** へ、`instagram-refresh` は月次から **週次**へ（依存 E・L の余裕を 60日で2回→8回にする）。認可は **①Function URL の IAM ②`CRON_SECRET`** の2重。<br>🔴 **`Authorization` ヘッダは SigV4 が占有する**ため `CRON_SECRET` は **`x-cron-secret`** で渡す。判定は `src/lib/cronAuth.ts` に集約し、soak のあいだ Vercel の `Authorization: Bearer` 形式も受け続ける（撤去は 16 の⑧）<br>🔴 **production のスケジュールは DISABLED で作られる**。`sst.config.ts` の `CRON_STAGES` に `'production'` を足すのは **13 で DNS を切り替えたあと**（それまで Vercel の cron が生きており、二重実行すると `instagram-refresh` が競合する） |
-| 9 | ✅ **非本番に `X-Robots-Tag: noindex`＋アクセス制限**（`edge` の CloudFront Function 注入） | **完了（2026-07-31・dev で実測検証）。** 宣言どおり **WAF は使わず CloudFront Function**（リクエスト課金のみ＝実測 103K req/月で月 $0.01）。資格情報は `PREVIEW_BASIC_AUTH`（**`SECRET_NAMES` には入れない**＝入れると production の 13 でも投入を強いられる）を deploy 時に base64 化して焼き込む。実測は公開パスが 200 → **401**（`www-authenticate` ＋ `x-robots-tag` ＋ `cache-control: no-store`・`x-cache: FunctionGeneratedResponse`＝エッジで完結）、資格情報ありで 200 ＋ **`x-robots-tag: noindex, nofollow`**、誤った資格情報は 401。AvatarCdn は **noindex のみ**（`<img>` は資格情報を送らないので Basic 認証は付けられない）。<br>🔴 **WAF は CloudFront Function より先に評価される**ので `/admin*` は資格情報の有無に関わらず **202（challenge）**のまま。<br>🔴 **`edge` は Router の直下ではなくルートの中に書く** — 直下にも同名の型があり **型検査もデプロイも通るのに黙って無視される**（教訓27）。<br>📌 12 で `domain` を付けると SST が `*.cloudfront.net` 宛を自動で 403 にする（`CF_BLOCK_CLOUDFRONT_URL_INJECTION`）＝ production 側にこの作業を広げる必要はない |
+| 9 | ✅ **非本番に `X-Robots-Tag: noindex`＋アクセス制限**（`edge` の CloudFront Function 注入） | **完了（2026-07-31・dev で実測検証）。** 宣言どおり **WAF は使わず CloudFront Function**（リクエスト課金のみ＝実測 103K req/月で月 $0.01）。資格情報は `PREVIEW_BASIC_AUTH`（**`SECRET_NAMES` には入れない**＝入れると production の 13 でも投入を強いられる）を deploy 時に base64 化して焼き込む。実測は公開パスが 200 → **401**（`www-authenticate` ＋ `x-robots-tag` ＋ `cache-control: no-store`・`x-cache: FunctionGeneratedResponse`＝エッジで完結）、資格情報ありで 200 ＋ **`x-robots-tag: noindex, nofollow`**、誤った資格情報は 401。AvatarCdn は **noindex のみ**（`<img>` は資格情報を送らないので Basic 認証は付けられない）。<br>🔴 **WAF は CloudFront Function より先に評価される**ので `/admin*` は資格情報の有無に関わらず **202（challenge）**のまま。<br>⚠️ **この 202 は 2026-08-02 以前の dev での観測**。同日に `WAF_STAGES` から `'dev'` を外したので、**今の dev には web ACL が無く `/admin*` も Basic 認証がそのまま出る（資格情報なし 401 / あり 200）**。順序の話（WAF → viewer-request CFF → キャッシュ → オリジン）自体は production で有効。<br>🔴 **`edge` は Router の直下ではなくルートの中に書く** — 直下にも同名の型があり **型検査もデプロイも通るのに黙って無視される**（教訓27）。<br>📌 12 で `domain` を付けると SST が `*.cloudfront.net` 宛を自動で 403 にする（`CF_BLOCK_CLOUDFRONT_URL_INJECTION`）＝ production 側にこの作業を広げる必要はない |
 
 > 🔴 **5 が最優先である理由**: OpenNext/SST は server Lambda の **Function URL をオリジン**にするが、
 > その **AuthType は `NONE`**、リソースポリシーは **`Principal: *`／CloudFront 限定の条件なし**。
@@ -670,6 +670,9 @@ AWS リソースはまだ1つも作っていない。ローカルで確かめら
 > 🔴 **web ACL はステージごとに1枚できる**（Pulumi のスタックが別なので共有されない）。
 > dev と production が並ぶ soak 期間は **月$16** になり、予算通知のしきい値 $12 を超える。
 > → `sst.config.ts` の `WAF_STAGES` を配列で持たせてあるので、**dev の検証が済んだら 'dev' を外す**。
+> ✅ **2026-08-02 に外した＝ `WAF_STAGES` は `['production']`**。dev の検証は 2026-07-31 に完了して
+> おり、目的を果たした ACL を残さない。🔴 代償として **WAF のルールを壊しても dev のデプロイは
+> 素通りする**（構築ごとスキップされるため）＝ルールをいじるときは一時的に `'dev'` を足して実測する。
 > ⚠️ 9（非本番のアクセス制限）で web ACL を**もう1枚作らないこと**。作るならこの ACL を共有する。
 >
 > 📌 **移行で変わる挙動が2つある（どちらも緩む方向ではない）。**
@@ -1055,6 +1058,7 @@ server Lambda のインラインポリシーは DynamoDB を `siko-coffee-previe
   web ACL は Pulumi のスタック単位なので **ステージごとに1枚できる**。dev と production が並ぶ
   soak 期間は WAF だけで月$16 になり、**通知しきい値 $12 を確実に超える**。
   → `sst.config.ts` の `WAF_STAGES` から 13 の前に `'dev'` を外すこと。
+  ✅ **2026-08-02 に実施済み**＝ 13 で production を作っても web ACL は1枚のまま。
 
 ---
 

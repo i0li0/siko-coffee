@@ -29,9 +29,9 @@ production ステージの存在ではない。2・3 は DNS に一切触らな�
 
 - ✅ **先に打つ利点**: デプロイ時にしか出ない失敗（#124 のトップレベル import がその類）を
   切替の窓の外で潰せる。当日の作業が「検証 → UPSERT」だけになり短く予測可能になる。
-- 🔴 **先に打つ代償**: `WAF_STAGES` に `production` があるので **web ACL がもう1枚できて +$8/月**。
-  dev と並ぶと月$16 で**予算通知（$12）を超える**。先に打つなら**同時に `WAF_STAGES` から
-  `'dev'` を外す**（6 の検証は完了済みなので外してよい＝5-5 を前倒しする形）。
+- ✅ **費用の代償は解消済み**: かつては「`WAF_STAGES` に dev と production が並んで月$16＝
+  予算通知（$12）超え」が先に打つ代償だったが、**2026-08-02 に `'dev'` を外した**ので
+  web ACL は production の1枚だけになる（5-5 は前倒しで消化済み）。
 - ⚠️ production は `protect: true` / `removal: 'retain'`。作った後は消しにくい。
   また 5（`oac-with-edge-signing`）の Lambda@Edge は外すのに5〜10分かかる。
 
@@ -285,7 +285,7 @@ curl -s -o /dev/null -w "%{http_code}\n" --resolve www.sikocoffee.com:443:$IP ht
 | 3-c | **12: apex → www の 308** … `--resolve sikocoffee.com:443:$IP https://sikocoffee.com/shop?a=1` | **308** ＋ `location: https://www.sikocoffee.com/shop?a=1` ＋ `strict-transport-security` |
 | 3-d | **9 が production に漏れていないこと**（負の対照） | **401 が返らない**／`x-robots-tag` が**付かない** |
 | 3-e | **5 の再確認**（ステージごとに効く） | `aws lambda get-function-url-config` の `AuthType` が **`AWS_IAM`**、Function URL 直叩きが **403** |
-| 3-f | **6 の再確認** | `/admin` が **202**（challenge）、`/api/admin/auth` 40連打で **T+45s 以降 403** |
+| 3-f | **6 の再確認**（🔴 **「再」ではなく初回の実測**＝ 2026-08-02 に `WAF_STAGES` から `'dev'` を外したので、web ACL が存在するステージは production だけ。ここで落ちたら dev で切り分けられない） | `/admin` が **202**（challenge）、`/api/admin/auth` 40連打で **T+45s 以降 403** |
 | 3-g | DynamoDB を本番テーブルに向いているか | `/shop` に実データが出る（preview の空データでない） |
 | 3-h | 10 のアラーム | production では **SES の `Reputation.*` 2本が新規に**でき、計6本になる |
 | 3-i | cron が**まだ止まっている**こと | production のスケジュールが **DISABLED**（`CRON_STAGES` に production が無い） |
@@ -347,7 +347,7 @@ done
 | 5-2 | **4 の積み残し②③を回収** | production のバケット名で Vercel 本番に `AVATAR_UPLOAD_BUCKET` / `AVATAR_BUCKET` / `AVATAR_BASE_URL` を投入し、Vercel の IAM ユーザーに S3 権限を追加。**それまで本番のアイコン設定は 503** |
 | 5-3 | **8 の cron を有効化** | `sst.config.ts` の `CRON_STAGES` に `'production'` を足して**再デプロイ**。🔴 **DNS 切替のあと**にやる。先にやると `instagram-refresh` が Vercel と二重に走り**長期トークンの更新が競合**する |
 | 5-4 | **9.5 の matrix に production を足す** | `.github/workflows/ci.yml` の `strategy.matrix.stage` に `production`。🔴 **13 のあと**（先に足すと本番ステージが CI から先に作られ、この手順が飛ぶ） |
-| 5-5 | **WAF_STAGES から `'dev'` を外す** | web ACL は**ステージごとに $8/月**。soak 中に dev と production が並ぶと月$16 で予算通知（$12）を超える |
+| 5-5 | ~~**WAF_STAGES から `'dev'` を外す**~~ **✅ 2026-08-02 に前倒しで実施済み＝当日の作業は無い** | web ACL は**ステージごとに $8/月**。dev と production が並ぶと月$16 で予算通知（$12）を超えるため先に外した。🔴 **dev で WAF を試す道は無くなった**＝ 3 の検証が WAF の初回実測になる |
 | 5-6 | Instagram トークンの確認 | `siko-coffee-config` の `refreshedAt`。**次の機会は 2026-09-01 00:00 UTC**（Hobby の flexible window で 00:21 頃に発火＝朝イチに見ると空振りする） |
 
 ---
