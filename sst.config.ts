@@ -403,11 +403,29 @@ export default $config({
     //    デプロイし直す**のが手順になる（IaC 管理下のリソースを CLI で触らない＝教訓6）。
     //
     // 💰 $5/web ACL + $1/rule × 3 = **月$8**。移行後の AWS コストの大半がこれ。
-    //    ステージごとに1枚できるため、dev と production が並ぶ soak 期間は倍かかる。
-    //    → **dev での検証が済んだら下の配列から 'dev' を外して再デプロイする。**
+    //    ステージごとに1枚できるため、dev と production が並ぶと月$16＝**予算通知（$12）を超える**。
     //    ⚠️ 9（非本番のアクセス制限）で web ACL を**もう1枚作らないこと**（+$5/月）。
     //       必要ならこの ACL を dev のディストリビューションと共有する。
-    const WAF_STAGES = ['production', 'dev']
+    //
+    // 🔑 **'dev' は外してある（2026-08-02）。** dev に入れていた理由は「6 のルールが効くことを
+    //    production の外で実測するため」で、その検証は 2026-07-31 に完了している（公開パスは
+    //    200 のまま／`/admin` `/admin/login` が 202 challenge／`/api/admin/auth` 40連打で
+    //    T+45s 以降 403／`/%61dmin` `/Admin` も 202）。役目を終えた ACL に月$8 は払わない。
+    //    dev が無防備になるわけではない: 9 の CloudFront Function（Basic 認証＋noindex）は
+    //    WAF とは別に全パスへ掛かったままで、dev はドメインを張っていない（*.cloudfront.net）。
+    //
+    // 🔴 **代償を自覚しておくこと**: この配列に 'dev' が無いと `adminWaf` の構築ごとスキップ
+    //    されるため、**ルール定義を壊しても dev のデプロイは素通りし production の
+    //    `sst deploy` で初めて落ちる**（#124 のトップレベル import と同じ構図）。
+    //    → **WAF のルールをいじるときは一時的に 'dev' を足して実測し、確認できたら外す。**
+    //      web ACL は時間割の課金なので 1〜2日なら **1日あたり約$0.27** で済む。
+    //
+    // 📌 外したことで **dev の `/admin*` の応答が変わる**。WAF は CloudFront Function より
+    //    先に評価されるので、以前は資格情報の有無に関わらず 202（challenge）だった。
+    //    今は 9 の Basic 認証がそのまま出る＝**資格情報なしで 401 / ありで 200**。
+    //    9 のドキュメント（docs/pour-over-log.md の 2026-07-31 の節）にある実測値と
+    //    食い違うのはこのため。9 を再検証するときに混乱しないこと。
+    const WAF_STAGES = ['production']
 
     // Vercel の path 条件は前方一致（op: 'pre'）。AWS では uriPath の STARTS_WITH に対応する。
     // ⚠️ 変換を2段かけているのは **エンコードによる迂回を塞ぐため**。素の uriPath だけを見ると
@@ -1205,8 +1223,11 @@ export default $config({
 //     ✅ **dev で実測済み（2026-07-31）**: 公開パスは 200 のまま不変、/admin と /admin/login は
 //        200/307 → **202（x-amzn-waf-action: challenge）**、/api/admin/auth は 40連打で全部 405 →
 //        **T+45s 以降 403**（レート制限が発火）。`/%61dmin` `/Admin` も 202＝変換2段が効いている。
-//     ⚠️ **ステージごとに1枚できる**（$8/月）。dev の検証が済んだら WAF_STAGES から 'dev' を外す。
+//     ⚠️ **ステージごとに1枚できる**（$8/月）。**検証を終えたので 2026-08-02 に `WAF_STAGES` から
+//        'dev' を外した**＝ dev の web ACL は存在しない。ルールをいじるときだけ一時的に足す
+//        （理由と戻し方は `WAF_STAGES` の直上に書いてある）。
 //     ⚠️ 13 で production ステージにもデプロイして同じ確認をすること（5 と同じ理由）。
+//        🔴 **dev で先に試すことはもうできない**。13 の検証が初回の実測になる。
 //  7. ✅ server.memory を 1024 MB → **2048 MB**（2026-07-31・dev で実測検証）。Lambda の CPU は
 //     メモリ比例で 1769MB＝1vCPU 相当。旧 1024MB は約0.58vCPU＝**Vercel(1vCPU/2GB) の6割**、
 //     2048MB で約1.16vCPU。実測は **コールド p50 2,041→1,068ms（−48%）/ ウォーム p50 73.8→51.3ms**。
@@ -1246,6 +1267,9 @@ export default $config({
 //        8 は中継 Lambda 手動実行で 200（cron は CloudFront を通らない）／next/image も 31,590→216B。
 //     🔴 **WAF は CloudFront Function より先に評価される**＝ `/admin*` は資格情報の有無に関わらず
 //        202（challenge）のまま。防御が重なる順序は WAF → viewer-request CFF → キャッシュ → オリジン。
+//        ⚠️ **この 202 は 2026-08-02 以前の dev での観測**。同日に `WAF_STAGES` から 'dev' を外した
+//           ので、**今の dev に web ACL は無く `/admin*` も Basic 認証がそのまま出る**
+//           （資格情報なし 401 / あり 200）。順序の話そのものは production で有効。
 //     📌 **12 で `domain` を付けると SST が `*.cloudfront.net` 宛を自動で 403 にする**
 //        （CF_BLOCK_CLOUDFRONT_URL_INJECTION）。この作業を production へ広げる必要は無い。
 //
