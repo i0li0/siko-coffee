@@ -1328,17 +1328,18 @@ export default $config({
 //        詳細は docs/aws-migration-feasibility.md の第0群。
 //
 // ── 第4群｜切替と観測 ────────────────────────────────────────
-// 13. production ステージへデプロイ → 検証 → DNS 切替。
-//     ✅ **2・3（デプロイと切替前検証）は 2026-08-02 に完了**（3-a〜3-i 全項目合格）。
-//        残るは **4（DNS 切替）だけ**＝依存 F の門（2026-08-02 17:50 UTC）以降。
-//     🔴 **前倒しで「production が main から取り残される窓」が開いた。**
-//        `ci.yml` の `strategy.matrix.stage` は `[dev]` のままなので、**今 main にマージしても
-//        production には入らない**。検証済みの production は **`10e8229` 時点のコード**である。
-//        → **切替の直前にコードが動いていたら、production を再デプロイして 3 をやり直す。**
-//        📌 5-4（matrix に 'production' を足す）を「13 のあと」に置いていた理由
-//           「先に足すと本番ステージが CI から先に作られ 13 の検証手順が飛ぶ」は**もう失効している**
-//           （production ステージは既に存在する）。順序を守る理由は今は
-//           「soak の運用に前倒しで入らない」ことだけ。
+// 13. ✅ **完了（2026-08-02）** — production デプロイ → 検証 → DNS 切替。
+//     ✅ **本番トラフィックは AWS（CloudFront `d38zi1bm4zf9e3`）で稼働中。**
+//        切替は **`2026-08-02T19:39:15Z`**（Route53 の SubmittedAt が正本）。進捗 18/21。
+//     ✅ 5-1（実 DNS での再検証）も全項目合格。**`x-amz-cf-pop: KIX56-P4`** で AWS 配信を直接確認。
+//        🔑 ステータスコードだけでは切替の成否は判定できない（Vercel も同じ 200/307/308 を返す）。
+//     ✅ 5-4 も完了＝ `ci.yml` の `matrix.stage` は **`[dev, production]`**。
+//        🔴 **ここから main への push は本番に入る。** 9.5 の「マージ順が実害を持つ」は
+//           これ以降 dev ではなく**本番**の話になる。
+//     🔴 **www は UPSERT では切り替わらなかった**（教訓40）。Route53 は同名の CNAME と A を
+//        共存させないが、その帰結は「UPSERT が置き換える」ではなく **`InvalidChangeBatch` で拒否**。
+//        同一バッチ内で **DELETE（旧 CNAME）＋ CREATE（新 A ALIAS）** が要る。
+//        救ったのは change batch のアトミック性＝拒否時に apex/www とも無傷だった。
 //     🔴 **DNS 切替は手作業**（12 で `dns: false` にしたため）。Route53 の apex A と www CNAME を
 //        CloudFront への ALIAS へ UPSERT する。**切り戻しは同じ操作で Vercel へ戻すだけ**。
 //     🔴 **事前検証は CloudFront の URL ではできない**（`domain` を付けると 403 になる）。
