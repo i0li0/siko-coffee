@@ -788,14 +788,35 @@ export default $config({
         // ⚠️ `Authorization` は SigV4 が占有するので、中継は `x-cron-secret` で送る。
         CRON_SECRET: secretEnv.CRON_SECRET,
       },
-      // 🔑 同一アカウントなので**アイデンティティ側だけで足りる**
-      //    （Function URL のリソースポリシーに足す必要はない）。
+      // 🔴🔴 **かつてここには「同一アカウントなのでアイデンティティ側だけで足り、
+      //    Function URL のリソースポリシーに足す必要はない」と書いてあった。これは誤り。**
+      //    2026-08-02 に production で cron が **403 Forbidden** を返して発覚した（教訓41）。
+      //    **Lambda Function URL の `AWS_IAM` は、同一アカウントでも
+      //    リソースベースポリシー側の許可を要求する**（下の `aws.lambda.Permission`）。
+      //    ⚠️ `aws iam simulate-principal-policy` は **`allowed` を返す**（見ているのが
+      //    アイデンティティ側だけだから）＝**シミュレータの緑は根拠にならない**。
+      //    🔴 **dev で「実測検証済み」だったのは、dev の server に 5（protection）以前の
+      //    残骸 `FunctionURLAllowInvokeAction`（`Principal:"*"`）が残っていたから。**
+      //    production は最初から protection 付きで作られ残骸が無いので、初回実行で落ちた。
       permissions: [
         {
           actions: ['lambda:InvokeFunctionUrl'],
           resources: [web.nodes.server!.apply((fn) => fn.arn)],
         },
       ],
+    })
+
+    // 🔴 **上の `permissions`（アイデンティティ側）と対になるリソース側の許可。**
+    //    両方が要る。片方だけだと Function URL は 403 を返す。
+    //    📌 5 の `protection: 'oac-with-edge-signing'` が作るのは **CloudFront 向けの2本だけ**で、
+    //       cron の経路（CloudFront を通さず Function URL を直叩き）は含まれない。
+    //    📌 `principal` にロール ARN を渡すと `"Principal": {"AWS": "<role-arn>"}` になる。
+    //       **`Principal:"*"` にしないこと**＝それは今回の原因になった残骸そのものの形。
+    new aws.lambda.Permission('CronRelayInvokeServerFunctionUrl', {
+      action: 'lambda:InvokeFunctionUrl',
+      function: web.nodes.server!.apply((fn) => fn.name),
+      principal: cronRelay.nodes.role.arn,
+      functionUrlAuthType: 'AWS_IAM',
     })
 
     // 🔴 **実際に発火させるステージ。** WAF_STAGES と同じ運用（1か所の配列で切り替える）。
