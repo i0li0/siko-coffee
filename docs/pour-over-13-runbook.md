@@ -346,8 +346,19 @@ git log --oneline 10e8229..origin/main -- src/ sst.config.ts open-next.config.ts
 ```
 
 - **出力が空** … コードは動いていない。**そのまま 4 へ進んでよい。**
-- **出力がある** … **`npm run sst:deploy -- --stage production` をやり直し、3-a〜3-i を再実行してから 4 へ**。
+- **出力がある** … 🔴 **ここで止まらず `git diff` で中身を見る**（下記）。実行コードが動いていれば
+  **`npm run sst:deploy -- --stage production` をやり直し、3-a〜3-i を再実行してから 4 へ**。
   でないと**検証していないコードに DNS を向けることになる**。
+
+🔴 **このチェックは偽陽性を出す**（2026-08-02 に実際に出した）。判定がパス指定だけなので、
+`sst.config.ts` の**コメント追記でも「コードが動いた」と出る**。**出力が出たら必ず中身を見る**:
+
+```bash
+git diff 10e8229..origin/main -- src/ sst.config.ts open-next.config.ts package.json
+```
+
+コメント・docstring だけなら**機能差はゼロ＝再デプロイ不要**。実測での判断材料は
+「差分があるか」ではなく **「実行される値が変わったか」**。
 
 📌 **5-4（`matrix.stage` に `'production'` を足す）を「13 のあと」に置いていた理由は失効した。**
 元の理由は「先に足すと本番ステージが CI から先に作られ、13 の検証手順が飛ぶ」だったが、
@@ -361,15 +372,42 @@ git log --oneline 10e8229..origin/main -- src/ sst.config.ts open-next.config.ts
 
 ---
 
-## 4. DNS 切替（ここから本番が動く）
+## 4. DNS 切替（ここから本番が動く）✅ **2026-08-02T19:39:15Z に実施済み**
 
+> ✅ **完了。** `SubmittedAt` は Route53 が返した値（＝正本）。実施ログは
+> `docs/pour-over-log.md`「2026-08-02 — 13 の 4（DNS 切替）」。
+> 以下は**手順の正しい形**として残す（切り戻し後にやり直す場合はこれを使う）。
+>
 > 🔴 **ここが依存 F の門。2026-08-02 17:50 UTC（8/3 02:50 JST）より前に打たないこと。**
 > それより前だと旧 TTL（www 500s / apex 300s）を掴んだリゾルバが残っており、
 > **切り戻しに引き下げた 60s が効かない**。
 
+### 🔴🔴 www は UPSERT では切り替わらない — `DELETE` ＋ `CREATE` が要る
+
+**かつてこの手順書は「Route53 は同名の CNAME と A を共存させないため、UPSERT で置き換わる」と
+書いていた。これは誤りで、実際は拒否される**（2026-08-02 に実際に踏んだ・教訓40）:
+
+```
+An error occurred (InvalidChangeBatch):
+[RRSet of type A with DNS name www.sikocoffee.com. is not permitted because
+ a conflicting RRSet of type CNAME with the same DNS name already exists in zone sikocoffee.com.]
+```
+
+**型をまたぐ差し替えは、同一バッチ内で `DELETE`（旧 CNAME）＋ `CREATE`（新 A ALIAS）**。
+apex は型が A のままなので UPSERT でよい。**3つを1バッチに入れる**こと（下記）。
+
+🔑 **`DELETE` は既存レコードと完全一致**（Name / Type / TTL / Value）でないと通らない。
+打つ前に必ず現物を出す:
+
+```bash
+aws route53 list-resource-record-sets --hosted-zone-id Z0281603UIOXAI0M8P8R \
+  --query "ResourceRecordSets[?Name=='sikocoffee.com.'||Name=='www.sikocoffee.com.']|[?Type=='A'||Type=='CNAME']" \
+  --output json
+```
+
 ```bash
 CFZONE=Z2FDTNDATAQYW2      # CloudFront の固定 HostedZoneId
-CF=d0000000000000.cloudfront.net
+CF=d38zi1bm4zf9e3.cloudfront.net    # 2 で控えた production の CloudFront
 
 cat > /tmp/cutover.json <<EOF
 { "Comment": "Pour Over 13: cut over to CloudFront",
@@ -377,7 +415,10 @@ cat > /tmp/cutover.json <<EOF
     { "Action": "UPSERT", "ResourceRecordSet": {
         "Name": "sikocoffee.com.", "Type": "A",
         "AliasTarget": { "HostedZoneId": "$CFZONE", "DNSName": "$CF", "EvaluateTargetHealth": false } } },
-    { "Action": "UPSERT", "ResourceRecordSet": {
+    { "Action": "DELETE", "ResourceRecordSet": {
+        "Name": "www.sikocoffee.com.", "Type": "CNAME", "TTL": 60,
+        "ResourceRecords": [{ "Value": "724b9301c41a7c8f.vercel-dns-017.com." }] } },
+    { "Action": "CREATE", "ResourceRecordSet": {
         "Name": "www.sikocoffee.com.", "Type": "A",
         "AliasTarget": { "HostedZoneId": "$CFZONE", "DNSName": "$CF", "EvaluateTargetHealth": false } } }
   ] }
@@ -387,9 +428,11 @@ aws route53 change-resource-record-sets --hosted-zone-id Z0281603UIOXAI0M8P8R \
   --change-batch file:///tmp/cutover.json
 ```
 
-⚠️ **www は既存が CNAME なので、A（ALIAS）への UPSERT で型が変わる。**
-Route53 は同名の CNAME と A を共存させないため、UPSERT で置き換わる。
+🔑 **change batch はアトミック**＝拒否されても部分適用は起きない。これが誤った手順書の
+被害を消した（apex だけ CloudFront・www だけ Vercel という状態にならなかった）。
+**拒否されたら、まず `list-resource-record-sets` で無傷を確認してから**打ち直す。
 📌 切替後 www は ALIAS（A）になり、以後 CAA は自ゾーンで評価される（0-b の制約から外れる）。
+   → **`amazon.com` が CAA に入っていること**を切替前に見ておく（`dig +short CAA sikocoffee.com`）。
 ⚠️ **`_c84c530444dc328407ddf8a6cf46916b.sikocoffee.com`（ACM 検証）と SES DKIM 3本は触らない。**
 
 ```bash
@@ -406,10 +449,10 @@ done
 
 | # | 作業 | 注意 |
 |---|---|---|
-| 5-1 | 3-a〜3-h を**実 DNS で**やり直す | `--resolve` 無しで同じ結果になるか |
+| 5-1 | 3-a〜3-h を**実 DNS で**やり直す ✅ **2026-08-02 に完了・全項目合格** | `--resolve` 無しで同じ結果になるか。🔑 **ステータスコードだけでは切替の成否を判定できない**（Vercel も同じ 200/307/308 を返す）＝ **`x-amz-cf-pop` / `via: … (CloudFront)` のように両者で必ず異なる値**を1つ見ること。実測は `x-amz-cf-pop: KIX56-P4` |
 | 5-2 | **4 の積み残し②③を回収** | production のバケット名で Vercel 本番に `AVATAR_UPLOAD_BUCKET` / `AVATAR_BUCKET` / `AVATAR_BASE_URL` を投入し、Vercel の IAM ユーザーに S3 権限を追加。**それまで本番のアイコン設定は 503** |
 | 5-3 | **8 の cron を有効化** | `sst.config.ts` の `CRON_STAGES` に `'production'` を足して**再デプロイ**。🔴 **DNS 切替のあと**にやる。先にやると `instagram-refresh` が Vercel と二重に走り**長期トークンの更新が競合**する |
-| 5-4 | **9.5 の matrix に production を足す**（🔴 **これをやるまで production は main から取り残される**＝ §3-2 参照） | `.github/workflows/ci.yml` の `strategy.matrix.stage` に `production`。⚠️ 旧来の理由「**13 のあと**（先に足すと本番ステージが CI から先に作られ、この手順が飛ぶ）」は **2026-08-02 に失効**（production ステージはもう存在する）。今の理由は「切替前に soak の運用へ前倒しで入らない」だけなので、**切替後は速やかにやる**（放置するほど本番ステージが古くなる） |
+| 5-4 | **9.5 の matrix に production を足す** ✅ **2026-08-02 に実施** | `.github/workflows/ci.yml` の `strategy.matrix.stage` を **`[dev, production]`** に。🔴 **ここから main への push は本番に入る**（gate は `needs: [lint-typecheck, e2e]` の1本だけ）。📌 **5-3 と同じ PR に入れない**＝ CI からの初の production デプロイと cron 有効化が同時に走ると、失敗したとき切り分けられない（タスク7・B-1 と同じ理屈）。**先に 5-4 単独**＝中身が no-op のデプロイで経路そのものを検証できる |
 | 5-5 | ~~**WAF_STAGES から `'dev'` を外す**~~ **✅ 2026-08-02 に前倒しで実施済み＝当日の作業は無い** | web ACL は**ステージごとに $8/月**。dev と production が並ぶと月$16 で予算通知（$12）を超えるため先に外した。🔴 **dev で WAF を試す道は無くなった**＝ 3 の検証が WAF の初回実測になる |
 | 5-6 | Instagram トークンの確認 | `siko-coffee-config` の `refreshedAt`。**次の機会は 2026-09-01 00:00 UTC**（Hobby の flexible window で 00:21 頃に発火＝朝イチに見ると空振りする） |
 

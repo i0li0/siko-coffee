@@ -101,9 +101,15 @@ jobs:
       fail-fast: false
       matrix:
         # 🔴 デプロイ先はここ1か所で決める（sst.config.ts の WAF_STAGES / CRON_STAGES と
-        #    同じ運用）。**'production' を足すのは 13 で DNS を切り替えた後**。先に足すと
-        #    本番ステージが CI から先に作られ、13 の検証手順を飛ばすことになる。
-        stage: [dev]
+        #    同じ運用）。
+        # ✅ **'production' を足した（2026-08-02・13-4 の DNS 切替後＝5-4）**。
+        #    足す条件だった「13 で DNS を切り替えた後」は満たしている
+        #    （切替は 2026-08-02T19:39:15Z・Route53 の SubmittedAt が正本）。
+        # 🔴 **ここから main への push は本番に入る。** 9.5 の「マージ順が実害を持つ」は
+        #    これ以降 dev ではなく**本番**の話になる。gate は needs: [lint-typecheck, e2e] の1本だけ。
+        # 📌 fail-fast: false なので dev が落ちても production は走る（逆も同じ）。
+        #    ステージは独立に扱う＝片方の失敗でもう片方を巻き込まない。
+        stage: [dev, production]
     permissions:
       id-token: write # OIDC トークンの発行に必須（既定では付かない）
       contents: read
