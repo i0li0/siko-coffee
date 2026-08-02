@@ -57,11 +57,23 @@ state ロックまで残ったが、**切替の窓の外だったので落ち着
 **7本が1本でも欠けると落ちる**が、着手前の点検では production の secret が **0本**だった
 ＝ **13 はそのままでは1行目から進まなかった**。2026-08-01 に解消済み。
 
-⏳ **残っている手作業が1つ**: `/admin/settings` で **TOTP を登録し直す**
-（`ADMIN_TOTP_SECRET` は投入していない。DynamoDB `siko-coffee-config` の `totp_secret` が正で、
-そこに入れば Vercel と AWS の両方が読む）。**切替の前後どちらでもよい**が、
-`ADMIN_TOTP_REQUIRED=true` を入れてあるので**登録しないと AWS 側の admin ログインが
-フェイルクローズで塞がる**（`api/admin/auth` は「TOTP 必須なのに秘密が無い」を設定ミスとして拒否する）。
+✅ **残っていた手作業（`/admin/settings` での TOTP 再登録）は 2026-08-02 に完了＝13 の手作業はゼロ。**
+`ADMIN_TOTP_SECRET` は投入していないが、DynamoDB `siko-coffee-config` の `totp_secret` が正で、
+そこに入れば **Vercel と AWS の両方が読む**（テーブルを共有しているため）。
+
+🔑 **「登録された」ではなく「実際に通った」まで確認できる。** `totp_secret` に値があることに加えて、
+**`totp_last_step` に step が記録されている**かを見る。[`setLastStep`](../src/lib/adminTotp.ts) は
+**検証に成功したときにしか書かれない**ので、これがあれば「登録しただけ」ではなく
+**コードが1回通った**ことの証拠になる（教訓32 の「保存された ≠ 正しい値が保存された」への答え）。
+
+```bash
+aws dynamodb get-item --table-name siko-coffee-config --region ap-northeast-1 \
+  --key '{"configKey":{"S":"totp_last_step"}}' --query 'Item.step.N' --output text
+```
+
+⚠️ これが未登録のまま切り替えると、`ADMIN_TOTP_REQUIRED=true` を入れてあるので
+**AWS 側の admin ログインがフェイルクローズで塞がる**
+（`api/admin/auth` は「TOTP 必須なのに秘密が無い」を設定ミスとして拒否する）。
 
 ---
 
@@ -319,6 +331,31 @@ curl -s -o /dev/null -w "%{http_code}\n" --resolve www.sikocoffee.com:443:$IP ht
 🔴 **3-d は必ずやる。** 本番に `noindex` が漏れるのが最悪の事故で、
 しかも**成功しているように見える**（サイトは普通に動く）。
 
+### 3-2. 🔴 切替の直前に必ず確かめること — **production は main から取り残される**
+
+**2・3 を前倒しした副作用で、`production` ステージだけが更新されない窓が開いている。**
+`ci.yml` の `strategy.matrix.stage` は **`[dev]` のまま**なので、
+**main に何をマージしても production には入らない**（5-4 をまだやっていないため）。
+
+**検証済みの production は `10e8229` 時点のコード**である。切替の直前に必ず:
+
+```bash
+# production に入っているコードと、これから本番になる main がずれていないか
+git fetch origin main
+git log --oneline 10e8229..origin/main -- src/ sst.config.ts open-next.config.ts package.json
+```
+
+- **出力が空** … コードは動いていない。**そのまま 4 へ進んでよい。**
+- **出力がある** … **`npm run sst:deploy -- --stage production` をやり直し、3-a〜3-i を再実行してから 4 へ**。
+  でないと**検証していないコードに DNS を向けることになる**。
+
+📌 **5-4（`matrix.stage` に `'production'` を足す）を「13 のあと」に置いていた理由は失効した。**
+元の理由は「先に足すと本番ステージが CI から先に作られ、13 の検証手順が飛ぶ」だったが、
+**production ステージはもう存在する**。今この順序を守る理由は
+**「切替前に soak の運用（main への push が即本番ステージに入る状態）へ前倒しで入らない」**ことだけ。
+＝ **5-4 を前倒しすればこの窓は閉じる**が、切替直前に増やす変数としては大きいので、
+上のチェックで代替するほうが安全側。
+
 ⚠️ **CloudFront 生成のエラーには viewer-response 関数が走らない**ので、
 ヘッダの確認を 404/403 でやると誤判定する（9 で踏んだ）。**200 の応答で見ること。**
 
@@ -372,7 +409,7 @@ done
 | 5-1 | 3-a〜3-h を**実 DNS で**やり直す | `--resolve` 無しで同じ結果になるか |
 | 5-2 | **4 の積み残し②③を回収** | production のバケット名で Vercel 本番に `AVATAR_UPLOAD_BUCKET` / `AVATAR_BUCKET` / `AVATAR_BASE_URL` を投入し、Vercel の IAM ユーザーに S3 権限を追加。**それまで本番のアイコン設定は 503** |
 | 5-3 | **8 の cron を有効化** | `sst.config.ts` の `CRON_STAGES` に `'production'` を足して**再デプロイ**。🔴 **DNS 切替のあと**にやる。先にやると `instagram-refresh` が Vercel と二重に走り**長期トークンの更新が競合**する |
-| 5-4 | **9.5 の matrix に production を足す** | `.github/workflows/ci.yml` の `strategy.matrix.stage` に `production`。🔴 **13 のあと**（先に足すと本番ステージが CI から先に作られ、この手順が飛ぶ） |
+| 5-4 | **9.5 の matrix に production を足す**（🔴 **これをやるまで production は main から取り残される**＝ §3-2 参照） | `.github/workflows/ci.yml` の `strategy.matrix.stage` に `production`。⚠️ 旧来の理由「**13 のあと**（先に足すと本番ステージが CI から先に作られ、この手順が飛ぶ）」は **2026-08-02 に失効**（production ステージはもう存在する）。今の理由は「切替前に soak の運用へ前倒しで入らない」だけなので、**切替後は速やかにやる**（放置するほど本番ステージが古くなる） |
 | 5-5 | ~~**WAF_STAGES から `'dev'` を外す**~~ **✅ 2026-08-02 に前倒しで実施済み＝当日の作業は無い** | web ACL は**ステージごとに $8/月**。dev と production が並ぶと月$16 で予算通知（$12）を超えるため先に外した。🔴 **dev で WAF を試す道は無くなった**＝ 3 の検証が WAF の初回実測になる |
 | 5-6 | Instagram トークンの確認 | `siko-coffee-config` の `refreshedAt`。**次の機会は 2026-09-01 00:00 UTC**（Hobby の flexible window で 00:21 頃に発火＝朝イチに見ると空振りする） |
 
