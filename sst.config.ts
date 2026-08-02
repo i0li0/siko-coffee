@@ -11,6 +11,8 @@
 //
 // この移行の呼称は **「Pour Over（ポアオーバー）」**。順序と依存関係の正本は
 // docs/aws-migration-feasibility.md「Pour Over 実行順」、実装者向けの索引は本ファイル末尾。
+// 📋 **積み残し（本編の残り・見送った判断・推奨タスク・スコープ外）の一覧は
+//    docs/pour-over-leftovers.md。** 本ファイルに「別作業」「見送り」と書いたら、そこにも足す。
 //
 // デプロイ手順:
 //   npm run sst:deploy -- --stage dev
