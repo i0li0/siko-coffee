@@ -82,6 +82,26 @@ const securityHeaders = [
 const nextConfig: NextConfig = {
   // X-Powered-By: Next.js の情報開示を抑止する（フレームワーク露出を避ける）。
   poweredByHeader: false,
+  // クライアント側 Sentry のステージタグ（Pour Over C-1）。
+  //
+  // `src/lib/stage.ts` の `getStage()` は `STAGE ?? VERCEL_ENV` を**実行時**に読むが、
+  // どちらも `NEXT_PUBLIC_` 接頭辞が無く**ブラウザ用バンドルには入らない**。
+  // そのため `src/instrumentation-client.ts` だけが environment を持てず、
+  // **クライアント由来の Sentry イベントがステージ不明のまま**記録されていた。
+  // soak 期間（Pour Over 14）は AWS と Vercel の両方が本番を担うので、
+  // タグが無いと **どちらで起きたエラーなのかが区別できない**。
+  //
+  // 🔑 **同じ式をビルド時に評価して焼き込む**（実行時の `getStage()` と意味を揃える）。
+  // AWS: SST が build プロセスへ `STAGE` を渡す（`buildApp` が `environment` を build の
+  // env に流し込むことをソースで確認済み）。Vercel: ビルド時に `VERCEL_ENV` が入る。
+  // 読み出しは `getClientStage()` に集約してある。
+  //
+  // 📌 Vercel が自動公開する `NEXT_PUBLIC_VERCEL_ENV` は**使わない**。あれはプロジェクト設定の
+  // トグル依存で「必ずある」と言い切れず、`isVercelPlatform()` の `VERCEL` と同じ弱さを持つ。
+  // 🔴 Pour Over 16⑥ では `?? process.env.VERCEL_ENV` をここでも消す。
+  env: {
+    NEXT_PUBLIC_STAGE: process.env.STAGE ?? process.env.VERCEL_ENV ?? '',
+  },
   turbopack: {
     root: repoRoot(),
   },

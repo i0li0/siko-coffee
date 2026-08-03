@@ -24,7 +24,7 @@
 |---|---|---|
 | **A. Pour Over 本編の残り** | **6** | 21タスクのうち未完のもの。これが終われば Pour Over は完了 |
 | **B. 意図的に見送った技術判断** | 4 | やらないと決めたのではなく、**判断材料が揃うまで待っている**もの |
-| **C. Pour Over が生んだ小さな負債** | 3 | 移行の過程で生まれ、まだ回収していないもの |
+| **C. Pour Over が生んだ小さな負債** | **2**（元3・C-1 完了） | 移行の過程で生まれ、まだ回収していないもの |
 | **D. 推奨タスク（R-1〜R-10）** | 9 | コスト非制約の前提で挙がった改善。R-3 は不採用確定 |
 | **E. スコープ外と明記したもの** | 5 | **Pour Over と混ぜないと決めた**もの。完了後に着手する |
 
@@ -100,6 +100,8 @@ aws dynamodb get-item --table-name siko-coffee-config --region ap-northeast-1 \
 
 ①`redirects()` ②`vercel.json` ③`check-cron-schedule.mjs` + `prebuild` + `check:cron`
 ④CI の該当ステップ ⑤`hostRedirects.test.ts` ⑥`src/lib/stage.ts` の `?? VERCEL_ENV`（+ `stage.test.ts` の該当ケース）
+🔴 **⑥は2か所ある**: `stage.ts`（実行時）と **`next.config.ts` の `env.NEXT_PUBLIC_STAGE`（ビルド時・C-1 で追加）**。
+式が同じなので `grep -rn VERCEL src/` だけでは **`next.config.ts` が漏れる**（`src/` の外）
 ⑦`isVercelPlatform()` と `layout.tsx` の呼び出し＋`@vercel/analytics`/`@vercel/speed-insights` の依存
 ⑧`src/lib/cronAuth.ts` の `Authorization: Bearer` 形式の受け入れ
 
@@ -139,13 +141,13 @@ done
 
 ---
 
-## C. Pour Over が生んだ小さな負債（3本）
+## C. Pour Over が生んだ小さな負債（残り2本・元3本）
 
 移行の過程で生まれ、まだ回収していないもの。いずれも**実測で現存を確認済み**。
 
 | # | 内容 | 影響 | 確認 |
 |---|---|---|---|
-| C-1 | **`src/instrumentation-client.ts` に `environment` が無い** | **クライアントだけステージ未タグ**のまま Sentry に送られる。1（`VERCEL_ENV`→`STAGE`）で server と edge は揃えたが、client は `NEXT_PUBLIC_*` が要るため別タスクにした | `grep -n "environment" src/instrumentation-client.ts` が空 |
+| ~~C-1~~ | ~~**`src/instrumentation-client.ts` に `environment` が無い**~~ | ✅ **完了（2026-08-03）**。`next.config.ts` の `env` が **ビルド時に `STAGE ?? VERCEL_ENV` を焼き込み**、`getClientStage()` が読む。**実ビルド3本の成果物で確認**（AWS 経路・Vercel 経路の正の対照＋未設定時が `(void 0)??"development"` の負の対照）。🔴 残るのは**デプロイ後に Sentry のダッシュボードを人が見る**工程 | `grep -n "environment" src/instrumentation-client.ts` |
 | C-2 | **`sentry.edge.config.ts` の `tracesSampleRate: 1`** | 全ステージ **100% サンプリング**。トラフィックが増えると Sentry のクォータを食う | `grep -n "tracesSampleRate" sentry.edge.config.ts` |
 | C-3 | **`BLOB_READ_WRITE_TOKEN` が Vercel 本番 env に残存** | **死んだ env**。4 で S3 へ移したのでコードは `@vercel/blob` を一切参照していない（grep 0件）。実害は無いが、16 の掃除対象 | `grep -rn "BLOB_READ_WRITE_TOKEN\|@vercel/blob" src/ package.json` が空 |
 
@@ -255,7 +257,8 @@ aws cloudfront get-distribution-config --id <production の Id> \
             └→ E-4（ブレンド PF の E2E・サブスク）… 決済再開が前提
 ```
 
-**待ち条件を持たないもの**（いつでも着手できる）: B-1・B-3・C-1・C-2・R-1・R-5・R-7・R-8・R-9・R-10・E-2・E-3・E-5
+**待ち条件を持たないもの**（いつでも着手できる）: B-1・B-3・C-2・R-1・R-5・R-7・R-8・R-9・R-10・E-2・E-3・E-5
+（C-1 は 2026-08-03 に完了）
 
 ---
 

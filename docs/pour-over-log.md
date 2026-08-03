@@ -1382,6 +1382,62 @@ A は初回デプロイ直後、B は DNS 切替直後、C はデプロイによ
 
 ---
 
+### 2026-08-03 — C-1: クライアント側 Sentry の `environment`（soak 中に「どちらで起きたか」を言えるようにする）
+
+#### なぜ今やったか（着手前に理由を測り直した）
+
+Pour Over 1 で server と edge は `environment` を持ったが、**クライアントだけが未タグのまま**だった
+（`STAGE` も `VERCEL_ENV` も `NEXT_PUBLIC_` が無く、ブラウザ用バンドルに入らないため別タスクに切り出された）。
+🔑 **soak（14）は AWS と Vercel の両方が本番を担う**ので、タグが無いと
+**クライアント由来のエラーがどちらで起きたのか区別できない**。
+＝ この負債は soak 期間に**いちばん高くつく形**で効く。
+
+🔴 **この失敗は静かで、しかも「事故」の顔をしていない。** クライアントで `getStage()` を呼んでも
+例外は出ず `undefined` が返るだけなので、**「ステージ不明」が既定値のように見える**。
+
+#### やったこと
+
+| 変更 | 内容 |
+|---|---|
+| `next.config.ts` | `env: { NEXT_PUBLIC_STAGE: process.env.STAGE ?? process.env.VERCEL_ENV ?? '' }` |
+| `src/lib/stage.ts` | `getClientStage()` を追加（`getStage()` はクライアントで使えない旨も明記） |
+| `src/instrumentation-client.ts` | `environment: getClientStage() ?? 'development'` |
+| `src/__tests__/stage.test.ts` | 回帰5件（空文字を未設定として扱う／サーバ変数にフォールバックしない） |
+
+🔑 **`getStage()` と同じ式を、実行時ではなく「ビルド時」に評価している。**
+AWS では SST が build プロセスへ `STAGE` を渡し、Vercel ではビルド時に `VERCEL_ENV` が入る。
+📌 **これは docs ではなく SST のソースで確かめた**（`platform/src/components/base/base-ssr-site.ts` の
+`buildApp` が `environment: { ...process.env, ...(environment ?? {}) }` として build の env に流し込む）。教訓34 と同じ姿勢。
+
+📌 **Vercel が自動公開する `NEXT_PUBLIC_VERCEL_ENV` は使わなかった。** あれはプロジェクト設定の
+トグル依存で、`isVercelPlatform()` の `VERCEL` と同じ「必ずあるとは言い切れない」弱さを持つ。
+**自前でビルド時に焼き込めば、その不確かさを1つ持ち込まずに済む**（＝依存する外部条件を減らした）。
+
+#### 🔑 検証は「テストが緑」で止めず、**実ビルドの成果物**を見た
+
+vitest が固定できるのは**読み出し側の意味論だけ**で、
+**値がバンドルに焼き込まれること自体は単体テストでは確かめられない**（教訓27 と同型＝
+「型が通った」「テストが緑」は「読まれている」の証明ではない）。
+→ **本番ビルドを3回回し、`.next/static/` の中身を直接見た**:
+
+| ビルド時の env | 生成された客体 | 何の対照か |
+|---|---|---|
+| `STAGE=c1sentinelaws` | `…4511541925642240",environment:"c1sentinelaws",…` | **AWS 経路**の正の対照 |
+| `VERCEL_ENV=c1sentinelvercel` | `…4511541925642240",environment:"c1sentinelvercel",…` | **Vercel 経路**の正の対照 |
+| どちらも未設定 | `…environment:(void 0)??"development",…` | **負の対照**（空文字にならないこと） |
+
+🔑 **センチネル値を使ったのは、`production` のような実在する値だと
+「焼き込まれた」と「たまたま他所に出てきた」を区別できないから。**
+バンドルを grep して確かめる種類の検証では、**探す文字列自体を一意にしておく**必要がある。
+📌 3本目で分かったこと: `env` に空文字を渡すと Next.js は**キーごと落とす**（`(void 0)` になる）。
+`getClientStage()` の `|| undefined` はどちらの実装でも正しく効く。
+
+🔴 **未検証で残るもの**: Sentry のダッシュボードに実際に `environment: production` の
+クライアントイベントが並ぶところまでは見ていない（**デプロイ後に人が見る工程**）。
+「バンドルに入った」までが機械で言えることの限界。教訓36 と同じ線引き。
+
+---
+
 ## 教訓
 
 他の作業にも移植できる形で残す。

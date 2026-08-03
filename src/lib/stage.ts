@@ -39,6 +39,31 @@ export function isProductionStage(): boolean {
 }
 
 /**
+ * **ブラウザ側**の実行ステージ名。未設定なら `undefined`。
+ *
+ * 🔴 **`getStage()` はクライアントでは使えない。** Next.js がブラウザ用バンドルへ埋め込むのは
+ * `NEXT_PUBLIC_` 接頭辞の付いた値だけで、`STAGE` も `VERCEL_ENV` も**サーバ専用**だからである。
+ * クライアントで `getStage()` を呼ぶと **例外は出ず静かに `undefined`** になり、
+ * 「ステージ不明」が事故ではなく既定値のように見えてしまう。関数を分けているのはそのため。
+ *
+ * 値の供給元は `next.config.ts` の `env` で、**ビルド時に `STAGE ?? VERCEL_ENV` を焼き込む**
+ * （＝ `getStage()` と同じ式を、実行時ではなくビルド時に評価している）。
+ * AWS では SST が build プロセスへ `STAGE` を渡し（`base-ssr-site.ts` の `buildApp` が
+ * `environment` を build の env に流し込む）、Vercel ではビルド時に `VERCEL_ENV` が入る。
+ *
+ * 📌 **Vercel の `NEXT_PUBLIC_VERCEL_ENV` には頼っていない。** あれはシステム環境変数の
+ * 自動公開トグルに依存し、`isVercelPlatform()` の `VERCEL` と同じ「必ずあるとは言い切れない」
+ * 性質を持つ。ビルド時に自前で焼き込めば、その不確かさを持ち込まずに済む。
+ *
+ * 🔴 Vercel 解約（Pour Over 16）では `next.config.ts` の `?? process.env.VERCEL_ENV` も
+ * 併せて消す（撤去リストの⑥）。
+ */
+export function getClientStage(): string | undefined {
+  // `next.config.ts` の `env` は string しか受け付けないので、未設定は `''` で来る。
+  return process.env.NEXT_PUBLIC_STAGE || undefined;
+}
+
+/**
  * Vercel の上で動いているか（Pour Over 3）。**ステージではなくプラットフォームの判定**。
  *
  * `@vercel/analytics` と `@vercel/speed-insights` が読み込む
