@@ -1390,6 +1390,15 @@ export default $config({
 //     🔴 **トピックは2本**。CloudWatch のアクションはアラームと同じリージョンにある必要があり、
 //        **CloudFront のメトリクスは us-east-1 にしか出ない**ため。中継 Lambda は1本に集約し、
 //        us-east-1 → ap-northeast-1 のクロスリージョン配信で受ける（既定有効リージョン間は公式サポート）。
+//        🔴🔴 **＝ アラームは2リージョンに散っている。確認も2リージョンで回すこと**（教訓43）。
+//        2026-08-02 に `--region ap-northeast-1` だけで数えて「6本すべて OK」と報告し、
+//        **us-east-1 の `cloudfront-5xx` が母集団から丸ごと抜けていた**（実際は3回鳴っていた）。
+//        🔴 **状態ではなく履歴を見る**（教訓42）。自動復旧するので `describe-alarms` では
+//        「鳴って戻った」が見えない。`describe-alarm-history --history-item-type StateUpdate` を使う。
+//     🔴 **検知はできるが診断はできない**（教訓44）。CloudFront の**標準アクセスログは未設定**
+//        （`Logging.Enabled: false`）で、**追加メトリクスも未設定**（`NoSuchMonitoringSubscription`）。
+//        ＝ 5xx が鳴っても **502/503/504 の内訳が存在しない**。実際 2026-08-02 の3回のスパイクは
+//        オリジン・Lambda@Edge・CFF まで潰したところで**原因不明のまま終わった**。→ R-4。
 //     🔴 **SES の Reputation.* はアカウント全体のメトリクス**なので production でだけ作る
 //        （dev にも作ると soak 中に同じ事象で2回鳴り、dev が本番の送信評判で鳴る）。
 //     ⚠️ `SLACK_WEBHOOK_URL` は **SECRET_NAMES に入れない**（未設定で deploy が落ちるのを避け、
