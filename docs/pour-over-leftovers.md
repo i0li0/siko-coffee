@@ -161,7 +161,7 @@ Pour Over の完了条件ではない。**実測で状態が分かるものは�
 | R-1 | **CloudFront Response Headers Policy** | パリティ退行の直接の対処。静的ヘッダを配信層へ寄せる |
 | R-2 | **CloudWatch RUM** | 🔑 **切替で Speed Insights を失う**＝これがその代替。失う前の基準値は**デスクトップの RES 97 / LCP 2.66s のみ**（モバイルは元からデータ無し） |
 | ~~R-3~~ | ~~CloudFront 継続的デプロイ~~ | **❌ 不採用確定**。切り戻しは DNS を戻すだけで足りる（11 の 60s TTL で回収済み） |
-| **R-4** | **観測の土台（CloudFront standard logging v2 / 追加メトリクス / DLQ / Synthetics canary）** | 🟡 **standard logging v2 は実装した（2026-08-03）**＝ `sst.config.ts` の「診断（R-4）」ブロック。**dev・production の両方**で CloudFront のアクセスログを **CloudWatch Logs**（`siko-<stage>-cloudfront-access-logs`・保持30日）へ配信。⚠️ **「作れた」と「ログが届く」は別**＝ デプロイ後にログストリームが実際に生えるかの確認が要る。残りは**追加メトリクス**（メトリクスごと課金なので予算と併せて判断）・DLQ・Synthetics canary。<br>🔴 昇格の理由: 2026-08-02 に 5xx が3回スパイクしたが、**ログも内訳メトリクスも無いため原因を特定できないまま終わった**（教訓44）。**検知（10）と診断は別の投資** |
+| **R-4** | **観測の土台（CloudFront standard logging v2 / 追加メトリクス / DLQ / Synthetics canary）** | ✅ **standard logging v2 は完了（2026-08-03）**＝ `sst.config.ts` の「診断（R-4）」ブロック。**dev・production の両方**で CloudFront のアクセスログを **CloudWatch Logs**（`siko-<stage>-cloudfront-access-logs`・保持30日）へ配信。**「作れた」で止めず、実際にログが届き 404 を診断フィールド付きで引けるところまで実測した**（下記）。残りは**追加メトリクス**（メトリクスごと課金なので予算と併せて判断）・DLQ・Synthetics canary。<br>🔴 昇格の理由: 2026-08-02 に 5xx が3回スパイクしたが、**ログも内訳メトリクスも無いため原因を特定できないまま終わった**（教訓44）。**検知（10）と診断は別の投資** |
 | R-5 | **SES を運用できる状態にする**（SPF・DMARC・MX・custom MAIL FROM・configuration set） | 🔴 **バウンス/苦情が誰にも届かない**状態。**実測: SPF・DMARC・MX とも未設定**（`dig` で3件とも空）／DKIM 3本のみ設定済み。10 で SES の `Reputation.*` アラーム2本は production に入ったので、**評判の悪化は鳴るが個別のバウンスは追えない** |
 | R-6 | コールドスタート対策（＝ B-2 の warmer） | B-2 と同一。soak 待ち |
 | R-7 | 実行ロールと同時実行を絞る | `ses:*` と `cloudfront:CreateInvalidation` の `Resource: "*"` を限定 |
@@ -185,14 +185,31 @@ Pour Over の完了条件ではない。**実測で状態が分かるものは�
 # 観測の穴（教訓44）の現況
 aws cloudfront get-monitoring-subscription --distribution-id E3FC7N27IY6A73  # まだ未設定（追加メトリクス）
 
-# ✅ standard logging v2 は入れた（2026-08-03）。**届いているか**を必ず見る:
+# ✅ standard logging v2 は入れて、**届くところまで実測した**（2026-08-03）
 aws logs describe-log-streams --region us-east-1 \
   --log-group-name siko-production-cloudfront-access-logs --max-items 3
-# 5xx の理由を引く（x-edge-detailed-result-type にそれが入る）
-aws logs filter-log-events --region us-east-1 \
-  --log-group-name siko-production-cloudfront-access-logs \
-  --filter-pattern '{ $."sc-status" = 5* }' --max-items 20
 ```
+
+**5xx の理由を引く**（`x-edge-detailed-result-type` にそれが入る）。
+🔴 **`filter-log-events` の JSON フィルタは使えない。** フィールド名にハイフンが含まれ、
+`{ $."sc-status" = 5* }` は **`InvalidParameterException: Invalid character(s) in term '$."'`**
+で弾かれる（2026-08-03 に実測）。**Logs Insights でバッククォート**を使うこと:
+
+```bash
+LG=siko-production-cloudfront-access-logs
+QID=$(aws logs start-query --region us-east-1 --log-group-name $LG \
+  --start-time $(( $(date +%s) - 3600 )) --end-time $(date +%s) \
+  --query-string 'fields @timestamp, `sc-status`, `x-edge-detailed-result-type`, `x-edge-result-type`, `cs-uri-stem`, `cs(User-Agent)` | filter `sc-status` like /^5/ | sort @timestamp desc | limit 20' \
+  --query 'queryId' --output text)
+sleep 8 && aws logs get-query-results --region us-east-1 --query-id "$QID"
+```
+
+✅ **実測で確認済み（2026-08-03）**: 配信ラグ **約20秒**／ロググループのリソースポリシーは
+**自動で付いた**（追加作業なし）／届くのは **33フィールド**で
+**`x-edge-detailed-result-type` を含む**（`recordFields` は未指定＝既定の全フィールド）。
+負の対照として仕込んだ 404 は `sc-status: 404` /
+`x-edge-detailed-result-type: **Error**` として引けた。
+
 📌 レガシーの S3 ログ（`DistributionConfig.Logging`）は**使っていない**（`Enabled: false` のまま）。
 v2 とレガシーは併存できるが、二重に払う理由が無い。
 
