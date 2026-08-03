@@ -1210,11 +1210,17 @@ export default $config({
     // 📌 `recordFields` は**あえて指定しない**＝既定の全フィールドを受け取る。
     //    フィールド名は文字列で、型検査は**値を見ない**（#136 で実測済み）。
     //    15個の文字列を推測して1つでも外すより、既定を受けてから**実物を見て**絞る。
-    //    🔑 診断に効くのは `x-edge-detailed-result-type`（5xx の理由が入る）。
-    //       **デプロイ後に実際に届いたフィールドを確認すること**（それまでは「入れた」だけ）。
-    // ⚠️ **「作れた」と「ログが届く」は別**。CloudWatch Logs 宛の vended logs は
-    //    ロググループ側のリソースポリシーが要る。**デプロイ後にログストリームが
-    //    実際に生えるかを必ず確かめる**（生えなければ権限を足す）。
+    // ✅ **2026-08-03 に届くところまで実測した**（「作れた」で止めない）:
+    //    配信ラグ **約20秒**／ロググループのリソースポリシーは**自動で付いた**（追加作業なし）／
+    //    届くのは **33フィールド**で、診断に効く **`x-edge-detailed-result-type` を含む**。
+    //    負の対照に仕込んだ 404 は `x-edge-detailed-result-type: "Error"` として引けた。
+    // 🔴 **引くときは Logs Insights を使う。** フィールド名にハイフンが含まれるため
+    //    `filter-log-events` の JSON フィルタ `{ $."sc-status" = 5* }` は
+    //    **`InvalidParameterException: Invalid character(s) in term '$."'`** で弾かれる。
+    //    Logs Insights なら **バッククォート** で囲めば通る:
+    //      fields @timestamp, `sc-status`, `x-edge-detailed-result-type`
+    //      | filter `sc-status` like /^5/
+    //    （手順は `docs/pour-over-leftovers.md` の R-4 に置いた）
     const ACCESS_LOG_STAGES = ['dev', 'production']
     if (ACCESS_LOG_STAGES.includes($app.stage)) {
       // 名前は `[\w-]` のみ。ハイフン区切りで揃える。
