@@ -64,6 +64,29 @@ export function getClientStage(): string | undefined {
 }
 
 /**
+ * Sentry の `tracesSampleRate`（Pour Over C-2）。**本番 10% / それ以外 0%**。
+ *
+ * 🔴 **3つの Sentry 設定はウィザードの生成物から出発したため、率がばらばらだった**:
+ * `sentry.server.config.ts` だけが `stage === 'production' ? 0.1 : 0` で、
+ * `sentry.edge.config.ts` と `src/instrumentation-client.ts` は **全ステージ 100%** のまま。
+ * 意図した差ではなく既定値の残りである（C-2）。
+ *
+ * 🔑 **soak（Pour Over 14）ではこれが観測そのものを危険にする。** 本番トラフィックの
+ * 大半は脆弱性スキャナで（2026-08-03 実測: 1,050 req/24h のほとんど）、
+ * 100% 送信は **Sentry のクォータを、価値の無いトレースで先に使い切る**。
+ * クォータが尽きると**本当に見たいエラーが落ちる**＝「観測が必要なときに観測を失う」。
+ *
+ * 📌 **replay の率はここでは扱わない**（`replaysSessionSampleRate` は元から 10%＝
+ * 既に絞られており、C-2 の指摘対象でもない）。1回の変更で複数の変数を動かさない。
+ *
+ * 引数でステージを受けるのは、**サーバ/エッジは `getStage()`、クライアントは
+ * `getClientStage()` と入力が違う**ため。率の決定だけをここへ集約する。
+ */
+export function tracesSampleRateFor(stage: string | undefined): number {
+  return stage === 'production' ? 0.1 : 0;
+}
+
+/**
  * Vercel の上で動いているか（Pour Over 3）。**ステージではなくプラットフォームの判定**。
  *
  * `@vercel/analytics` と `@vercel/speed-insights` が読み込む
