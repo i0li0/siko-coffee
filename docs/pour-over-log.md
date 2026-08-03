@@ -1578,19 +1578,25 @@ CronRelay ロール 2本）。「production は最初から protection 付きで
 🔑 **「残骸だから無害」は測定ではなく分類**（教訓41）の続き。今回**測って**「無害だが
 パリティを壊している」と分かった＝ **無害さと、無害である理由は別に確かめる**。
 
-⏸️ **除去はオーナー判断待ち**（本セッションでは権限が下りなかった）。手順は下記。
-除去後は **① dev サイトが `-u` 付きで応答 ② dev の cron が 10 分以内に 200
-③ Function URL 直叩きが 403 のまま**（除去前も 403 を実測済み＝ベースライン取得済み）を見る。
-📌 **次の dev デプロイが「SST が作り直すか」の実験になる**（残骸なら作り直されないはず）。
+✅ **除去済み（2026-08-03T17:50Z 頃・オーナー判断のうえ実施）。dev と production のパリティが回復した。**
 
-```bash
-for f in siko-coffee-dev-WebServerApnortheast1Function-vfxxvfmo \
-         siko-coffee-dev-WebImageOptimizerFunction-xuxwvnac; do
-  for sid in FunctionURLAllowPublicAccess FunctionURLAllowInvokeAction; do
-    aws lambda remove-permission --function-name "$f" --statement-id "$sid" --region ap-northeast-1
-  done
-done
-```
+| 対象 | 除去前 | 除去後 | production（対照） |
+|---|---|---|---|
+| dev server | statement 6 / `Principal:*` **2** | **4 / 0** | **4 / 0**（同型） |
+| dev image-optimizer | statement 4 / `Principal:*` **2** | **2 / 0** | — |
+
+**負の対照・不変条件はすべて維持**:
+- Function URL 直叩き **403**（除去前も 403＝**ベースラインを先に取ってある**）
+- `AuthType` は **`AWS_IAM`** のまま（除去で緩んでいない）
+- 🔑 **決め手は dev の cron**。歴史的に残骸へ依存していたのがここだから。
+  **17:55:07Z（除去後）に `release-reservations` が `status=200`** ＝
+  #137 が入れた明示の2本ペアだけで通ることを実測した。
+  ⚠️ 直前の 17:45:07Z も 200 だったが**それは除去前**＝根拠にしない。
+  **窓を除去時刻より後に切ってから数えた**（教訓42 の「窓が変更を跨ぐと混ざる」を今回は先回りした）。
+
+📌 **未確認が1つ残る: 次の dev デプロイで SST が作り直さないか。** 残骸なら作り直されないはずで、
+**#142 のマージが自動的にその実験になる**（`matrix.stage` に dev が含まれるため）。
+
 
 #### 🔴 14（soak）に終了条件が無かった → S-1〜S-6 を新設
 
