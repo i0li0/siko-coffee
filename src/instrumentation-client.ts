@@ -3,7 +3,7 @@
 // https://docs.sentry.io/platforms/javascript/guides/nextjs/
 
 import * as Sentry from "@sentry/nextjs";
-import { getClientStage } from "@/lib/stage";
+import { getClientStage, tracesSampleRateFor } from "@/lib/stage";
 
 Sentry.init({
   dsn: "https://bb8c86c5e9b6040ca4817af77d74f269@o4511541920858112.ingest.us.sentry.io/4511541925642240",
@@ -18,8 +18,11 @@ Sentry.init({
   // Add optional integrations for additional features
   integrations: [Sentry.replayIntegration()],
 
-  // Define how likely traces are sampled. Adjust this value in production, or use tracesSampler for greater control.
-  tracesSampleRate: 1,
+  // ✅ Pour Over C-2（2026-08-03）で server / edge と揃えた。**旧値は全ステージ 100%**。
+  // これが 100% であることは 2026-08-03 に**本番の実ブラウザで実測**して分かった
+  // （`__SENTRY__` から `tracesSampleRate: 1` を読んだ）＝ C-2 の対象は
+  // 積み残しに書かれていた edge だけでなく **client との2か所**だった。
+  tracesSampleRate: tracesSampleRateFor(getClientStage()),
   // Enable logs to be sent to Sentry
   enableLogs: true,
 

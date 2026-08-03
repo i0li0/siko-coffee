@@ -1,5 +1,11 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { getStage, getClientStage, isProductionStage, isVercelPlatform } from '@/lib/stage';
+import {
+  getStage,
+  getClientStage,
+  isProductionStage,
+  isVercelPlatform,
+  tracesSampleRateFor,
+} from '@/lib/stage';
 
 // Pour Over 1（VERCEL_ENV → STAGE）の回帰テスト。
 //
@@ -106,6 +112,38 @@ describe('getClientStage', () => {
     expect(getClientStage()).toBeUndefined();
     delete process.env.STAGE;
     delete process.env.VERCEL_ENV;
+  });
+});
+
+// Pour Over C-2（Sentry のサンプリング率）の回帰テスト。
+//
+// 🔑 **元の壊れ方は「率が間違っていた」ではなく「3ファイルが独立に持っていた」。**
+// server だけが本番10%で、edge と client はウィザード既定の 100% のまま残っていた。
+// 集約したので、ここが通れば3ファイルとも同じ率になる。
+//
+// ⚠️ このテストは**率の決定**しか見ない。各 Sentry 設定が実際にこの関数を呼んでいるかは
+// 別問題で、client については本番の実ブラウザで `__SENTRY__` を読んで確認する。
+describe('tracesSampleRateFor', () => {
+  it('本番は 10%', () => {
+    expect(tracesSampleRateFor('production')).toBe(0.1);
+  });
+
+  // 非本番で 0 にするのは、dev の巡回トラフィックでクォータを使わないため。
+  it('非本番ステージは 0', () => {
+    expect(tracesSampleRateFor('dev')).toBe(0);
+    expect(tracesSampleRateFor('preview')).toBe(0);
+  });
+
+  // ステージ判定はフェイルクローズ（未設定＝本番ではない）なので、率も 0 側へ倒れる。
+  it('未設定は 0（フェイルクローズと同じ向き）', () => {
+    expect(tracesSampleRateFor(undefined)).toBe(0);
+  });
+
+  // 🔴 100% に戻ったら落ちること。これが C-2 で直した当のもの。
+  it('どのステージでも 100% にはならない', () => {
+    for (const s of ['production', 'dev', 'preview', undefined]) {
+      expect(tracesSampleRateFor(s)).not.toBe(1);
+    }
   });
 });
 

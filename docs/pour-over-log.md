@@ -1504,6 +1504,111 @@ vitest が固定できるのは**読み出し側の意味論だけ**で、
 
 ---
 
+### 2026-08-03（続き） — C-1 の本番実測 → C-2 / R-9 / soak の終了条件
+
+#### C-1 は本番の実ブラウザで確認できた（PR #141 マージ後）
+
+`SST Deploy (dev)` `(production)` とも success。本番ページで `window.__SENTRY__` を辿り、
+クライアントの実効設定が **`environment: "production"`** であることを確認した。
+＝ PR に「残る未検証（デプロイ後に人が見る工程）」と書いた項目を実測で閉じた。
+📌 デプロイ後の 5xx とアラーム遷移も**ゼロ**（08-02 は3回ともデプロイ／切替の直後だったので意図して見た）。
+
+#### 🔴 その実測が C-2 の範囲を広げた — 100% は edge **と client** の2か所だった
+
+同じプローブが **クライアントの `tracesSampleRate: 1`** を返した。
+積み残しには「C-2 = `sentry.edge.config.ts`」と**1か所として**書かれていたが、実際は2か所。
+🔑 **「探しに行った項目」ではなく「ついでに見えた値」で見つかった。**
+実効設定をまとめて読み出すと、**調べようとしていなかった隣の値まで一度に検算できる**。
+
+対処: 率の決定を **`tracesSampleRateFor(stage)`** に集約し、server / edge / client の3ファイルを
+そこへ寄せた（本番 10% / それ以外 0%）。**server の式が元から正解**だったのでそれを昇格させた形。
+🔑 **なぜ soak 中に効くか**: 本番トラフィックの大半は脆弱性スキャナ（同日実測）。
+100% 送信は **価値の無いトレースでクォータを先に使い切り、本当に見たいエラーを落とす**。
+
+**検証は C-1 と同じく成果物で、両方向**:
+
+| ビルド | クライアントチャンクの実体 |
+|---|---|
+| `STAGE=production` | `function sb(){return"production"}` ／ `tracesSampleRate:.1*("production"===sb())` |
+| `STAGE=dev` | `tracesSampleRate:0`（定数に畳まれる） |
+| 負の対照 | **`tracesSampleRate:1` の出現は 0 件** |
+
+📌 minifier は `stage === 'production' ? 0.1 : 0` を **`.1*(...)`（真偽値との乗算）**に書き換える。
+`grep 'tracesSampleRate:[0-9.]*'` だけ見ると `.1` で切れて**式の残りを見落とす**ので、
+**区切りまで含めて取る**こと。
+
+#### R-9: 半分は実施、半分は「やらない」に降格（理由を測り直した）
+
+- ✅ **Access Analyzer（外部アクセス）を有効化** — `scripts/bootstrap-access-analyzer.sh`。
+  **ap-northeast-1 と us-east-1 の2つ**（Analyzer は**リージョン単位**で、片方だと
+  Lambda@Edge・WAF・CloudFront 系が母集団から抜ける＝教訓43 と同じ穴）。冪等性は2回目の実行で実測。
+  🔑 **採用理由が一般論ではない**: 教訓41 で 8 の検証を無効にした
+  **dev の `Principal:"*"` 残骸は、まさにこの Analyzer が挙げる対象**。
+  あのとき有効なら一覧に載っていた。**「残骸だから無害」は測定ではなく分類**だった、の再発防止にあたる。
+  ⚠️ 作成直後の findings 0件は**初回スキャン前**なので根拠にしない（教訓27 と同型）。
+- ⬇️ **IAM パスワードポリシーは見送り**。測ったら **IAM ユーザーは1人（`shun`）・MFA 済み**で、
+  効く対象がほぼ無い。`MaxPasswordAge` を入れれば**唯一の管理者を締め出しうる**。
+  🔑 **「無料だから」はやる理由にならない**（維持と注意の対象は増える）。
+  5-2・5-3 と同じ「**一般論のまま持ち越された作業は、理由を測ると消える**」の3例目。
+
+#### 🔴🔴 Access Analyzer が**初回スキャンで教訓41 の残骸を挙げた**（有効化した当日）
+
+有効化の理由に書いた「あのとき有効なら一覧に載っていた」が、**その場で裏取りされた**。
+
+| リージョン | 検出されたリソース |
+|---|---|
+| ap-northeast-1 | **`siko-coffee-dev-WebServerApnortheast1Function`** / **`siko-coffee-dev-WebImageOptimizerFunction`** / `siko-coffee-github-deploy`（設計どおり＝GitHub OIDC を信頼） |
+| us-east-1 | `siko-coffee-github-deploy`（IAM はグローバルなので両方に出る） |
+
+**dev の2関数には `Principal:"*"` の statement が2本ずつ残っている**（教訓41 の「2本ペア」の両方）:
+
+| Sid | Action | Condition | 効くか |
+|---|---|---|---|
+| `FunctionURLAllowPublicAccess` | `lambda:InvokeFunctionUrl` | `lambda:FunctionUrlAuthType = NONE` | ❌ **不活性**（実際の AuthType は `AWS_IAM`） |
+| `FunctionURLAllowInvokeAction` | `lambda:InvokeFunction` | `lambda:InvokedViaFunctionUrl = true` | ⚠️ 条件は成立するが、①が無いと到達できない |
+
+🟢 **production は対照的に 4 statement・`Principal:"*"` はゼロ**（`Service: cloudfront` 2本＋
+CronRelay ロール 2本）。「production は最初から protection 付きで作られ残骸が無い」を実測で再確認。
+
+🔑 **現時点では不活性だが、放置してよい理由にはならない。**
+- **#137 は cron を直したが、残骸は消していない**＝ **dev は今も構造的に production より緩い**。
+  「dev で実測検証済み」という根拠は、**8 のときと同じ弱さを今も持っている**。
+- `AuthType` を一度でも `NONE` に戻すと ① が即座に復活し、**Function URL が公開に戻る**。
+  不活性さが**別の設定に依存している**＝それ自体が罠。
+🔑 **「残骸だから無害」は測定ではなく分類**（教訓41）の続き。今回**測って**「無害だが
+パリティを壊している」と分かった＝ **無害さと、無害である理由は別に確かめる**。
+
+✅ **除去済み（2026-08-03T17:50Z 頃・オーナー判断のうえ実施）。dev と production のパリティが回復した。**
+
+| 対象 | 除去前 | 除去後 | production（対照） |
+|---|---|---|---|
+| dev server | statement 6 / `Principal:*` **2** | **4 / 0** | **4 / 0**（同型） |
+| dev image-optimizer | statement 4 / `Principal:*` **2** | **2 / 0** | — |
+
+**負の対照・不変条件はすべて維持**:
+- Function URL 直叩き **403**（除去前も 403＝**ベースラインを先に取ってある**）
+- `AuthType` は **`AWS_IAM`** のまま（除去で緩んでいない）
+- 🔑 **決め手は dev の cron**。歴史的に残骸へ依存していたのがここだから。
+  **17:55:07Z（除去後）に `release-reservations` が `status=200`** ＝
+  #137 が入れた明示の2本ペアだけで通ることを実測した。
+  ⚠️ 直前の 17:45:07Z も 200 だったが**それは除去前**＝根拠にしない。
+  **窓を除去時刻より後に切ってから数えた**（教訓42 の「窓が変更を跨ぐと混ざる」を今回は先回りした）。
+
+📌 **未確認が1つ残る: 次の dev デプロイで SST が作り直さないか。** 残骸なら作り直されないはずで、
+**#142 のマージが自動的にその実験になる**（`matrix.stage` に dev が含まれるため）。
+
+
+#### 🔴 14（soak）に終了条件が無かった → S-1〜S-6 を新設
+
+正本に書いてあったのは「Vercel を生かす」＝ soak 中の**禁止事項**だけで、
+**いつ終わるのか・何が満たされたら 15 へ進めるのか**がどこにも無かった。
+🔑 **終了条件の無い観測期間は両方向に転ぶ**（早すぎる解約／惰性の長期化。後者は
+15 が止まると決済再開と E-4 まで止まる）。詳細は `pour-over-leftovers.md`。
+📌 現況は **S-1 が 1/4**（cron 4本のうち成功は `release-reservations` のみ）で、
+最短の到達見込みは **2026-08-09〜08-10**。
+
+---
+
 ## 教訓
 
 他の作業にも移植できる形で残す。

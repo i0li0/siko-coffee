@@ -4,7 +4,7 @@
 // https://docs.sentry.io/platforms/javascript/guides/nextjs/
 
 import * as Sentry from "@sentry/nextjs";
-import { getStage } from "./src/lib/stage";
+import { getStage, tracesSampleRateFor } from "./src/lib/stage";
 
 Sentry.init({
   dsn: "https://bb8c86c5e9b6040ca4817af77d74f269@o4511541920858112.ingest.us.sentry.io/4511541925642240",
@@ -14,10 +14,10 @@ Sentry.init({
   // （sentry.server.config.ts だけが environment を持つ状態）。Pour Over 1 で揃える。
   environment: getStage() ?? 'development',
 
-  // ⚠️ sentry.server.config.ts は「本番のみ 10%」なのに、ここだけ全ステージ 100% のまま。
-  // 意図的な差ではなくウィザード既定の残りだが、サンプリング率の変更は Sentry の
-  // クォータ方針の判断を伴うため Pour Over 1 では触らない（別途決める）。
-  tracesSampleRate: 1,
+  // ✅ Pour Over C-2（2026-08-03）で server と揃えた。**旧値は全ステージ 100%** で、
+  // これはウィザード既定の残りであって意図した差ではなかった。率の決定は
+  // `tracesSampleRateFor()` に集約してある（3ファイルが再び食い違わないように）。
+  tracesSampleRate: tracesSampleRateFor(getStage()),
 
   // Enable logs to be sent to Sentry
   enableLogs: true,
