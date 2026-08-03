@@ -11,6 +11,11 @@
 - **正本ではない。** 各項目の詳細はリンク先が正本で、ここは**索引と現況**。
 - **状態は実測で書く。** 「〜のはず」を書かない。各項目に**確認コマンド**を付けてあるので、
   読む前に叩き直せる（📌 このプロジェクトの原則「状態は書いた場所の数だけ古くなる」）。
+- 🔴 **「状態」を測るときは、同時に「履歴」も測る**（教訓42）。自動復旧する対象は
+  1回の `describe-*` では何も分からない。2026-08-02 に、アラームが3回鳴って戻ったのを
+  「今すべて OK」と読んで見逃した。
+- 🔴 **列挙は必ず全リージョンで回す**（教訓43）。**CloudFront 系のアラームは us-east-1**。
+  `--region ap-northeast-1` だけで数えた「6本」は母集団が欠けていた。
 - **最終実測日: 2026-08-02**（**13-4 の DNS 切替直後**＝`2026-08-02T19:39:15Z`）。
 
 ## 全体像
@@ -156,7 +161,7 @@ Pour Over の完了条件ではない。**実測で状態が分かるものは�
 | R-1 | **CloudFront Response Headers Policy** | パリティ退行の直接の対処。静的ヘッダを配信層へ寄せる |
 | R-2 | **CloudWatch RUM** | 🔑 **切替で Speed Insights を失う**＝これがその代替。失う前の基準値は**デスクトップの RES 97 / LCP 2.66s のみ**（モバイルは元からデータ無し） |
 | ~~R-3~~ | ~~CloudFront 継続的デプロイ~~ | **❌ 不採用確定**。切り戻しは DNS を戻すだけで足りる（11 の 60s TTL で回収済み） |
-| R-4 | 観測の土台（CloudFront standard logging v2 / DLQ / Synthetics canary） | SNS トピックは 10 で作成済み |
+| **R-4** | **観測の土台（CloudFront standard logging v2 / 追加メトリクス / DLQ / Synthetics canary）** | 🔴🔴 **「推奨」から昇格。2026-08-02 に実害が出た。** CloudFront の 5xx が3回スパイクしたが、**アクセスログも追加メトリクス（`NoSuchMonitoringSubscription`）も無いため 502/503/504 の内訳が存在せず、原因を特定できないまま終わった**（教訓44）。**検知（10）と診断は別の投資**で、今あるのは検知だけ。⚠️ 追加メトリクスは**メトリクスごとに課金**されるので、予算（上限$20・通知$12／WAF が既に$8）と併せて判断が要る。標準ログ（S3）はほぼ無料なので**先にそちらだけ入れるのが妥当** |
 | R-5 | **SES を運用できる状態にする**（SPF・DMARC・MX・custom MAIL FROM・configuration set） | 🔴 **バウンス/苦情が誰にも届かない**状態。**実測: SPF・DMARC・MX とも未設定**（`dig` で3件とも空）／DKIM 3本のみ設定済み。10 で SES の `Reputation.*` アラーム2本は production に入ったので、**評判の悪化は鳴るが個別のバウンスは追えない** |
 | R-6 | コールドスタート対策（＝ B-2 の warmer） | B-2 と同一。soak 待ち |
 | R-7 | 実行ロールと同時実行を絞る | `ses:*` と `cloudfront:CreateInvalidation` の `Resource: "*"` を限定 |
@@ -175,6 +180,12 @@ Pour Over の完了条件ではない。**実測で状態が分かるものは�
 | 不要 IAM ロール | ⚠️ **要確認**。候補は `http-function-url-tutorial-test-siko-role-*` / `rds-monitoring-role` / `siko-coffee-lambda-role` / `AWSServiceRoleForRDS`。**使用中でないことを確かめてから消す**（SST 管理下の `siko-coffee-{dev,production}-*` には触らない） |
 
 🔴 **`_c84c530444dc328407ddf8a6cf46916b.sikocoffee.com` は消さないこと**（ワイルドカード証明書の更新に使用中）。
+
+```bash
+# 🔴 観測の穴（教訓44）— どちらも「無い」ことを実測済み（2026-08-02）
+aws cloudfront get-monitoring-subscription --distribution-id E3FC7N27IY6A73  # NoSuchMonitoringSubscription
+aws cloudfront get-distribution-config --id E3FC7N27IY6A73 --query 'DistributionConfig.Logging'
+```
 
 ```bash
 aws s3 ls s3://siko-coffee --recursive                      # 空バケット
