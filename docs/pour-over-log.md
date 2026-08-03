@@ -1551,6 +1551,47 @@ vitest が固定できるのは**読み出し側の意味論だけ**で、
   🔑 **「無料だから」はやる理由にならない**（維持と注意の対象は増える）。
   5-2・5-3 と同じ「**一般論のまま持ち越された作業は、理由を測ると消える**」の3例目。
 
+#### 🔴🔴 Access Analyzer が**初回スキャンで教訓41 の残骸を挙げた**（有効化した当日）
+
+有効化の理由に書いた「あのとき有効なら一覧に載っていた」が、**その場で裏取りされた**。
+
+| リージョン | 検出されたリソース |
+|---|---|
+| ap-northeast-1 | **`siko-coffee-dev-WebServerApnortheast1Function`** / **`siko-coffee-dev-WebImageOptimizerFunction`** / `siko-coffee-github-deploy`（設計どおり＝GitHub OIDC を信頼） |
+| us-east-1 | `siko-coffee-github-deploy`（IAM はグローバルなので両方に出る） |
+
+**dev の2関数には `Principal:"*"` の statement が2本ずつ残っている**（教訓41 の「2本ペア」の両方）:
+
+| Sid | Action | Condition | 効くか |
+|---|---|---|---|
+| `FunctionURLAllowPublicAccess` | `lambda:InvokeFunctionUrl` | `lambda:FunctionUrlAuthType = NONE` | ❌ **不活性**（実際の AuthType は `AWS_IAM`） |
+| `FunctionURLAllowInvokeAction` | `lambda:InvokeFunction` | `lambda:InvokedViaFunctionUrl = true` | ⚠️ 条件は成立するが、①が無いと到達できない |
+
+🟢 **production は対照的に 4 statement・`Principal:"*"` はゼロ**（`Service: cloudfront` 2本＋
+CronRelay ロール 2本）。「production は最初から protection 付きで作られ残骸が無い」を実測で再確認。
+
+🔑 **現時点では不活性だが、放置してよい理由にはならない。**
+- **#137 は cron を直したが、残骸は消していない**＝ **dev は今も構造的に production より緩い**。
+  「dev で実測検証済み」という根拠は、**8 のときと同じ弱さを今も持っている**。
+- `AuthType` を一度でも `NONE` に戻すと ① が即座に復活し、**Function URL が公開に戻る**。
+  不活性さが**別の設定に依存している**＝それ自体が罠。
+🔑 **「残骸だから無害」は測定ではなく分類**（教訓41）の続き。今回**測って**「無害だが
+パリティを壊している」と分かった＝ **無害さと、無害である理由は別に確かめる**。
+
+⏸️ **除去はオーナー判断待ち**（本セッションでは権限が下りなかった）。手順は下記。
+除去後は **① dev サイトが `-u` 付きで応答 ② dev の cron が 10 分以内に 200
+③ Function URL 直叩きが 403 のまま**（除去前も 403 を実測済み＝ベースライン取得済み）を見る。
+📌 **次の dev デプロイが「SST が作り直すか」の実験になる**（残骸なら作り直されないはず）。
+
+```bash
+for f in siko-coffee-dev-WebServerApnortheast1Function-vfxxvfmo \
+         siko-coffee-dev-WebImageOptimizerFunction-xuxwvnac; do
+  for sid in FunctionURLAllowPublicAccess FunctionURLAllowInvokeAction; do
+    aws lambda remove-permission --function-name "$f" --statement-id "$sid" --region ap-northeast-1
+  done
+done
+```
+
 #### 🔴 14（soak）に終了条件が無かった → S-1〜S-6 を新設
 
 正本に書いてあったのは「Vercel を生かす」＝ soak 中の**禁止事項**だけで、

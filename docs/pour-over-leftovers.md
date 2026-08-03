@@ -229,6 +229,7 @@ Pour Over の完了条件ではない。**実測で状態が分かるものは�
 | 孤児 ACM 検証 CNAME 2本 | ✅ **削除済み**（Route53 に残る CNAME は ACM 検証 `_c84c…` 1本・DKIM 3本・`www` のみ） |
 | 空バケット `siko-coffee` | 🔴 **残存・中身は空** |
 | `/aws/amplify/*` ロググループ | 🔴 **残存**（`/aws/amplify/d3059a6gcvih7x`） |
+| 🔴 **dev の `Principal:"*"` 残骸 4本** | **未除去（オーナー判断待ち）**。`siko-coffee-dev-WebServer…` と `…WebImageOptimizer…` に `FunctionURLAllowPublicAccess` / `FunctionURLAllowInvokeAction` が各2本。**2026-08-03 に Access Analyzer が初回スキャンで検出**。現時点では不活性（①の条件 `AuthType=NONE` に対し実際は `AWS_IAM`）だが、**dev を production より緩いままにしている**＝「dev で検証済み」の根拠が教訓41 と同じ弱さを持つ。手順と検証は `pour-over-log.md` |
 | 不要 IAM ロール | ⚠️ **要確認**。候補は `http-function-url-tutorial-test-siko-role-*` / `rds-monitoring-role` / `siko-coffee-lambda-role` / `AWSServiceRoleForRDS`。**使用中でないことを確かめてから消す**（SST 管理下の `siko-coffee-{dev,production}-*` には触らない） |
 
 🔴 **`_c84c530444dc328407ddf8a6cf46916b.sikocoffee.com` は消さないこと**（ワイルドカード証明書の更新に使用中）。
