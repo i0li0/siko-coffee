@@ -3,9 +3,17 @@
 // https://docs.sentry.io/platforms/javascript/guides/nextjs/
 
 import * as Sentry from "@sentry/nextjs";
+import { getClientStage } from "@/lib/stage";
 
 Sentry.init({
   dsn: "https://bb8c86c5e9b6040ca4817af77d74f269@o4511541920858112.ingest.us.sentry.io/4511541925642240",
+
+  // Pour Over C-1。server / edge は Pour Over 1 で environment を持ったが、
+  // **ここだけ残っていた**（`STAGE` も `VERCEL_ENV` も `NEXT_PUBLIC_` が無く
+  // ブラウザ用バンドルに入らないため、別タスクに切り出されていた）。
+  // 値は `next.config.ts` の `env` がビルド時に焼き込む。未設定なら 'development'
+  // ＝ server / edge と同じ既定値に揃える。
+  environment: getClientStage() ?? 'development',
 
   // Add optional integrations for additional features
   integrations: [Sentry.replayIntegration()],

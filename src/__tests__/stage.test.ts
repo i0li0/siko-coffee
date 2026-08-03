@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { getStage, isProductionStage, isVercelPlatform } from '@/lib/stage';
+import { getStage, getClientStage, isProductionStage, isVercelPlatform } from '@/lib/stage';
 
 // Pour Over 1（VERCEL_ENV → STAGE）の回帰テスト。
 //
@@ -55,6 +55,57 @@ describe('stage', () => {
     process.env.VERCEL_ENV = 'production';
     expect(getStage()).toBe('dev');
     expect(isProductionStage()).toBe(false);
+  });
+});
+
+// Pour Over C-1（クライアント側 Sentry の environment）の回帰テスト。
+//
+// 🔑 **この関数の失敗は静かで、しかも一番気づきにくい形をとる**。
+// クライアントで `getStage()` を呼んでも例外は出ず `undefined` が返るだけなので、
+// 「ステージ不明」が事故ではなく既定値のように見える。実際 Pour Over 1 の後、
+// server と edge だけが environment を持ち、クライアントは無言で未タグのままだった。
+//
+// ⚠️ ここで固定できるのは**読み出し側の意味論だけ**。値がバンドルに焼き込まれること
+// （`next.config.ts` の `env`）は vitest では確かめられず、**実ビルドの成果物**を見る必要がある。
+// 「テストが緑」は「クライアントにステージが届いている」の証明ではない（教訓27 と同型）。
+describe('getClientStage', () => {
+  const original = process.env.NEXT_PUBLIC_STAGE;
+
+  beforeEach(() => {
+    delete process.env.NEXT_PUBLIC_STAGE;
+  });
+
+  afterEach(() => {
+    if (original === undefined) delete process.env.NEXT_PUBLIC_STAGE;
+    else process.env.NEXT_PUBLIC_STAGE = original;
+  });
+
+  it('未設定なら undefined（呼び出し側が development へ落とす）', () => {
+    expect(getClientStage()).toBeUndefined();
+  });
+
+  // `next.config.ts` の `env` は string しか受け付けないため、未設定は `''` で焼き込まれる。
+  // これを素通ししてしまうと Sentry の environment が**空文字**になり、
+  // 「未設定」ではなく「名前の無いステージ」として集計されてしまう。
+  it('空文字は未設定として扱う（environment が空タグにならないように）', () => {
+    process.env.NEXT_PUBLIC_STAGE = '';
+    expect(getClientStage()).toBeUndefined();
+  });
+
+  it('ビルド時に焼き込まれた値をそのまま返す', () => {
+    process.env.NEXT_PUBLIC_STAGE = 'production';
+    expect(getClientStage()).toBe('production');
+  });
+
+  // サーバ専用の変数を拾わないこと。拾えてしまうならそれは
+  // 「クライアントでも読めた」のではなく **テスト環境が node だから**で、
+  // ブラウザでは再現しない偽の緑になる。
+  it('STAGE / VERCEL_ENV にはフォールバックしない（ブラウザでは読めないため）', () => {
+    process.env.STAGE = 'production';
+    process.env.VERCEL_ENV = 'production';
+    expect(getClientStage()).toBeUndefined();
+    delete process.env.STAGE;
+    delete process.env.VERCEL_ENV;
   });
 });
 

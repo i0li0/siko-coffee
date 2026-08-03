@@ -16,7 +16,7 @@
   「今すべて OK」と読んで見逃した。
 - 🔴 **列挙は必ず全リージョンで回す**（教訓43）。**CloudFront 系のアラームは us-east-1**。
   `--region ap-northeast-1` だけで数えた「6本」は母集団が欠けていた。
-- **最終実測日: 2026-08-02**（**13-4 の DNS 切替直後**＝`2026-08-02T19:39:15Z`）。
+- **最終実測日: 2026-08-03**（14 = soak 初日。切替の約21時間後）。
 
 ## 全体像
 
@@ -24,7 +24,7 @@
 |---|---|---|
 | **A. Pour Over 本編の残り** | **6** | 21タスクのうち未完のもの。これが終われば Pour Over は完了 |
 | **B. 意図的に見送った技術判断** | 4 | やらないと決めたのではなく、**判断材料が揃うまで待っている**もの |
-| **C. Pour Over が生んだ小さな負債** | 3 | 移行の過程で生まれ、まだ回収していないもの |
+| **C. Pour Over が生んだ小さな負債** | **2**（元3・C-1 完了） | 移行の過程で生まれ、まだ回収していないもの |
 | **D. 推奨タスク（R-1〜R-10）** | 9 | コスト非制約の前提で挙がった改善。R-3 は不採用確定 |
 | **E. スコープ外と明記したもの** | 5 | **Pour Over と混ぜないと決めた**もの。完了後に着手する |
 
@@ -43,7 +43,7 @@
 | 5-3 | `CRON_STAGES` に `'production'` ＋ **Vercel の発火窓の外へずらす** | 5-4 の**あと**（単独で） | ⏳ **PR #135**。🔴 計画の「切替後なら安全」は誤りだった（下記） |
 | 5-4 | `ci.yml` の `matrix.stage` に `production` | 切替後**速やかに** | ✅ **本 PR で実施**＝ `[dev, production]`。🔴 **ここから main への push は本番に入る** |
 | 5-6 | Instagram トークンの確認 | 2026-09-02 | `refreshedAt` = **2026-08-01T00:21:11Z**＝失効 **2026-09-30**・次の更新機会 9/1。🔴 **5-3 が済むまで頼りは Vercel の月次1本**（production の cron は DISABLED） |
-| **14** | **soak 期間**（Vercel を生かしたまま観測） | 切替後 | Vercel の設定に一切触らない＝ロールバック先を最新に保つ |
+| **14** | **soak 期間**（Vercel を生かしたまま観測） | 切替後 | ⏳ **進行中。初日（2026-08-03）の実測は異常ゼロ**（アラーム遷移は 08-02T22:36Z 以降なし・5xx ゼロ・cron 109回連続 200）。🔴 **`cleanup-pending` と `po-timeouts` は production でまだ一度も走っていない**（5-3 の有効化が日次20:00/20:20 UTC を過ぎた後だった）＝ **初回は 2026-08-03T20:00Z / 20:20Z**。Vercel の設定には一切触らない |
 | **15** | **Vercel 解約 ＋ 決済再開** | soak の後 | ①Stripe 新キー →②`PAYMENTS_ENABLED=true` →③再デプロイ の順厳守。🔴 **IAM アクセスキー `AKIAZQY7YB2C3BYMZCYG`（`shun` / AdministratorAccess）の削除を必ず含める**＝解約しても AWS 側に残る |
 | **16** | **Vercel 依存の撤去（①〜⑧）** | 15 の後 | 🔴 `vercel.json` だけ消すと **build が全環境で落ちる**（`prebuild` → `check-cron-schedule.mjs`）。📌 計画の表は長く「①〜⑦」と書いていたが**本文には⑧まである**（本作業で訂正） |
 
@@ -100,6 +100,8 @@ aws dynamodb get-item --table-name siko-coffee-config --region ap-northeast-1 \
 
 ①`redirects()` ②`vercel.json` ③`check-cron-schedule.mjs` + `prebuild` + `check:cron`
 ④CI の該当ステップ ⑤`hostRedirects.test.ts` ⑥`src/lib/stage.ts` の `?? VERCEL_ENV`（+ `stage.test.ts` の該当ケース）
+🔴 **⑥は2か所ある**: `stage.ts`（実行時）と **`next.config.ts` の `env.NEXT_PUBLIC_STAGE`（ビルド時・C-1 で追加）**。
+式が同じなので `grep -rn VERCEL src/` だけでは **`next.config.ts` が漏れる**（`src/` の外）
 ⑦`isVercelPlatform()` と `layout.tsx` の呼び出し＋`@vercel/analytics`/`@vercel/speed-insights` の依存
 ⑧`src/lib/cronAuth.ts` の `Authorization: Bearer` 形式の受け入れ
 
@@ -114,7 +116,7 @@ aws dynamodb get-item --table-name siko-coffee-config --region ap-northeast-1 \
 | # | 内容 | 見送った理由 | いつ再検討できるか |
 |---|---|---|---|
 | B-1 | **arm64 への統一** | 7 で「1デプロイで2変数を動かすと、速くなった原因を切り分けられない」ため | **いつでも**。7 の実測（コールド p50 1,068ms）が基準値として使える |
-| B-2 | **warmer（`warm` プロパティ）の有効化** | 「dev のコールド率は巡回トラフィック主体の dev 固有の値で、本番の実際のコールド率は分からない」ため | 🔑 **14（soak）で本番のコールド率が測れるようになる**＝ここが待ち条件 |
+| B-2 | **warmer（`warm` プロパティ）の有効化** | 「dev のコールド率は巡回トラフィック主体の dev 固有の値で、本番の実際のコールド率は分からない」ため | ✅ **待ち条件は満たされた（2026-08-03 実測）＝ 本番のコールド率 55.2%**（248 invocations/24h・コールド p50 1,157ms / ウォーム p50 124ms）。**dev の 3.2% とは桁が違う**（1,050 req のうち Lambda に届くのは 248＝CloudFront が76%吸う）。🔴 **あとはコストの判断だけ**＝ 実ユーザーはほぼ必ずコールドを踏むが、この 248 の大半はスキャナ |
 | B-3 | **`server.timeout` を 30秒より伸ばす** | cron の実行予算に効くが、8 のスコープ外 | いつでも。CloudFront 経由の web は CF 側で切れるので挙動は変わらない |
 | B-4 | **geo ルールが国外を実際に deny するかの確認** | **日本からは原理的に確認できない** | 海外からアクセスできる機会。現状は「日本では撃たない」（負の対照）までを実測済み |
 
@@ -139,13 +141,13 @@ done
 
 ---
 
-## C. Pour Over が生んだ小さな負債（3本）
+## C. Pour Over が生んだ小さな負債（残り2本・元3本）
 
 移行の過程で生まれ、まだ回収していないもの。いずれも**実測で現存を確認済み**。
 
 | # | 内容 | 影響 | 確認 |
 |---|---|---|---|
-| C-1 | **`src/instrumentation-client.ts` に `environment` が無い** | **クライアントだけステージ未タグ**のまま Sentry に送られる。1（`VERCEL_ENV`→`STAGE`）で server と edge は揃えたが、client は `NEXT_PUBLIC_*` が要るため別タスクにした | `grep -n "environment" src/instrumentation-client.ts` が空 |
+| ~~C-1~~ | ~~**`src/instrumentation-client.ts` に `environment` が無い**~~ | ✅ **完了（2026-08-03）**。`next.config.ts` の `env` が **ビルド時に `STAGE ?? VERCEL_ENV` を焼き込み**、`getClientStage()` が読む。**実ビルド3本の成果物で確認**（AWS 経路・Vercel 経路の正の対照＋未設定時が `(void 0)??"development"` の負の対照）。🔴 残るのは**デプロイ後に Sentry のダッシュボードを人が見る**工程 | `grep -n "environment" src/instrumentation-client.ts` |
 | C-2 | **`sentry.edge.config.ts` の `tracesSampleRate: 1`** | 全ステージ **100% サンプリング**。トラフィックが増えると Sentry のクォータを食う | `grep -n "tracesSampleRate" sentry.edge.config.ts` |
 | C-3 | **`BLOB_READ_WRITE_TOKEN` が Vercel 本番 env に残存** | **死んだ env**。4 で S3 へ移したのでコードは `@vercel/blob` を一切参照していない（grep 0件）。実害は無いが、16 の掃除対象 | `grep -rn "BLOB_READ_WRITE_TOKEN\|@vercel/blob" src/ package.json` が空 |
 
@@ -255,7 +257,8 @@ aws cloudfront get-distribution-config --id <production の Id> \
             └→ E-4（ブレンド PF の E2E・サブスク）… 決済再開が前提
 ```
 
-**待ち条件を持たないもの**（いつでも着手できる）: B-1・B-3・C-1・C-2・R-1・R-5・R-7・R-8・R-9・R-10・E-2・E-3・E-5
+**待ち条件を持たないもの**（いつでも着手できる）: B-1・B-3・C-2・R-1・R-5・R-7・R-8・R-9・R-10・E-2・E-3・E-5
+（C-1 は 2026-08-03 に完了）
 
 ---
 
