@@ -1189,6 +1189,81 @@ export default $config({
       { provider: usEast1 },
     )
 
+    // ── 診断（R-4: CloudFront standard logging v2）────────────────────
+    //
+    // 🔴🔴 **なぜ要るか（教訓44）。** 上の ⑤ は「壊れた」と言えるが「なぜ壊れたか」は言えない。
+    //    2026-08-02 に 5xx が3回スパイクし（最大 38%・約109件）、オリジン・Lambda@Edge・
+    //    CloudFront Function まで潰したところで**行き止まりになった**。理由は単純で、
+    //    **アクセスログも追加メトリクスも無く、502/503/504 の内訳が存在しなかった**から。
+    //    ＝ **検知と診断は別の投資**であり、診断側は**事故の前に**用意しないと永久に間に合わない。
+    //    だからこのブロックはアラームの直後に置いてある（検知の隣に診断を置く）。
+    //
+    // 🔑 **v2 を使う（レガシーではない）。** レガシーの S3 ログは**バケットの ACL が有効**で
+    //    ある必要があり、いまの S3 は既定で ACL 無効。v2 なら CloudWatch Logs に直接送れて
+    //    `filter-log-events` / Logs Insights がそのまま使える（Athena を立てなくてよい）。
+    //
+    // 🔴 **API は us-east-1 で呼ぶ**（AWS ドキュメント明記。配信先が別リージョンでも同じ）。
+    //    → 既存の `usEast1` プロバイダを再利用する。
+    // 🔴 **ロググループ名に使えるのは `[\w-]` だけ**（PutDeliveryDestination の制約）。
+    //    `/aws/cloudfront/...` のような**スラッシュ入りの名前は通らない**。
+    //    Lambda のロググループの癖で `/aws/...` と書きたくなるが、ここでは別の規則が効く。
+    // 📌 `recordFields` は**あえて指定しない**＝既定の全フィールドを受け取る。
+    //    フィールド名は文字列で、型検査は**値を見ない**（#136 で実測済み）。
+    //    15個の文字列を推測して1つでも外すより、既定を受けてから**実物を見て**絞る。
+    //    🔑 診断に効くのは `x-edge-detailed-result-type`（5xx の理由が入る）。
+    //       **デプロイ後に実際に届いたフィールドを確認すること**（それまでは「入れた」だけ）。
+    // ⚠️ **「作れた」と「ログが届く」は別**。CloudWatch Logs 宛の vended logs は
+    //    ロググループ側のリソースポリシーが要る。**デプロイ後にログストリームが
+    //    実際に生えるかを必ず確かめる**（生えなければ権限を足す）。
+    const ACCESS_LOG_STAGES = ['dev', 'production']
+    if (ACCESS_LOG_STAGES.includes($app.stage)) {
+      // 名前は `[\w-]` のみ。ハイフン区切りで揃える。
+      const deliveryName = `siko-${$app.stage}-cloudfront-access-logs`
+
+      const cfAccessLogGroup = new aws.cloudwatch.LogGroup(
+        'CloudFrontAccessLogGroup',
+        {
+          name: deliveryName,
+          // 事故の調査に足りればよい。長く持つほど課金が増えるだけ。
+          retentionInDays: 30,
+        },
+        { provider: usEast1 },
+      )
+
+      const cfLogSource = new aws.cloudwatch.LogDeliverySource(
+        'CloudFrontAccessLogSource',
+        {
+          name: deliveryName,
+          // ドキュメント明記の値。CloudFront の配信元はこれ1種類。
+          logType: 'ACCESS_LOGS',
+          resourceArn: web.nodes.cdn!.nodes.distribution.arn,
+        },
+        { provider: usEast1 },
+      )
+
+      const cfLogDestination = new aws.cloudwatch.LogDeliveryDestination(
+        'CloudFrontAccessLogDestination',
+        {
+          name: deliveryName,
+          // CloudWatch Logs に送るので JSON。Parquet は S3 向けで追加課金がある。
+          outputFormat: 'json',
+          deliveryDestinationConfiguration: {
+            destinationResourceArn: cfAccessLogGroup.arn,
+          },
+        },
+        { provider: usEast1 },
+      )
+
+      new aws.cloudwatch.LogDelivery(
+        'CloudFrontAccessLogDelivery',
+        {
+          deliverySourceName: cfLogSource.name,
+          deliveryDestinationArn: cfLogDestination.arn,
+        },
+        { provider: usEast1 },
+      )
+    }
+
     // ⑥⑦ SES の評判（B-11）。**バウンス・苦情が誰にも届いていない**状態の受け皿。
     //
     // 🔴 **production ステージでだけ作る。** `Reputation.*` は**アカウント全体**の

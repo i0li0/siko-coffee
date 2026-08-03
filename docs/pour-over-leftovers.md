@@ -161,7 +161,7 @@ Pour Over の完了条件ではない。**実測で状態が分かるものは�
 | R-1 | **CloudFront Response Headers Policy** | パリティ退行の直接の対処。静的ヘッダを配信層へ寄せる |
 | R-2 | **CloudWatch RUM** | 🔑 **切替で Speed Insights を失う**＝これがその代替。失う前の基準値は**デスクトップの RES 97 / LCP 2.66s のみ**（モバイルは元からデータ無し） |
 | ~~R-3~~ | ~~CloudFront 継続的デプロイ~~ | **❌ 不採用確定**。切り戻しは DNS を戻すだけで足りる（11 の 60s TTL で回収済み） |
-| **R-4** | **観測の土台（CloudFront standard logging v2 / 追加メトリクス / DLQ / Synthetics canary）** | 🔴🔴 **「推奨」から昇格。2026-08-02 に実害が出た。** CloudFront の 5xx が3回スパイクしたが、**アクセスログも追加メトリクス（`NoSuchMonitoringSubscription`）も無いため 502/503/504 の内訳が存在せず、原因を特定できないまま終わった**（教訓44）。**検知（10）と診断は別の投資**で、今あるのは検知だけ。⚠️ 追加メトリクスは**メトリクスごとに課金**されるので、予算（上限$20・通知$12／WAF が既に$8）と併せて判断が要る。標準ログ（S3）はほぼ無料なので**先にそちらだけ入れるのが妥当** |
+| **R-4** | **観測の土台（CloudFront standard logging v2 / 追加メトリクス / DLQ / Synthetics canary）** | 🟡 **standard logging v2 は実装した（2026-08-03）**＝ `sst.config.ts` の「診断（R-4）」ブロック。**dev・production の両方**で CloudFront のアクセスログを **CloudWatch Logs**（`siko-<stage>-cloudfront-access-logs`・保持30日）へ配信。⚠️ **「作れた」と「ログが届く」は別**＝ デプロイ後にログストリームが実際に生えるかの確認が要る。残りは**追加メトリクス**（メトリクスごと課金なので予算と併せて判断）・DLQ・Synthetics canary。<br>🔴 昇格の理由: 2026-08-02 に 5xx が3回スパイクしたが、**ログも内訳メトリクスも無いため原因を特定できないまま終わった**（教訓44）。**検知（10）と診断は別の投資** |
 | R-5 | **SES を運用できる状態にする**（SPF・DMARC・MX・custom MAIL FROM・configuration set） | 🔴 **バウンス/苦情が誰にも届かない**状態。**実測: SPF・DMARC・MX とも未設定**（`dig` で3件とも空）／DKIM 3本のみ設定済み。10 で SES の `Reputation.*` アラーム2本は production に入ったので、**評判の悪化は鳴るが個別のバウンスは追えない** |
 | R-6 | コールドスタート対策（＝ B-2 の warmer） | B-2 と同一。soak 待ち |
 | R-7 | 実行ロールと同時実行を絞る | `ses:*` と `cloudfront:CreateInvalidation` の `Resource: "*"` を限定 |
@@ -182,10 +182,19 @@ Pour Over の完了条件ではない。**実測で状態が分かるものは�
 🔴 **`_c84c530444dc328407ddf8a6cf46916b.sikocoffee.com` は消さないこと**（ワイルドカード証明書の更新に使用中）。
 
 ```bash
-# 🔴 観測の穴（教訓44）— どちらも「無い」ことを実測済み（2026-08-02）
-aws cloudfront get-monitoring-subscription --distribution-id E3FC7N27IY6A73  # NoSuchMonitoringSubscription
-aws cloudfront get-distribution-config --id E3FC7N27IY6A73 --query 'DistributionConfig.Logging'
+# 観測の穴（教訓44）の現況
+aws cloudfront get-monitoring-subscription --distribution-id E3FC7N27IY6A73  # まだ未設定（追加メトリクス）
+
+# ✅ standard logging v2 は入れた（2026-08-03）。**届いているか**を必ず見る:
+aws logs describe-log-streams --region us-east-1 \
+  --log-group-name siko-production-cloudfront-access-logs --max-items 3
+# 5xx の理由を引く（x-edge-detailed-result-type にそれが入る）
+aws logs filter-log-events --region us-east-1 \
+  --log-group-name siko-production-cloudfront-access-logs \
+  --filter-pattern '{ $."sc-status" = 5* }' --max-items 20
 ```
+📌 レガシーの S3 ログ（`DistributionConfig.Logging`）は**使っていない**（`Enabled: false` のまま）。
+v2 とレガシーは併存できるが、二重に払う理由が無い。
 
 ```bash
 aws s3 ls s3://siko-coffee --recursive                      # 空バケット
