@@ -61,6 +61,56 @@ export default $config({
       './src/lib/apexRedirect'
     )
 
+    // ── ビルダーに渡る環境変数を state に平文で残さない ────────────
+    //
+    // 🔴🔴 **`sst.aws.Nextjs` はシェルの `process.env` を丸ごとビルダーに渡し、
+    //    それが Pulumi state に平文で保存される。** SST 側にこれを絞る引数は無い
+    //    （4.17.1 の `.sst/platform/src/components/base/base-ssr-site.ts:105` が
+    //    `...process.env` をハードコードしている。upstream に issue も無い）。
+    //
+    // 何が入っていたか（2026-08-07 に `s3://sst-state-.../app/siko-coffee/*.json` を
+    // 実測。production 217本 / dev 209本・**キー名だけでなく値が平文**）:
+    //   ・`SST_SECRET_*` 17本 — AUTH_SECRET / CRON_SECRET / ADMIN_SESSION_SECRET /
+    //     ORDER_TOKEN_SECRET / REVALIDATE_SECRET / GOOGLE_CLIENT_SECRET /
+    //     LINE_CLIENT_SECRET / SLACK_WEBHOOK_URL / ADMIN_PASSWORD_HASH …
+    //     🔴 **`sst secret` は `secret/<app>/<stage>.json` では暗号化されているのに、
+    //        同じ値がこちらには平文で落ちる**＝暗号化の意味が消えていた。
+    //   ・`AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` / `AWS_SESSION_TOKEN`
+    //     （＋ SST_AWS_* の3本）— デプロイ時の一時資格情報
+    //   ・`ACTIONS_ID_TOKEN_REQUEST_TOKEN`（GitHub OIDC のリクエストトークン・3,870文字）
+    //   ・`GITHUB_*` / `RUNNER_*` / `ACTIONS_*` 52本 — ランナーのメタデータ
+    //
+    // 対処: **`environment` を Pulumi の secret にする**。state のパスフレーズ
+    // （SSM の SecureString）で暗号化されるので、S3 の read 権限だけでは読めなくなる
+    // ＝ SST 自身のシークレット保管と同じ強度になる。`sst diff` の出力も `[secret]` になる。
+    //
+    // 🔑 **「値を落とす」のではなく「暗号化する」を選んだ理由**: ビルダーが受け取る
+    //    環境変数は一切変わらない＝ `next build` の挙動に影響が無い。許可リストで絞ると
+    //    「ビルドが暗黙に必要としていた1本」を落としたときに**無言で壊れる**
+    //    （sharp の wasm32 フォールバックや Sentry の sourcemaps と同型の事故）。
+    //
+    // ⚠️ 既に state に入ってしまった平文は**この変更では消えない**。
+    //    棚卸しと後始末は docs/sst-state-env-leak.md。
+    $util.runtime.registerStackTransformation((args) => {
+      if (args.type !== 'command:local:Command') return undefined
+      if (args.props.environment === undefined) return undefined
+      // `args.opts` は ResourceOptions 型だが、実体は CustomResourceOptions
+      // （`command:local:Command` は custom resource）。`additionalSecretOutputs` は
+      // 後者にしか宣言が無いのでここで絞る。
+      const opts = args.opts as $util.CustomResourceOptions
+      return {
+        props: { ...args.props, environment: $util.secret(args.props.environment) },
+        opts: {
+          ...opts,
+          // inputs だけでなく outputs 側にも同じ値が入るため両方を塞ぐ。
+          additionalSecretOutputs: [
+            ...(opts.additionalSecretOutputs ?? []),
+            'environment',
+          ],
+        },
+      }
+    })
+
     const isProd = $app.stage === 'production'
 
     // ── シークレット ────────────────────────────────────────────
@@ -618,6 +668,69 @@ export default $config({
       transform: {
         cdn: (cdnArgs) => {
           if (adminWaf) cdnArgs.webAclArn = adminWaf.arn
+
+          // ── 静的アセットを Lambda@Edge から外す（教訓45）─────────────
+          //
+          // 🔴🔴 **なぜ要るか。** `protection: 'oac-with-edge-signing'`（5）は
+          //    origin-request に Lambda@Edge（`WebEdgeFn`）を付ける。SST が作る
+          //    ビヘイビアは **default の1本だけ**なので、この関数は
+          //    **キャッシュ MISS のたび全パスで動く**。
+          //    そして**このアカウントの Lambda 同時実行クォータは
+          //    `ap-northeast-1` だけ 1000 で、他は全リージョン 10**。
+          //    ブラウザは1ページで静的アセットを数十本**同時に**取りに行くので、
+          //    **訪問者1人でも 11 を超え**、CloudFront が 503
+          //    （`x-edge-result-type: LambdaLimitExceeded`）を返す。
+          //    実測: 2026-08-03〜08-07 に **503 が 164 件**、うち **159 件（97%）が
+          //    `/_next/static/` 配下**。Googlebot も踏んでいる（SEO 影響）。
+          //
+          // 🔑 **その関数は GET では何もしていない。** 実物は 685 バイトで、
+          //    `if (!["POST","PUT","PATCH"].includes(method)) return request` の後は
+          //    本文の sha256 を `x-amz-content-sha256` に載せるだけ。
+          //    ＝ **本文を持たない GET には一切不要**。
+          //    だから「静的アセットだけ関数を外す」は 5 の防御を一切弱めない。
+          //
+          // 🔴 **`targetOriginId` は `default`（placeholder）のままで正しい。**
+          //    この distribution のオリジンは **`placeholder.sst.dev` の1本だけ**で、
+          //    実際の振り分けは viewer-request の CloudFront Function が KVS の
+          //    `metadata` を読んで `cf.updateRequestOrigin()` で毎回差し替えている
+          //    （`metadata.s3.routes` に `/_next/static` が入っている）。
+          //    ＝ **「S3 オリジンを直接指すビヘイビア」は作れない**（指す先が無い）。
+          //    正しい形は「**同じオリジン・同じ CFF のまま Lambda@Edge だけ付けない**」。
+          //    S3 の OAC 署名は CFF の `setS3Origin()` が毎回付けるので不要にならない。
+          //
+          // 🔴🔴 **`functionAssociations` を default からコピーするのは必須。**
+          //    落とすと **9（非本番の Basic 認証）と 12（apex→www の 308 ＋ HSTS）が
+          //    このビヘイビアだけ効かなくなる**＝ dev の `/_next/static/*` が素通しになる。
+          //    📌 「CloudFront Function は1ビヘイビアに1つ」の制約には触れない。
+          //       制約は *1ビヘイビア・1イベント型につき1つ* であって、
+          //       **同じ関数を複数のビヘイビアに付けるのは可**。
+          //
+          // 📌 **`/images/*` と `/_next/image*` はあえて入れない。** どちらも同じ理屈で
+          //    外せるが 7 日で 11 件 / 3 件しかなく、**効果がほぼ無いのに前提
+          //    （S3 ルート・image オリジン）が増える**。効くのは `/_next/static/*` の
+          //    1,032 件（Lambda@Edge を起動する 1,253 件の **82.4%**）だけ。
+          // 📌 残る 503 は5件で、`/backup/.git/config` 等を並列で舐めたスキャナ。
+          //    ユーザー影響が無いのでここでは扱わない（必要なら WAF のレート制限）。
+          cdnArgs.orderedCacheBehaviors = $output(
+            cdnArgs.defaultCacheBehavior,
+          ).apply((base) => [
+            {
+              pathPattern: '/_next/static/*',
+              targetOriginId: base.targetOriginId,
+              viewerProtocolPolicy: base.viewerProtocolPolicy,
+              // Next のビルド成果物は GET/HEAD しか来ない。POST を許さないことが
+              // 「本文の署名が要らない」＝ Lambda@Edge を外してよい根拠でもある。
+              allowedMethods: ['GET', 'HEAD', 'OPTIONS'],
+              cachedMethods: ['GET', 'HEAD'],
+              compress: true,
+              // 既定と**同じポリシー**を使う（別物を作ると挙動が分岐する）。
+              cachePolicyId: base.cachePolicyId,
+              originRequestPolicyId: base.originRequestPolicyId,
+              // 9 / 12 を落とさないために必須（上の理由を参照）。
+              functionAssociations: base.functionAssociations,
+              // lambdaFunctionAssociations は**付けない**。これがこの変更の目的。
+            },
+          ])
         },
       },
 

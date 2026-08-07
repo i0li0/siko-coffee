@@ -2,11 +2,18 @@
 //
 // 本体の tsconfig.json は sst.config.ts を **exclude している**（`$config` / `sst` /
 // `aws` などのグローバルが `.sst/platform/config.d.ts` にあり、それは `sst install` が
-// 生成する gitignore 対象のため CI には存在しない）。結果として **CI で唯一
-// 型検査されないファイル**になっており、`sst.config.ts` の変更は素通りする。
+// 生成する gitignore 対象のため、チェックアウト直後には存在しない）。
+// ＝ `npx tsc --noEmit` は sst.config.ts を**1行も検査しない**。この設定だけが検査する。
 //
-// 使い方（ローカル限定・`.sst` が要るので CI には入れない）:
+// 使い方（**`sst install` を必ず前に置く**。無いと型が無いだけで大量に落ちる）:
 //   npx sst install && npm run check:sst
+//
+// ✅ **CI でも走っている**（`.github/workflows/ci.yml` の `SST config (type check)`）。
+//    かつて「`.sst` が要るのでローカル限定・CI には入れない」と書いてあったが、
+//    `sst install` は providers を入れるだけで **AWS 資格情報を要求しない**ので
+//    CI で問題なく走る。この誤った但し書きのせいで検査は CI に入らないまま残り、
+//    sst.config.ts の型エラーが本番デプロイまで止まらない状態が続いた
+//    （docs/pour-over-log.md 教訓35 の追記）。
 {
   "extends": "./tsconfig.json",
   "compilerOptions": {

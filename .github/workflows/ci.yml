@@ -30,6 +30,25 @@ jobs:
       - name: SST config (no top-level imports)
         run: npm run check:sst-config
 
+      # 🔴 **`tsconfig.json` は `exclude` に sst.config.ts を入れている**ので、
+      #    下の `npx tsc --noEmit` は sst.config.ts を **1行も検査していない**
+      #    （実測: `npx tsc --noEmit --listFilesOnly | grep -c sst.config.ts` が 0）。
+      #    exclude してあるのは `$config` / `sst` / `aws` の型を供給する
+      #    `.sst/platform/config.d.ts` が `sst install` 生成＝gitignore 対象で、
+      #    チェックアウト直後には存在しないため。専用の tsconfig.sst.json でだけ検査する。
+      #
+      # 🔑 だから `sst install` を先に打って型を生成する。providers を入れるだけなので
+      #    **AWS 資格情報は要らない＝ PR（fork 含む）でも走る**。これを省くと型が無くて
+      #    「常に赤い」ステップになり、本物の型エラーと区別が付かなくなる。
+      #
+      #    これが無いと sst.config.ts の型エラーを止める場所がどこにも無く、
+      #    `SST Deploy`（main への push＝**本番**に入る）まで到達する。
+      #    ＝ 検査は「壊れたことが分かる場所」ではなく「壊す前に止まる場所」に置く。
+      - name: SST config (type check)
+        run: |
+          npx sst install
+          npm run check:sst
+
       - name: ESLint
         run: npm run lint
 
