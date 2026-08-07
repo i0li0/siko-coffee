@@ -170,7 +170,7 @@ done
 
 ---
 
-## C. Pour Over が生んだ小さな負債（残り1本・元3本）
+## C. Pour Over が生んだ小さな負債（残り2本・元4本）
 
 移行の過程で生まれ、まだ回収していないもの。いずれも**実測で現存を確認済み**。
 
@@ -179,6 +179,7 @@ done
 | ~~C-1~~ | ~~**`src/instrumentation-client.ts` に `environment` が無い**~~ | ✅ **完了（2026-08-03）**。`next.config.ts` の `env` が **ビルド時に `STAGE ?? VERCEL_ENV` を焼き込み**、`getClientStage()` が読む。**実ビルド3本の成果物で確認**（AWS 経路・Vercel 経路の正の対照＋未設定時が `(void 0)??"development"` の負の対照）。🔴 残るのは**デプロイ後に Sentry のダッシュボードを人が見る**工程 | `grep -n "environment" src/instrumentation-client.ts` |
 | ~~C-2~~ | ~~**`sentry.edge.config.ts` の `tracesSampleRate: 1`**~~ | ✅ **完了（2026-08-03）**。🔴 **対象は edge だけではなく client との2か所だった**（本番の実ブラウザで `__SENTRY__` を読み `tracesSampleRate: 1` を実測して判明）。率の決定を `tracesSampleRateFor()` へ集約し3ファイルを揃えた（本番10% / それ以外0%）。🔑 soak 中のトラフィックは大半がスキャナなので、100% 送信は**本当に見たいエラーが落ちる**形でクォータを食う | `grep -rn "tracesSampleRate" sentry.*.config.ts src/instrumentation-client.ts` |
 | C-3 | **`BLOB_READ_WRITE_TOKEN` が Vercel 本番 env に残存** | **死んだ env**。4 で S3 へ移したのでコードは `@vercel/blob` を一切参照していない（grep 0件）。実害は無いが、16 の掃除対象 | `grep -rn "BLOB_READ_WRITE_TOKEN\|@vercel/blob" src/ package.json` が空 |
+| C-4 | 🔴 **state に残っている平文シークレットの後始末とローテーション判断** | ✅ **今後の書き込みは塞いだ（2026-08-07）**＝ `sst.config.ts` の stack transformation で `WebBuilder` の `environment` を Pulumi の secret にした（`sst diff` で `[secret]` を実測）。<br>🔴 **残るのは既に入ってしまった分**: `app/` に **845 バージョン**・`snapshot/` 55本・`eventlog/` 55本、それぞれに **`SST_SECRET_*` 17本の平文**（＝失効しない）。ライフサイクルで **①のデプロイ + 30日**で自然に消えるが、**能動削除とローテーションは判断が要る**。手順・副作用・測った数字は [`sst-state-env-leak.md`](sst-state-env-leak.md) §対処② | `npx sst diff --stage dev 2>&1 \| grep -A4 'WebBuilder command:local:Command'` |
 
 ---
 
@@ -309,6 +310,8 @@ aws cloudfront get-distribution-config --id <production の Id> \
 ```
 
 **待ち条件を持たないもの**（いつでも着手できる）: B-1・B-3・R-1・R-5・R-7・R-8・R-10・E-2・E-3・E-5
+🔴 **C-4 だけは待ち条件を持つ**＝「`environment` の secret 化を**本番にデプロイした後**」。
+それより前に古いバージョンを消すと、平文しか無い状態のまま消すことになる。
 （C-1・C-2・R-9 は 2026-08-03 に完了／R-9 のパスワードポリシー分は「やらない」に降格）
 
 ---

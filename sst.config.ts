@@ -61,6 +61,56 @@ export default $config({
       './src/lib/apexRedirect'
     )
 
+    // ── ビルダーに渡る環境変数を state に平文で残さない ────────────
+    //
+    // 🔴🔴 **`sst.aws.Nextjs` はシェルの `process.env` を丸ごとビルダーに渡し、
+    //    それが Pulumi state に平文で保存される。** SST 側にこれを絞る引数は無い
+    //    （4.17.1 の `.sst/platform/src/components/base/base-ssr-site.ts:105` が
+    //    `...process.env` をハードコードしている。upstream に issue も無い）。
+    //
+    // 何が入っていたか（2026-08-07 に `s3://sst-state-.../app/siko-coffee/*.json` を
+    // 実測。production 217本 / dev 209本・**キー名だけでなく値が平文**）:
+    //   ・`SST_SECRET_*` 17本 — AUTH_SECRET / CRON_SECRET / ADMIN_SESSION_SECRET /
+    //     ORDER_TOKEN_SECRET / REVALIDATE_SECRET / GOOGLE_CLIENT_SECRET /
+    //     LINE_CLIENT_SECRET / SLACK_WEBHOOK_URL / ADMIN_PASSWORD_HASH …
+    //     🔴 **`sst secret` は `secret/<app>/<stage>.json` では暗号化されているのに、
+    //        同じ値がこちらには平文で落ちる**＝暗号化の意味が消えていた。
+    //   ・`AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` / `AWS_SESSION_TOKEN`
+    //     （＋ SST_AWS_* の3本）— デプロイ時の一時資格情報
+    //   ・`ACTIONS_ID_TOKEN_REQUEST_TOKEN`（GitHub OIDC のリクエストトークン・3,870文字）
+    //   ・`GITHUB_*` / `RUNNER_*` / `ACTIONS_*` 52本 — ランナーのメタデータ
+    //
+    // 対処: **`environment` を Pulumi の secret にする**。state のパスフレーズ
+    // （SSM の SecureString）で暗号化されるので、S3 の read 権限だけでは読めなくなる
+    // ＝ SST 自身のシークレット保管と同じ強度になる。`sst diff` の出力も `[secret]` になる。
+    //
+    // 🔑 **「値を落とす」のではなく「暗号化する」を選んだ理由**: ビルダーが受け取る
+    //    環境変数は一切変わらない＝ `next build` の挙動に影響が無い。許可リストで絞ると
+    //    「ビルドが暗黙に必要としていた1本」を落としたときに**無言で壊れる**
+    //    （sharp の wasm32 フォールバックや Sentry の sourcemaps と同型の事故）。
+    //
+    // ⚠️ 既に state に入ってしまった平文は**この変更では消えない**。
+    //    棚卸しと後始末は docs/sst-state-env-leak.md。
+    $util.runtime.registerStackTransformation((args) => {
+      if (args.type !== 'command:local:Command') return undefined
+      if (args.props.environment === undefined) return undefined
+      // `args.opts` は ResourceOptions 型だが、実体は CustomResourceOptions
+      // （`command:local:Command` は custom resource）。`additionalSecretOutputs` は
+      // 後者にしか宣言が無いのでここで絞る。
+      const opts = args.opts as $util.CustomResourceOptions
+      return {
+        props: { ...args.props, environment: $util.secret(args.props.environment) },
+        opts: {
+          ...opts,
+          // inputs だけでなく outputs 側にも同じ値が入るため両方を塞ぐ。
+          additionalSecretOutputs: [
+            ...(opts.additionalSecretOutputs ?? []),
+            'environment',
+          ],
+        },
+      }
+    })
+
     const isProd = $app.stage === 'production'
 
     // ── シークレット ────────────────────────────────────────────
