@@ -123,18 +123,24 @@ aws dynamodb get-item --table-name siko-coffee-config --region ap-northeast-1 \
 
 ### 進んでよい条件（全部満たしたら 15 へ）
 
-| # | 条件 | なぜ必要か | 現況（2026-08-03） |
+| # | 条件 | なぜ必要か | 現況（**2026-08-07 更新**） |
 |---|---|---|---|
-| S-1 | **cron 4本すべてが production で1回以上成功** | 移設先の経路が本ごとに未証明。「1本の 200 を他の本の根拠にしない」 | 🔴 **1/4**。`release-reservations` のみ。日次2本は 08-03T20:00Z / 20:20Z、`instagram-refresh` は 08-09T03:30Z |
+| S-1 | **cron 4本すべてが production で1回以上成功** | 移設先の経路が本ごとに未証明。「1本の 200 を他の本の根拠にしない」 | ⏳ **3/4**。`release-reservations` ／ `cleanup-pending`（08-03T20:00:04Z）／ `po-timeouts`（08-03T20:20:26Z）が初回 200。**残るは `instagram-refresh` の 08-09T03:30Z のみ** |
 | S-2 | **`instagram-refresh` が AWS 経由で `refreshedAt` を更新** | 依存 E・L。**60日止まると恒久失効**し手動再認証が要る。**15 は Vercel の月次を消す**ので、その前に AWS 側の更新が実証されている必要がある | 🔴 未（初回 08-09） |
-| S-3 | **アラーム遷移ゼロの連続日数 ≥ 7日** | 週次 cron を1周含むため。**状態ではなく履歴**で見る（教訓42）／**2リージョン**で（教訓43） | ⏳ 08-02T22:36Z 起算 |
-| S-4 | **5xx スパイクの再発が無い、または原因が説明できる** | 08-02 の3回は**原因未特定のまま**終わった。R-4 が入ったので**次に起きたら説明できる**はず | ⏳ 08-03 のデプロイ後は 5xx ゼロ |
+| S-3 | **アラーム遷移ゼロの連続日数 ≥ 7日** | 週次 cron を1周含むため。**状態ではなく履歴**で見る（教訓42）／**2リージョン**で（教訓43） | 🔴 **起算が後退した＝ 08-05T19:53Z**（08-05 の 5xx で破れた）。08-07 時点で **12本すべて OK・以降の遷移なし**（同日の**本番デプロイ5回でも1本も遷移していない**）→ 到達は最短 **08-12T19:53Z** |
+| S-4 | **5xx スパイクの再発が無い、または原因が説明できる** | 08-02 の3回は**原因未特定のまま**終わった。R-4 が入ったので**次に起きたら説明できる**はず | ✅ **満たした**。08-05 の再発を `LambdaLimitExceeded` ＋ 同時実行クォータ 10 まで説明し、#144 で是正した |
 | S-5 | **アイコンのアップロードを本番で1回通す** | 4 の presign→PUT→検閲→公開が**本番では未実測**（dev のみ）。15 の後に壊れていると分かっても Vercel へ戻せない | 🔴 未実施 |
-| S-6 | **B-2（warmer）と B-1（arm64）の採否を決める** | soak を待っていた判断。**未決のまま 15 へ進むと待った意味が消える** | ⏳ B-2 の材料は揃った（コールド率 55.2%） |
+| S-6 | **B-2（warmer）と B-1（arm64）の採否を決める** | soak を待っていた判断。**未決のまま 15 へ進むと待った意味が消える** | ✅ **達成（2026-08-04・オーナー判断）**＝ B-2 は soak 明けに採用、B-1 は soak 明けに単独で測って判断 |
 
-📌 **期間そのものは条件ではない。** S-3 が実質の下限（7日＝ **2026-08-09 以降**）で、
-S-1・S-2 も 08-09 に揃う。＝ **最短で 2026-08-09〜08-10 あたりが 15 の開始可能日**。
+📌 **期間そのものは条件ではない。**
+🔴 ~~S-3 が実質の下限（7日＝ 2026-08-09 以降）で、S-1・S-2 も 08-09 に揃う。
+最短で 2026-08-09〜08-10 あたりが 15 の開始可能日~~ ← **失効**（08-02T22:36Z 起算のままの数字）。
+**S-3 の起算が 08-05T19:53Z に後退したため、実質の下限は `2026-08-12T19:53Z`**
+＝ **15 の開始可能日は 08-12 以降**（S-1・S-2 の 08-09 より S-3 のほうが後ろになった）。
+🔑 **S-3 は「経過を待つ条件」なので、事故のたびに後ろへ動く。**
+**他の条件が揃った時点で S-3 も揃っていると思い込まない**＝毎回いちばん遅いものを引き直す。
 🔴 **S-5 だけは人の操作が要る**（自動化していない）。**忘れると soak を延ばす**ので早めに。
+**残る条件は S-1・S-2・S-3・S-5 の4つ。**
 
 ---
 
@@ -179,7 +185,8 @@ done
 | ~~C-1~~ | ~~**`src/instrumentation-client.ts` に `environment` が無い**~~ | ✅ **完了（2026-08-03）**。`next.config.ts` の `env` が **ビルド時に `STAGE ?? VERCEL_ENV` を焼き込み**、`getClientStage()` が読む。**実ビルド3本の成果物で確認**（AWS 経路・Vercel 経路の正の対照＋未設定時が `(void 0)??"development"` の負の対照）。🔴 残るのは**デプロイ後に Sentry のダッシュボードを人が見る**工程 | `grep -n "environment" src/instrumentation-client.ts` |
 | ~~C-2~~ | ~~**`sentry.edge.config.ts` の `tracesSampleRate: 1`**~~ | ✅ **完了（2026-08-03）**。🔴 **対象は edge だけではなく client との2か所だった**（本番の実ブラウザで `__SENTRY__` を読み `tracesSampleRate: 1` を実測して判明）。率の決定を `tracesSampleRateFor()` へ集約し3ファイルを揃えた（本番10% / それ以外0%）。🔑 soak 中のトラフィックは大半がスキャナなので、100% 送信は**本当に見たいエラーが落ちる**形でクォータを食う | `grep -rn "tracesSampleRate" sentry.*.config.ts src/instrumentation-client.ts` |
 | C-3 | **`BLOB_READ_WRITE_TOKEN` が Vercel 本番 env に残存** | **死んだ env**。4 で S3 へ移したのでコードは `@vercel/blob` を一切参照していない（grep 0件）。実害は無いが、16 の掃除対象 | `grep -rn "BLOB_READ_WRITE_TOKEN\|@vercel/blob" src/ package.json` が空 |
-| C-4 | 🔴 **state に残っている平文シークレットの後始末とローテーション判断** | ✅ **今後の書き込みは塞いだ（2026-08-07）**＝ `sst.config.ts` の stack transformation で `WebBuilder` の `environment` を Pulumi の secret にした（`sst diff` で `[secret]` を実測）。<br>🔴 **残るのは既に入ってしまった分**: `app/` に **845 バージョン**・`snapshot/` 55本・`eventlog/` 55本、それぞれに **`SST_SECRET_*` 17本の平文**（＝失効しない）。ライフサイクルで **①のデプロイ + 30日**で自然に消えるが、**能動削除とローテーションは判断が要る**。手順・副作用・測った数字は [`sst-state-env-leak.md`](sst-state-env-leak.md) §対処② | `npx sst diff --stage dev 2>&1 \| grep -A4 'WebBuilder command:local:Command'` |
+| C-4 | 🔴 **state に残っている平文シークレットの後始末とローテーション判断** | ✅✅ **今後の書き込みは塞いだ＝ PR #146 を本番にデプロイ済み（2026-08-07T06:25:24Z）**。`sst.config.ts` の stack transformation で `WebBuilder` の `environment` を Pulumi の secret にした。**本番 state の現物で検証済み（負の対照つき）**＝ `production.json` 中の `SST_SECRET_` の出現が **変更前 34 → 変更後 0**、`AWS_SESSION_TOKEN` / `"ASIA` / `GITHUB_ACTOR` / `ACTIONS_ID_TOKEN_REQUEST_TOKEN` も**すべて 0**、`inputs.environment` / `outputs.environment` は**どちらも `ciphertext`**。<br>🔴 **残るのは既に入ってしまった分**: `app/` に **845 バージョン**・`snapshot/` 55本・`eventlog/` 55本、それぞれに **`SST_SECRET_*` 17本の平文**（＝失効しない）。**待ち条件は満たしたので B（能動削除）と C（ローテーション）に着手できる。** A（ライフサイクル任せ）なら自然消滅は **2026-09-06 ごろ**。手順・副作用・測った数字は [`sst-state-env-leak.md`](sst-state-env-leak.md) §対処② | `npx sst diff --stage dev 2>&1 \| grep -A4 'WebBuilder command:local:Command'`<br>本番の確認は `aws s3api get-object --bucket sst-state-ntadsuobcmvm --key app/siko-coffee/production.json <file>` → `grep -c SST_SECRET_`（**🔴 落としたファイルは平文なので確認後すぐ消す**） |
+| C-5 | 🔴 **`brace-expansion` の high 勧告が `overrides` に塞がれて自動修正されない** | **Dependabot は止まっていたのではなく、失敗し続けていた**（`Dependabot Updates` が 08-05・08-07 と連続 failure・**PR は1本も出ない**）。勧告は `>=5.0.9` を要求するのに `package.json` の `"minimatch@^10": { "brace-expansion": ">=5.0.8 <6" }` が下限を 5.0.8 に留めていた（ログ: `The latest possible version that can be installed is 5.0.8 because of the following conflicting dependency`）。**直すのは下限を `>=5.0.9 <6` に締め直すだけ**だが、🔴 **メジャー跨ぎの override は eslint を `TypeError: expand is not a function` で壊した前科がある**ので `npm ci` ＋ `npm run lint` を通してから入れる。教訓48 | `gh api repos/i0li0/siko-coffee/dependabot/alerts --jq '.[] \| select(.state=="open")'`<br>`gh run list --workflow "Dependabot Updates" --limit 10` |
 
 ---
 
@@ -309,10 +316,11 @@ aws cloudfront get-distribution-config --id <production の Id> \
             └→ E-4（ブレンド PF の E2E・サブスク）… 決済再開が前提
 ```
 
-**待ち条件を持たないもの**（いつでも着手できる）: B-1・B-3・R-1・R-5・R-7・R-8・R-10・E-2・E-3・E-5
-🔴 **C-4 だけは待ち条件を持つ**＝「`environment` の secret 化を**本番にデプロイした後**」。
-それより前に古いバージョンを消すと、平文しか無い状態のまま消すことになる。
-（C-1・C-2・R-9 は 2026-08-03 に完了／R-9 のパスワードポリシー分は「やらない」に降格）
+**待ち条件を持たないもの**（いつでも着手できる）: B-1・B-3・**C-5**・R-1・R-5・R-7・R-8・R-10・E-2・E-3・E-5
+✅ ~~🔴 C-4 だけは待ち条件を持つ~~ ＝ その待ち条件「`environment` の secret 化を**本番にデプロイした後**」は
+**2026-08-07T06:25:24Z に満たした**（PR #146）。**C-4 も着手可能。**
+（C-1・C-2・R-9 は 2026-08-03 に完了／R-9 のパスワードポリシー分は「やらない」に降格／
+C-4 の①は 2026-08-07 に完了・残るのは既存分の後始末）
 
 ---
 

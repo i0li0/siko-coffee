@@ -21,13 +21,15 @@
 | AWS アカウント | `654512230021` / 主リージョン `ap-northeast-1` |
 | Route53 ホストゾーン | `Z0281603UIOXAI0M8P8R`（`sikocoffee.com`） |
 | **ワイルドカード証明書** | `arn:aws:acm:us-east-1:654512230021:certificate/01195002-424e-44b1-9425-aff38c879765`<br>`sikocoffee.com` + `*.sikocoffee.com` / Issuer: Amazon / **2027-02-11 まで** |
+| **production の CloudFront** | ドメイン `d38zi1bm4zf9e3.cloudfront.net` ／ **DistributionId `E3FC7N27IY6A73`**<br>🔴🔴 **DistributionId はドメインの接頭辞ではない。** 取り違えて CloudWatch を引くと**エラーではなく空配列**が返り、**「5xx ゼロ」に読める**。同じディメンションで `Requests` を引く**負の対照**で判別する（アラーム自身は正しい ID を持っている）<br>別名は `sikocoffee.com` / `www.sikocoffee.com`（**`siko-coffee.com` ではない**・ハイフン無し） |
 | dev の CloudFront | `https://d3ejmruzea0u7a.cloudfront.net`（ディストリビューション `E2KRJP9NS7XXWC`） |
 | dev の AvatarCdn | `https://d22i7l6gqogfbs.cloudfront.net`（`E1PTASTVVV2I6E`・**WAF は付けない**） |
 | dev の web ACL（6） | ~~`AdminWaf-a3068a4`~~ **2026-08-02 に削除**（`WAF_STAGES` から `'dev'` を外した）<br>⚠️ **ステージごとに1枚できる**（$8/月）。`WAF_STAGES` で作るステージを絞る。今は `['production']` |
 | dev の cron（8） | EventBridge Scheduler 4本 → 中継 Lambda `siko-coffee-dev-CronRelayFunction-*` 1つ<br>⚠️ **production は DISABLED で作られる**。有効化は `CRON_STAGES` に `'production'` を足す＝ **13 の DNS 切替後** |
 | デプロイの入口 | **`npm run sst:deploy -- --stage <stage>`**（素の `npx sst deploy` を打たない） |
 | CI のデプロイロール（9.5） | `arn:aws:iam::654512230021:role/siko-coffee-github-deploy`<br>信頼するのは **`repo:i0li0/siko-coffee:ref:refs/heads/main` のみ**／権限は `AdministratorAccess`<br>リポジトリ変数 **`AWS_DEPLOY_ROLE_ARN`** に同じ値。作り直しは `scripts/bootstrap-github-oidc.sh`（冪等） |
-| CI のデプロイ先 | `.github/workflows/ci.yml` の **`strategy.matrix.stage`** の1か所。今は `['dev']`<br>⚠️ **`'production'` を足すのは 13 の DNS 切替後**（`CRON_STAGES` と同じ理由） |
+| CI のデプロイ先 | `.github/workflows/ci.yml` の **`strategy.matrix.stage`** の1か所。✅ **今は `[dev, production]`**（5-4・2026-08-02 の DNS 切替後に `'production'` を追加）<br>🔴🔴 **＝ main への push は本番に入る。** gate は `needs: [lint-typecheck, e2e]` の1本だけ<br>📌 `concurrency: sst-deploy-${{ matrix.stage }}` ＋ `cancel-in-progress: false` なので、**連続マージはステージごとに直列化される**（state ロックで後発が落ちない） |
+| CI のガード（PR で止まる） | `Lint & Type Check` に `check:cron` / `check:sst-config` / **`check:sst`**（#145 で追加）/ `eslint` / `tsc --noEmit` / `vitest`<br>🔴 **`tsconfig.json` は `sst.config.ts` を `exclude` している＝ `tsc --noEmit` は 1行も検査しない。** `sst.config.ts` を見るのは **`npm run check:sst`（`tsconfig.sst.json`）だけ**で、先に `npx sst install` が要る |
 
 ### 🔴 9.5 以降のデプロイ運用（先に読む）
 
@@ -1719,6 +1721,126 @@ CFF がそのまま S3 へ振り、OAC 署名も `setS3Origin()` が毎回付け
 🔴 **S-3（アラーム遷移ゼロが7日連続）は破れた** ＝ 起算は **08-05T19:53Z** に更新。
 ✅ **S-4（5xx 再発が無いか説明できる）はこの調査で満たした。**
 
+### 2026-08-07 — 溜まっていた5本をまとめてマージし、**1本ずつ本番で効き目を測った**
+
+同日に #143〜#147 を main に入れた。**5-4 以降 main への push は本番に入る**ので、
+これは「PR を5本マージした」ではなく **「本番デプロイを5回した」** である。以下は全件の記録。
+
+| PR | 内容 | 種類 | 本番デプロイ |
+|---|---|---|---|
+| #143 | `fast-uri` 3.1.4 → 3.1.5 | Dependabot（推移的） | 05:53:38Z → 05:55:55Z ✅ |
+| #144 | `/_next/static/*` を Lambda@Edge から外す | **信頼性の修正**（上の節） | 05:58:05Z → 06:00:18Z ✅ |
+| #145 | `check:sst` を CI に追加 | ガード | 06:03:16Z → 06:05:31Z ✅ |
+| #146 | SST state の環境変数を secret 化（C-4 の①） | **セキュリティの修正** | 06:17:21Z → 06:19:40Z ✅ |
+| #147 | `js-yaml` 4.3.0 → 4.3.1（high 勧告） | Dependabot（dev 依存） | 06:23:10Z → 06:25:29Z ✅ |
+
+（`SST Deploy (production)` ジョブの開始→終了。dev も同時に走り、**10本すべて成功**。）
+
+**マージ順は安全**だった。`ci.yml` の deploy ジョブが
+`concurrency: sst-deploy-${{ matrix.stage }}` ＋ `cancel-in-progress: false` を持つので、
+連続マージでもステージごとに直列化される（state ロックで後発が落ちない）。
+
+#### #146 の衝突 — **同じ番号の教訓を両側が足していた**
+
+#146 は `mergeStateStatus: DIRTY` だった。衝突は `docs/pour-over-log.md` の1か所だけで、
+**#144 と #146 が両方「教訓45」を新設していた**のが原因（`sst.config.ts` は自動マージで衝突なし）。
+→ #144 側を 45 に残し、**#146 側を 46 に採番し直し**、`sst-state-env-leak.md` の相互参照も追随させた。
+
+🔑 **並行するスタック PR では「連番を持つ文書」が最初にぶつかる。** コードは別の行を触るので
+自動マージされるが、**追記位置が同じ末尾になる文書は必ず衝突する**。
+📌 加えて、#146 の CI は **#145 が入る前に緑になっていた**＝ **`check:sst` は #146 の
+`sst.config.ts` に一度も当たっていなかった**。リベース後にローカルで
+`npx sst install && npm run check:sst`（rc=0）と `npm run lint`（rc=0）を実際に流してからマージした。
+🔑 **「CI が緑だった」は、その CI が今の CI と同じとは限らない。**
+
+#### #144 の効き目 — マージ後に見ると決めていた4点を全部測った
+
+| | 測り方 | 結果 |
+|---|---|---|
+| ① 静的が 200・`LambdaLimitExceeded` でない | 実アセット **60本を同時取得**（`xargs -P 60`）＋ アクセスログを `stats by sc-status` | **全部 200・全部 `server: AmazonS3`**。ログも `200×62 / 202×1` のみで **5xx ゼロ** |
+| ② dev の Basic 認証（9 の非退行） | dev ディストリビューションに無認証で `/` と `/_next/static/...` | **どちらも 401**。dev 側のビヘイビアには `viewer-request` と `viewer-response` の CFF が**両方**コピーされていた |
+| ③ apex → www（12 の非退行） | `https://sikocoffee.com/_next/static/...` | **308 → `https://www.sikocoffee.com/_next/static/...`** |
+| ④ `Throttles` = 0 | 4リージョン ＋ 東京 | 是正後3時間で **全リージョン 0** |
+
+🔴🔴 **①の負荷試験は throttle 条件の再現になっていない。** 打った60本は
+**全部 `x-amz-cf-pop: KIX56`（＝ap-northeast-1・クォータ 1000）**に落ちた＝
+**溢れていたリージョン（クォータ 10）を1本も通っていない**。
+それでも結論が動かないのは、**ビヘイビアから Lambda@Edge の関連付けが 0 本になった**からである。
+
+```
+$ aws cloudfront get-distribution-config --id E3FC7N27IY6A73 \
+    --query 'DistributionConfig.CacheBehaviors'
+  PathPattern: /_next/static/*
+  LambdaFunctionAssociations: 0        ← これが根拠
+  FunctionAssociations: 1 (viewer-request …)   ← 9/12 を守る CFF は残っている
+```
+
+🔑 **効いている根拠は「負荷をかけて壊れなかった」ではなく「経路から外れた」という構成側の事実**（教訓47）。
+負荷試験が示したのは別のことで、**外した後も S3 から正しく配信される**
+（＝ CFF+KVS の動的な振り分けが健在）ことの確認である。**2つを取り違えない。**
+
+📌 ④ の `us-west-2` / `eu-central-1` は `None`（データ点なし）を返す。**これは 0 ではない。**
+負の対照として同期間の `Invocations` を引くと 3時間は同じく `None`、7日では
+**188 / 225 invocations・108 / 5 throttles** が出る＝**メトリクスは出る所には出ている**ので、
+3時間の `None` は「計測できていない」ではなく「トラフィックが無い」と読める（教訓42 の型）。
+
+#### #146 の効き目 — **本番 state の現物を、変更前と同じ手段で測った**
+
+`s3://sst-state-ntadsuobcmvm/app/siko-coffee/production.json` を**2版**ダウンロードして
+生文字列を数えた（`list-object-versions` でデプロイ前後の `VersionId` を取る）。
+
+| 生文字列の出現回数 | **06:05:26Z**（#145 のデプロイ＝**変更前**） | **06:25:24Z**（#147 のデプロイ＝**変更後**） |
+|---|---|---|
+| `SST_SECRET_` | **34** | **0** |
+| `ACTIONS_ID_TOKEN_REQUEST_TOKEN` | 2 | **0** |
+| `AWS_SESSION_TOKEN` | 4 | **0** |
+| `GITHUB_ACTOR` | 4 | **0** |
+| `"ASIA` | 4 | **0** |
+| `WebBuilder` の `inputs.environment` / `outputs.environment` | 平文 dict | **どちらも `ciphertext`** |
+
+🔑 **変更前を測ったことがこの検証の本体である。** 変更後だけ見ると
+「そもそも入っていなかった」と区別が付かない（`feedback-verification-baseline` の型）。
+🔴 **落とした state ファイルはローカルに平文の本番シークレットを持つ＝検証後すぐ削除する。**
+
+📌 **どの版がどのデプロイの産物かは、時刻で突き合わせないと外す。**
+最初この2版を「#145 のデプロイ」「**#146** のデプロイ」と読んだが、実際の production デプロイ窓は
+**#145 = 06:03:16→06:05:31 / #146 = 06:17:21→06:19:40 / #147 = 06:23:10→06:25:29** で、
+**`06:25:24Z` の版は #147 が書いたもの**だった（#146 ではない）。
+🔑 **結論はむしろ強くなる**＝ secret 化は**それを入れたデプロイだけの効果ではなく、
+次のデプロイでも維持されている**ことまで示している（教訓41 の「次の deploy が残骸を作り直さないか」と同型）。
+🔑 **規則: 成果物を「直前にやったこと」の産物と決めつけない。ジョブの開始・終了時刻と突き合わせる。**
+
+✅ これで **C-4 の待ち条件「secret 化を本番にデプロイした後」を満たした**
+＝ B（古いバージョンの能動削除）と C（ローテーション判断）に着手できる状態になった。
+A（ライフサイクル任せ）を選ぶなら自然消滅は **2026-09-06 ごろ**。
+
+#### 🔴 ついでに見つかった別件 — **Dependabot が PR も出さずに失敗し続けていた**
+
+`gh api repos/i0li0/siko-coffee/dependabot/alerts` で open が2件（どちらも high）:
+`js-yaml`（→ #147 で解消）と **`brace-expansion`（未解消）**。
+後者は `Dependabot Updates` ワークフローが **08-05・08-07 と連続 failure** で、
+**PR が1本も作られていなかった**。ログの該当行:
+
+```
+The latest possible version that can be installed is 5.0.8
+because of the following conflicting dependency:   … minimatch …
+```
+
+原因は**自分たちが書いた override の下限が古いこと**。勧告は `brace-expansion >= 5.0.9` を
+要求するのに、`package.json` は `"minimatch@^10": { "brace-expansion": ">=5.0.8 <6" }` のままだった。
+＝ **override が Dependabot の自動修正を塞いでいた**（教訓48）。
+直し方は下限を `>=5.0.9 <6` に締め直すだけだが、**メジャー跨ぎの override は eslint を
+`TypeError: expand is not a function` で壊した前科がある**ので、
+`npm ci` ＋ `npm run lint` まで通してから入れること。
+
+#### soak の現況（この日の終わり）
+
+- **アラームは2リージョン計12本すべて OK**。最終遷移は **08-05T19:53Z**（例の 5xx）で、
+  **5回の本番デプロイでは1本も遷移していない**。
+- 🔴 **S-3 の到達は最短 `2026-08-12T19:53Z`** ＝ **15 の開始可能日は 08-12 以降**。
+  以前ここに書いていた「最短 08-09〜08-10」は **08-02T22:36Z 起算のままの古い数字で、失効している**
+  （S-1/S-2 の 08-09 より S-3 のほうが後ろになった）。
+
 ---
 
 ## 教訓
@@ -2866,6 +2988,63 @@ Lambda@Edge が重い・遅いという印象を与えるが、実物は **685 �
 対処と残作業は [`sst-state-env-leak.md`](sst-state-env-leak.md)。
 🔑 **選んだのは「値を落とす」ではなく「secret にする」**＝許可リストで絞ると
 ビルドが暗黙に必要としていた1本を落として**無言で壊れる**（教訓1 と同じ形）。
+
+### 47. **「壊れなかった」は「直った」の証拠にならない — 何が根拠なのかを取り違えない**
+
+#144（静的アセットを Lambda@Edge から外す）の確認で、実アセット **60本を同時に取得**して
+**全部 200・5xx ゼロ**を得た。これを「直った証拠」と読みかけたが、**それは誤りだった**。
+打った60本は **全部 `x-amz-cf-pop: KIX56`（ap-northeast-1・クォータ 1000）**に落ちており、
+**壊れていた条件（クォータ 10 のリージョン）を1本も通っていない**。
+＝ **同じ試験は修正前に打っても緑になった可能性が高い。**
+
+本当の根拠は負荷ではなく**構成側の事実**だった:
+
+```
+PathPattern: /_next/static/*
+LambdaFunctionAssociations: 0     ← 呼ばれない関数は絞られない
+```
+
+🔑 **規則: 修正の根拠は「症状が出なかったこと」ではなく
+「症状が出る仕組みが無くなったこと」に置く。**
+前者は条件を再現できたときにだけ意味を持ち、**再現できたかどうかは別途証明が要る**
+（今回はエッジのロケーションが選べない＝**そもそも再現手段が無かった**）。
+
+🔑 **だからといって試験が無駄なのではない。示したものが違うだけである。**
+60本の試験が実際に示したのは **「Lambda@Edge を外した後も S3 から正しく配信される」**
+＝ CFF+KVS の動的な振り分けが健在であること（**いちばん壊しやすい所**）。
+📌 **「何を確かめた試験なのか」を、緑になった後に言葉にしてみる。**
+言葉にできないなら、それは**安心の材料であって証拠ではない**。
+
+（教訓42「状態ではなく履歴を見る」の親戚。あちらは*見る対象*の取り違え、
+こちらは*得られた結論*の取り違えである。）
+
+### 48. **自動で直るはずのものは、自動が止まっていないかを別途見る**
+
+`brace-expansion` の high 勧告が未対応のまま残っていた。**Dependabot が動いていなかったのではなく、
+動いて失敗し続けていた**（`Dependabot Updates` が 08-05・08-07 と連続 failure・**PR は1本も出ない**）。
+原因は**自分たちが以前書いた `overrides` の下限が古いこと**で、
+勧告が要求する `>=5.0.9` に対し `">=5.0.8 <6"` のままだった
+＝ **過去の脆弱性対応が、今日の脆弱性対応を塞いでいた**（`feedback-dependency-pinning` の再演）。
+
+🔴 **アラート一覧を見ても、この状態は見えない。** 見えるのは「未対応が1件ある」だけで、
+**「PR が来ていない理由」は書いていない**。理由はワークフローの**失敗履歴**の側にある。
+
+🔑 **規則: 自動化に任せた仕事には、
+「結果（アラートが減ったか）」と「機構（ジョブが成功しているか）」の2つの監視を置く。**
+機構が黙って壊れると、結果は**「まだ誰も対応していない」と同じ見え方**になる＝
+**放置と故障が区別できない。**
+
+📌 見つけ方（コマンド）:
+
+```bash
+gh api repos/<owner>/<repo>/dependabot/alerts \
+  --jq '.[] | select(.state=="open") | {pkg:.dependency.package.name, fixed:.security_vulnerability.first_patched_version.identifier}'
+gh run list --workflow "Dependabot Updates" --limit 10   # ← 失敗が続いていないか
+```
+
+**`first_patched_version` と `package.json` の `overrides` の下限を突き合わせる**のが要点。
+（教訓44「診断は事故の前に用意する」と同じ形で、**これは事故ですらなく“何も起きない”故障**である。
+何も起きない故障は、探しに行かないと永久に見つからない。）
 
 ---
 
