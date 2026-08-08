@@ -236,7 +236,7 @@ done
 | ~~C-1~~ | ~~**`src/instrumentation-client.ts` に `environment` が無い**~~ | ✅ **完了（2026-08-03）**。`next.config.ts` の `env` が **ビルド時に `STAGE ?? VERCEL_ENV` を焼き込み**、`getClientStage()` が読む。**実ビルド3本の成果物で確認**（AWS 経路・Vercel 経路の正の対照＋未設定時が `(void 0)??"development"` の負の対照）。🔴 残るのは**デプロイ後に Sentry のダッシュボードを人が見る**工程 | `grep -n "environment" src/instrumentation-client.ts` |
 | ~~C-2~~ | ~~**`sentry.edge.config.ts` の `tracesSampleRate: 1`**~~ | ✅ **完了（2026-08-03）**。🔴 **対象は edge だけではなく client との2か所だった**（本番の実ブラウザで `__SENTRY__` を読み `tracesSampleRate: 1` を実測して判明）。率の決定を `tracesSampleRateFor()` へ集約し3ファイルを揃えた（本番10% / それ以外0%）。🔑 soak 中のトラフィックは大半がスキャナなので、100% 送信は**本当に見たいエラーが落ちる**形でクォータを食う | `grep -rn "tracesSampleRate" sentry.*.config.ts src/instrumentation-client.ts` |
 | C-3 | **`BLOB_READ_WRITE_TOKEN` が Vercel 本番 env に残存** | **死んだ env**。4 で S3 へ移したのでコードは `@vercel/blob` を一切参照していない（grep 0件）。実害は無いが、16 の掃除対象 | `grep -rn "BLOB_READ_WRITE_TOKEN\|@vercel/blob" src/ package.json` が空 |
-| C-4 | ~~**state に残っている平文シークレットの後始末**~~ ＋ ⏳ ローテーション | ✅✅ **①書き込みを塞ぐ（PR #146・2026-08-07T06:25:24Z 本番デプロイ）＋ ②既存分の削除（2026-08-08）とも完了＝ state 内の平文はゼロ**。<br>**② の実測**: 1,355件 2,341.9MB → **253件 86.8MB**（**1,102件・2,255MB を削除**）。`app/` の現行2本（`dev.json`/`production.json`）は保持、`lock/`/`update/`/`secret/` は不変、delete marker 68→68。<br>🔑 **削除件数が合っても目的は果たせていない**ので、**残った38オブジェクトを全部走査して平文ゼロを確認した**。途中 `eventlog/` 3本に `SST_SECRET_` が出て一度「残存」と誤判定したが、**入っていたのは名前だけ**（`"ASIA` が 0件・`SST_SECRET_` が1本あたり1回。値が実在した版は 4〜8件 / 2〜4回）。<br>📌 **境界は日付を決め打ちせず実測した**（#146 のデプロイ完了時刻の2秒前が既にクリーンだった＝決め打ちは外れていた）。<br>⏳ **残るは C（ローテーション）のみ。方針は決定済み**＝ 外部発行3本（Slack/Google/LINE）＋ `CRON_SECRET`/`REVALIDATE_SECRET`/`ORDER_TOKEN_SECRET` を回し、`AUTH_SECRET`・`ADMIN_*` は据え置き。**外部3本は人の作業**で、**6本まとめて1回の再デプロイ**で効かせる。詳細は [`sst-state-env-leak.md`](sst-state-env-leak.md) §対処② | `aws s3api list-object-versions --bucket sst-state-ntadsuobcmvm --output json \| jq '.Versions \| length'`（現在 **253**）<br>**🔴 落としたファイルは平文なので確認後すぐ消す** |
+| C-4 | 🔴 **state に残っている平文シークレットの後始末とローテーション** | 🔴🔴 **2026-08-08 に「完了」と書いたのは誤りだった（同日中に訂正）。①はまだ塞げていない。**<br>**何が本当か（99オブジェクト全走査・実測）**: `app/` 85件 **平文0**／`snapshot/` 7件 **平文0**／🔴 **`eventlog/` 7件は全件が平文**（production は**17本すべての値**・dev は9本・各ファイルに STS セッショントークン2本）。<br>🔴 **うち4件は 2026-08-08T08:04 / 08:09 のデプロイが書いた＝残骸ではなく継続中**。**#146 は `app/` にしか効いていない。**<br>✅ **②の削除自体は本物で有効**: 1,355件 2,341.9MB → 253件 86.8MB（**1,102件・2,255MB を削除**）。`app/` の現行2本は保持、`lock/`/`update/`/`secret/` は不変、delete marker 68→68。**消した対象が違ったのではなく「終わった」の判定が早すぎた。**<br>🔴 **誤判定の原因**: 「ラベルでなく中身の形を探す」として `"ASIA`（引用符付き）を対照にしたが、**`eventlog/` は JSON ではなく `NAME,,,VALUE` のカンマ区切り**で引用符が付かず、一致0を「値なし」と読んだ。**正しい検出は `SST_SECRET_[A-Z0-9_]*,,,` と STS トークンの `IQoJb3JpZ2lu`**（教訓52）。<br>⏳ **順序は「①塞ぐ →②消す →③回す」。今は①に戻っている。** 🔴 **ローテーションはここが片付くまで着手しない**（塞ぐ前に回すと新しい値が同じ穴に流れる＝`CRON_SECRET` が 08-02 に回したのに 08-07 まで漏れ続けたのと同じ形）。<br>⚠️ **当座の緩和は実施済み（08-08）**＝ `scripts/harden-sst-state-bucket.sh`（冪等）で `eventlog/` の lifecycle を **30日→1日**、`snapshot/` に7日を新設し、**既存の `eventlog/` 7件を削除（残バージョン0）**。🔴 **ただし書き込みは止まっていない**うえ、**`Days:1` は「1日で消える」ではない**（S3 の評価は1日1回の非同期バッチ＝実効の露出は最長約2日／`Days` の最小値は 1 なので lifecycle だけでは即時削除は作れない）。詳細は [`sst-state-env-leak.md`](sst-state-env-leak.md) §対処② | 🔴 **`grep -c SST_SECRET_` では判定できない**（名前にも一致する）<br>`aws s3api get-object --bucket sst-state-ntadsuobcmvm --key <eventlog のキー> f.json` → `grep -o 'SST_SECRET_[A-Z0-9_]*,,,' f.json \| wc -l`（0 なら値は無い）<br>**🔴 落としたファイルは平文なので確認後すぐ消す** |
 | C-5 | 🔴 **`brace-expansion` の high 勧告が `overrides` に塞がれて自動修正されない** | **Dependabot は止まっていたのではなく、失敗し続けていた**（`Dependabot Updates` が 08-05・08-07 と連続 failure・**PR は1本も出ない**）。勧告は `>=5.0.9` を要求するのに `package.json` の `"minimatch@^10": { "brace-expansion": ">=5.0.8 <6" }` が下限を 5.0.8 に留めていた（ログ: `The latest possible version that can be installed is 5.0.8 because of the following conflicting dependency`）。**直すのは下限を `>=5.0.9 <6` に締め直すだけ**だが、🔴 **メジャー跨ぎの override は eslint を `TypeError: expand is not a function` で壊した前科がある**ので `npm ci` ＋ `npm run lint` を通してから入れる。教訓48 | `gh api repos/i0li0/siko-coffee/dependabot/alerts --jq '.[] \| select(.state=="open")'`<br>`gh run list --workflow "Dependabot Updates" --limit 10` |
 
 ---
@@ -370,9 +370,13 @@ aws cloudfront get-distribution-config --id <production の Id> \
 **待ち条件を持たないもの**（いつでも着手できる）: B-1・B-3・R-1・R-5・R-7・R-8・R-10・E-2・E-3・E-5
 （C-1・C-2・R-9 は 2026-08-03 に完了／R-9 のパスワードポリシー分は「やらない」に降格）
 
-**C-4 は ①塞ぐ（2026-08-07・#146）→ ②消す（2026-08-08）まで完了。**
-残る **C（ローテーション）は方針決定済みだが、外部3本（Slack/Google/LINE）の再発行が人の作業**なので、
-そこが**新しい待ち条件**になっている（6本まとめて1回の再デプロイで効かせるため）。
+🔴 **C-4 は ①（塞ぐ）に差し戻し。** #146 は `app/` にしか効いておらず、
+**`eventlog/` にはデプロイのたびに 17本の値と STS トークンが平文で書かれ続けている**（08-08 実測）。
+②の削除（1,102件）は有効だったが、①が未完なので**消しても次のデプロイで再び書かれる**。
+
+**C（ローテーション）は方針決定済みだが着手しない。** 待ち条件は
+「外部3本の再発行（人の作業）」**より前に、まず `eventlog/` を塞ぐこと**。
+🔑 **塞ぐ前に回すと新しい値を同じ穴に流すだけ**（`CRON_SECRET` で実証済み）。
 
 **C-5** は PR #149 で対処（`brace-expansion` の override 下限 ＋ Dependabot に見えていなかった `nanoid`）。
 
