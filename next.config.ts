@@ -2,6 +2,7 @@ import type { NextConfig } from 'next';
 import path from 'path';
 import fs from 'fs';
 import { withSentryConfig } from '@sentry/nextjs';
+import { buildConnectSrc } from './src/lib/csp';
 
 // Worktree is at <repo>/.claude/worktrees/<name>, so 3 levels up is the repo root.
 // In the main repo __dirname === repo root, so resolve('../..') won't exist but
@@ -27,6 +28,15 @@ const isProd = process.env.NODE_ENV === 'production';
 const scriptSrc = isProd
   ? "script-src 'self' 'unsafe-inline' https://www.googletagmanager.com https://www.google-analytics.com"
   : "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://www.googletagmanager.com https://www.google-analytics.com";
+
+// 🔴🔴 アイコンのアップロード先（S3）を connect-src に入れる（Pour Over 4 / soak の S-5）。
+//
+// **2026-08-08 に本番で S-5 を実施して発覚した。** ブラウザは presigned URL への PUT を
+// 送る前に CSP で止めており、UI は「アップロードに失敗しました」としか出ていなかった。
+// 4（Vercel Blob → S3）でストレージは移したが CSP を直しておらず、
+// `img-src` に `*.cloudfront.net` は足してあったので**表示だけは通っていた**。
+// 組み立てとテストは `src/lib/csp.ts`（理由と再発の経緯もそこに書いてある）。
+const connectSrc = buildConnectSrc();
 
 const securityHeaders = [
   {
@@ -62,12 +72,9 @@ const securityHeaders = [
       // img-src はスクリプトを実行しないので、この範囲の緩さは許容する。
       // 12（独自ドメイン）以降に `avatars.sikocoffee.com` へ寄せれば1ホストに絞れる。
       "img-src 'self' data: blob: https://*.cdninstagram.com https://cdninstagram.com https://www.google-analytics.com https://*.cloudfront.net",
-      // Sentry の ingest を許可する。これが無いとブラウザ側の Sentry イベントは
-      // CSP で全てブロックされる（2026-07-27 に本番でも起きていたことを実測）。
-      // DSN は src/instrumentation-client.ts にハードコードされており、送信自体は
-      // 常に試みられていたため、**クライアント由来のエラーだけが静かに失われていた**。
-      // ホストは DSN 固定なのでワイルドカードにせず限定する。
-      "connect-src 'self' https://www.google-analytics.com https://region1.google-analytics.com https://o4511541920858112.ingest.us.sentry.io",
+      // 送信先の許可リスト。組み立ては上の `connectSrc` に集約してある
+      // （アイコンのアップロード先 S3 を**ビルド時に1ホストだけ**足すため）。
+      connectSrc,
       // Sentry Session Replay は blob: から Worker を生成する。worker-src 未指定だと
       // script-src にフォールバックし blob: が無いためブロックされる。
       "worker-src 'self' blob:",
