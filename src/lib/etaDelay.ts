@@ -149,7 +149,9 @@ export async function recalculateOrderEta(input: RecalculateInput): Promise<Reca
     })
   }
 
-  notifySlack(
+  // 🔴 `await` する。Lambda はハンドラが返ると凍るので、投げっぱなしだと通知が
+  //    次の呼び出しまで飛ばない（`src/lib/slackNotify.ts` 参照）。throw はしない。
+  await notifySlack(
     `⏳ 注文 ${input.orderId} の到着予定が ${deltaDays}日 遅延（${tier}）。豆 ${input.beanId} / 焙煎者 ${input.roasterId}`,
   )
 

@@ -70,7 +70,10 @@ export async function POST(request: NextRequest) {
   }
 
   // 新着通知（本文＋導線のみ。個人情報は無い）。失敗してもユーザー操作はブロックしない。
-  void notifySlack(
+  // 🔴 `void` をやめて `await` にした。Lambda はハンドラが返ると凍るので、
+  //    投げっぱなしだと通知が次の呼び出しまで飛ばない（`src/lib/slackNotify.ts` 参照）。
+  //    `notifySlack` は throw しないので、待っても送信自体は壊れない。
+  await notifySlack(
     `📝 新しいフィードバック [${FEEDBACK_SOURCE_LABELS[source]} / ${FEEDBACK_CATEGORY_LABELS[parsed.data.category]}]\n${parsed.data.content}`,
   )
 
