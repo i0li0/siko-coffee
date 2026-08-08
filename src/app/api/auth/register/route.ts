@@ -94,7 +94,9 @@ export async function POST(request: NextRequest) {
   )
 
   sendVerificationEmail(normalizedEmail).catch(() => {})
-  notifySlack(`🆕 新規ユーザー登録: ${normalizedEmail}`)
+  // 🔴 `await` する。Lambda はハンドラが返ると凍るので、投げっぱなしだと通知が
+  //    次の呼び出しまで飛ばない（`src/lib/slackNotify.ts` 参照）。throw はしない。
+  await notifySlack(`🆕 新規ユーザー登録: ${normalizedEmail}`)
 
   return NextResponse.json({ ok: true }, { status: 201 })
 }

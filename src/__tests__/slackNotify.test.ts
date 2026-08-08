@@ -83,6 +83,41 @@ describe('notifySlack', () => {
     expect(Sentry.captureException).not.toHaveBeenCalled()
   })
 
+  // 🔴 呼び出し側が `await` する設計なので、Slack が応答しないとユーザーの
+  // リクエストがそのまま待たされ、Lambda の timeout（30秒）に達すると
+  // **通知の失敗が本体の失敗に化ける**。上限が入っていることを固定する。
+  it('タイムアウト用の AbortSignal を渡している', async () => {
+    process.env.SLACK_WEBHOOK_URL = 'https://hooks.slack.example/ok'
+    const fetchMock = vi.fn(
+      async (_url: string, _init: RequestInit) => new Response('ok', { status: 200 }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    const notifySlack = await load()
+    await notifySlack('テスト')
+
+    const init = fetchMock.mock.calls[0][1]
+    expect(init.signal).toBeInstanceOf(AbortSignal)
+  })
+
+  // 中断（タイムアウト）も握り潰さない。
+  it('タイムアウトで中断されたら Sentry に送る', async () => {
+    process.env.SLACK_WEBHOOK_URL = 'https://hooks.slack.example/slow'
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        throw new DOMException('The operation was aborted.', 'TimeoutError')
+      }),
+    )
+    const consoleErr = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    const notifySlack = await load()
+    await expect(notifySlack('テスト')).resolves.toBeUndefined()
+
+    expect(Sentry.captureException).toHaveBeenCalledTimes(1)
+    consoleErr.mockRestore()
+  })
+
   // webhook URL 自体が秘密なので、通知の中身に混ぜない。
   it('エラー内容に webhook URL を含めない', async () => {
     const url = 'https://hooks.slack.example/T000/B000/SUPERSECRETTOKEN'
