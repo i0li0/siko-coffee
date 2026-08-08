@@ -16,7 +16,7 @@
   「今すべて OK」と読んで見逃した。
 - 🔴 **列挙は必ず全リージョンで回す**（教訓43）。**CloudFront 系のアラームは us-east-1**。
   `--region ap-northeast-1` だけで数えた「6本」は母集団が欠けていた。
-- **最終実測日: 2026-08-03**（14 = soak 初日。切替の約21時間後）。
+- **最終実測日: 2026-08-08**（soak 6日目。C-4 の削除実施日）。
 
 ## 全体像
 
@@ -24,7 +24,7 @@
 |---|---|---|
 | **A. Pour Over 本編の残り** | **6** | 21タスクのうち未完のもの。これが終われば Pour Over は完了 |
 | **B. 意図的に見送った技術判断** | 4 | やらないと決めたのではなく、**判断材料が揃うまで待っている**もの |
-| **C. Pour Over が生んだ小さな負債** | **1**（元3・C-1/C-2 完了） | 移行の過程で生まれ、まだ回収していないもの |
+| **C. Pour Over が生んだ小さな負債** | **3**（元5・C-1/C-2 完了、C-4 は削除まで完了） | 移行の過程で生まれ、まだ回収していないもの |
 | **D. 推奨タスク（R-1〜R-10）** | 9 | コスト非制約の前提で挙がった改善。R-3 は不採用確定 |
 | **E. スコープ外と明記したもの** | 5 | **Pour Over と混ぜないと決めた**もの。完了後に着手する |
 
@@ -42,7 +42,7 @@
 | ~~5-2~~ | ~~**4 の②③回収**~~ | — | ✅ **完了（2026-08-02）。ただし前提が2つとも変わっていた**（下記） |
 | ~~5-3~~ | ~~`CRON_STAGES` に `'production'` ＋ 発火窓ずらし~~ | — | ✅ **完了**（#135 → 403 の修正 #136 → **#137**）。🔴 計画の「切替後なら安全」は誤りだった（下記）。🔴 **有効化が日次枠を過ぎた後だったため `cleanup-pending` / `po-timeouts` の初回は 08-03T20:00Z / 20:20Z**（14 の S-1 で追跡） |
 | ~~5-4~~ | ~~`ci.yml` の `matrix.stage` に `production`~~ | — | ✅ **完了**（#134）＝ `[dev, production]`。🔴 **main への push は本番に入る** |
-| 5-6 | Instagram トークンの確認 | **2026-08-09**（9/2 から前倒し） | `refreshedAt` = **2026-08-01T00:21:11Z**（08-03 時点で不変）＝失効 **2026-09-30**。✅ 5-3 で AWS の**週次**が動くので、**初回 08-09T03:30Z に更新されるか**を見れば AWS 側の経路を3週間早く確認できる＝ 14 の **S-2** |
+| 5-6 | Instagram トークンの確認 | **2026-08-09T03:30Z**（日曜） | `refreshedAt` = **2026-08-04T17:41:16Z**（08-08 実測）＝失効 **2026-10-03**。🔴 **これは AWS の週次ではなく手動 invoke による更新**（上の S-2 の節）。スケジュールは `cron(30 3 ? * SUN *)` ENABLED で**まだ一度も発火していない**＝ 08-09 の実行で S-1 と S-2 が同時に片付く |
 | **14** | **soak 期間**（Vercel を生かしたまま観測） | 切替後 | ⏳ **進行中。初日（2026-08-03）の実測は異常ゼロ**（アラーム遷移は 08-02T22:36Z 以降なし・5xx ゼロ・cron 109回連続 200）。🔴 **`cleanup-pending` と `po-timeouts` は production でまだ一度も走っていない**（5-3 の有効化が日次20:00/20:20 UTC を過ぎた後だった）＝ **初回は 2026-08-03T20:00Z / 20:20Z**。Vercel の設定には一切触らない |
 | **15** | **Vercel 解約 ＋ 決済再開** | soak の後 | ①Stripe 新キー →②`PAYMENTS_ENABLED=true` →③再デプロイ の順厳守。🔴 **IAM アクセスキー `AKIAZQY7YB2C3BYMZCYG`（`shun` / AdministratorAccess）の削除を必ず含める**＝解約しても AWS 側に残る |
 | **16** | **Vercel 依存の撤去（①〜⑧）** | 15 の後 | 🔴 `vercel.json` だけ消すと **build が全環境で落ちる**（`prebuild` → `check-cron-schedule.mjs`）。📌 計画の表は長く「①〜⑦」と書いていたが**本文には⑧まである**（本作業で訂正） |
@@ -125,9 +125,9 @@ aws dynamodb get-item --table-name siko-coffee-config --region ap-northeast-1 \
 
 | # | 条件 | なぜ必要か | 現況（**2026-08-07 更新**） |
 |---|---|---|---|
-| S-1 | **cron 4本すべてが production で1回以上成功** | 移設先の経路が本ごとに未証明。「1本の 200 を他の本の根拠にしない」 | ⏳ **3/4**。`release-reservations` ／ `cleanup-pending`（08-03T20:00:04Z）／ `po-timeouts`（08-03T20:20:26Z）が初回 200。**残るは `instagram-refresh` の 08-09T03:30Z のみ** |
-| S-2 | **`instagram-refresh` が AWS 経由で `refreshedAt` を更新** | 依存 E・L。**60日止まると恒久失効**し手動再認証が要る。**15 は Vercel の月次を消す**ので、その前に AWS 側の更新が実証されている必要がある | 🔴 未（初回 08-09） |
-| S-3 | **アラーム遷移ゼロの連続日数 ≥ 7日** | 週次 cron を1周含むため。**状態ではなく履歴**で見る（教訓42）／**2リージョン**で（教訓43） | 🔴 **起算が後退した＝ 08-05T19:53Z**（08-05 の 5xx で破れた）。08-07 時点で **12本すべて OK・以降の遷移なし**（同日の**本番デプロイ5回でも1本も遷移していない**）→ 到達は最短 **08-12T19:53Z** |
+| S-1 | **cron 4本すべてが production で1回以上成功** | 移設先の経路が本ごとに未証明。「1本の 200 を他の本の根拠にしない」 | ⏳ **3/4 のまま**。`release-reservations` ／ `cleanup-pending`（08-03T20:00:04Z）／ `po-timeouts`（08-03T20:20:26Z）が初回 200。**直近48hも全て 200**（08-08 実測: 288回/2回/2回・`distinct_status=1`）。**残るは `instagram-refresh` の 08-09T03:30Z**（下記の 🔴 も参照） |
+| S-2 | **`instagram-refresh` が AWS 経由で `refreshedAt` を更新** | 依存 E・L。**60日止まると恒久失効**し手動再認証が要る。**15 は Vercel の月次を消す**ので、その前に AWS 側の更新が実証されている必要がある | ⚠️ **半分だけ満たした**（下記）。**アプリ側の経路は実証済み**（08-04T17:41:16Z に 200・`expiresIn` 5,184,000）だが、**それは手動 invoke でスケジュールは未発火**。**失効期限は 09-30 → `2026-10-03T17:41Z` に後ろ倒し** |
+| S-3 | **アラーム遷移ゼロの連続日数 ≥ 7日** | 週次 cron を1周含むため。**状態ではなく履歴**で見る（教訓42）／**2リージョン**で（教訓43） | 🟢 **維持中**。**08-08T07:29Z 実測＝ 12本すべて OK・08-05T19:53:06Z 以降の遷移ゼロ**（2リージョンで `describe-alarm-history` を全本走査）。経過 **2日11時間** → 到達は **08-12T19:53Z**（残り約4.5日）。CloudFront 5xx も**直近48hは Max 0.0**（負の対照つき・下記） |
 | S-4 | **5xx スパイクの再発が無い、または原因が説明できる** | 08-02 の3回は**原因未特定のまま**終わった。R-4 が入ったので**次に起きたら説明できる**はず | ✅ **満たした**。08-05 の再発を `LambdaLimitExceeded` ＋ 同時実行クォータ 10 まで説明し、#144 で是正した |
 | S-5 | **アイコンのアップロードを本番で1回通す** | 4 の presign→PUT→検閲→公開が**本番では未実測**（dev のみ）。15 の後に壊れていると分かっても Vercel へ戻せない | 🔴 未実施 |
 | S-6 | **B-2（warmer）と B-1（arm64）の採否を決める** | soak を待っていた判断。**未決のまま 15 へ進むと待った意味が消える** | ✅ **達成（2026-08-04・オーナー判断）**＝ B-2 は soak 明けに採用、B-1 は soak 明けに単独で測って判断 |
@@ -141,6 +141,57 @@ aws dynamodb get-item --table-name siko-coffee-config --region ap-northeast-1 \
 **他の条件が揃った時点で S-3 も揃っていると思い込まない**＝毎回いちばん遅いものを引き直す。
 🔴 **S-5 だけは人の操作が要る**（自動化していない）。**忘れると soak を延ばす**ので早めに。
 **残る条件は S-1・S-2・S-3・S-5 の4つ。**
+
+### 🔴 S-2 は「達成」と読み違えかけた — トークンは**手動 invoke**で更新されていた（2026-08-08 実測）
+
+`refreshedAt` を引くと **`2026-08-04T17:41:16.339Z`** で、記録されていた
+`2026-08-01T00:21:11Z` から進んでいた。**ここで「AWS の週次が動いた＝S-2 達成」と読むのは誤り。**
+
+| 測ったこと | 結果 |
+|---|---|
+| AWS の schedule | `cron(30 3 ? * SUN *)` UTC・**ENABLED**・最終更新 08-02T20:30Z |
+| Vercel の cron | `0 0 1 * *`（毎月1日） |
+| **08-04 は何曜日か** | 🔴 **火曜日**＝ **どちらのスケジュールにも当たらない** |
+| CronRelay のログ | `08-04T17:41:14Z [cron] relay /api/cron/instagram-refresh start` → `status=200` |
+| リクエストID の形 | 定期実行の `release-reservations` は連番風（`106a72XX-…`）／この1本だけ孤立した `6bd9f0ea-…` |
+| CloudTrail | **`ConsoleLogin`（`shun`）が 17:39:16Z**、invoke が 17:41:14Z、`FilterLogEvents` が 17:41:48Z |
+
+＝ **AWS コンソールから手動でテスト実行された**もの（Lambda の invoke はデータイベントなので
+CloudTrail 本体には出ないが、前後の管理イベントで挟める）。
+
+**何が実証され、何がまだか:**
+
+- ✅ **アプリ側の経路は実証された** — production Lambda → ルート → Instagram API →
+  DynamoDB 書き込みまで通って 200。**ここがいちばん壊れやすい部分**で、それは晴れた。
+- 🔴 **EventBridge Scheduler → CronRelay の発火だけが未実証**。ただし
+  **同じ中継関数・同じ配線を他3本が実証済み**なので残リスクは小さい。
+- 🟢 **副産物**: 失効期限が **2026-09-30 → 2026-10-03** に伸びた（08-04 + 60日）。
+
+🔑 **「値が進んでいた」は「意図した仕組みが動いた」と同じではない。**
+このプロジェクトが繰り返している「状態ではなく履歴を見る」の変種で、
+**進んだこと自体は本物でも、進めた主体が違えば結論が変わる**。
+`refreshedAt` だけを見て S-2 に ✅ を付けていたら、**15 で Vercel の月次を消した後に
+「実は AWS の週次は一度も発火していなかった」**という形で表に出ていた。
+
+📌 **08-09T03:30Z（日曜）の実行を確認すれば S-1 と S-2 が同時に片付く。**
+トークンは 08-04 更新済み＝Instagram の「24時間以上経過」条件は満たすので更新は通るはず。
+
+### CloudFront 5xx（2026-08-08T07:29Z 実測・負の対照つき）
+
+| 期間 | `5xxErrorRate` Max | `Requests` Sum |
+|---|---|---|
+| 08-05T07:29Z〜08-06T07:29Z | **100.0**（＝ S-3 を破った 08-05 の事象） | 1,133 |
+| 08-06T07:29Z〜08-07T07:29Z | **0.0** | 380 |
+| 08-07T07:29Z〜08-08T07:29Z | **0.0** | 190 |
+
+🔴 **負の対照**: 同じクエリをドメイン接頭辞 `d38zi1bm4zf9e3` で撃つと **`[]`（空配列）**。
+＝ 正しい `E3FC7N27IY6A73` で引けていることの確認（教訓: **ID を間違えると
+エラーではなく空が返り「5xx ゼロ」に読める**）。
+
+⚠️ **直近48hの 0.0 は #144 の効果の証明ではない。** 08-06〜08-07 の枠は
+#144 のデプロイ（08-07T06:00Z）より**前**が大半で、そこでも既に 0.0 だった。
+#144 が効いている根拠は従来どおり「**ビヘイビアから Lambda@Edge が 0 本になった**」であって、
+「その後 5xx が出ていない」ではない。
 
 ---
 
@@ -185,7 +236,7 @@ done
 | ~~C-1~~ | ~~**`src/instrumentation-client.ts` に `environment` が無い**~~ | ✅ **完了（2026-08-03）**。`next.config.ts` の `env` が **ビルド時に `STAGE ?? VERCEL_ENV` を焼き込み**、`getClientStage()` が読む。**実ビルド3本の成果物で確認**（AWS 経路・Vercel 経路の正の対照＋未設定時が `(void 0)??"development"` の負の対照）。🔴 残るのは**デプロイ後に Sentry のダッシュボードを人が見る**工程 | `grep -n "environment" src/instrumentation-client.ts` |
 | ~~C-2~~ | ~~**`sentry.edge.config.ts` の `tracesSampleRate: 1`**~~ | ✅ **完了（2026-08-03）**。🔴 **対象は edge だけではなく client との2か所だった**（本番の実ブラウザで `__SENTRY__` を読み `tracesSampleRate: 1` を実測して判明）。率の決定を `tracesSampleRateFor()` へ集約し3ファイルを揃えた（本番10% / それ以外0%）。🔑 soak 中のトラフィックは大半がスキャナなので、100% 送信は**本当に見たいエラーが落ちる**形でクォータを食う | `grep -rn "tracesSampleRate" sentry.*.config.ts src/instrumentation-client.ts` |
 | C-3 | **`BLOB_READ_WRITE_TOKEN` が Vercel 本番 env に残存** | **死んだ env**。4 で S3 へ移したのでコードは `@vercel/blob` を一切参照していない（grep 0件）。実害は無いが、16 の掃除対象 | `grep -rn "BLOB_READ_WRITE_TOKEN\|@vercel/blob" src/ package.json` が空 |
-| C-4 | 🔴 **state に残っている平文シークレットの後始末とローテーション判断** | ✅✅ **今後の書き込みは塞いだ＝ PR #146 を本番にデプロイ済み（2026-08-07T06:25:24Z）**。`sst.config.ts` の stack transformation で `WebBuilder` の `environment` を Pulumi の secret にした。**本番 state の現物で検証済み（負の対照つき）**＝ `production.json` 中の `SST_SECRET_` の出現が **変更前 34 → 変更後 0**、`AWS_SESSION_TOKEN` / `"ASIA` / `GITHUB_ACTOR` / `ACTIONS_ID_TOKEN_REQUEST_TOKEN` も**すべて 0**、`inputs.environment` / `outputs.environment` は**どちらも `ciphertext`**。<br>🔴 **残るのは既に入ってしまった分**: `app/` に **845 バージョン**・`snapshot/` 55本・`eventlog/` 55本、それぞれに **`SST_SECRET_*` 17本の平文**（＝失効しない）。**待ち条件は満たしたので B（能動削除）と C（ローテーション）に着手できる。** A（ライフサイクル任せ）なら自然消滅は **2026-09-06 ごろ**。手順・副作用・測った数字は [`sst-state-env-leak.md`](sst-state-env-leak.md) §対処② | `npx sst diff --stage dev 2>&1 \| grep -A4 'WebBuilder command:local:Command'`<br>本番の確認は `aws s3api get-object --bucket sst-state-ntadsuobcmvm --key app/siko-coffee/production.json <file>` → `grep -c SST_SECRET_`（**🔴 落としたファイルは平文なので確認後すぐ消す**） |
+| C-4 | ~~**state に残っている平文シークレットの後始末**~~ ＋ ⏳ ローテーション | ✅✅ **①書き込みを塞ぐ（PR #146・2026-08-07T06:25:24Z 本番デプロイ）＋ ②既存分の削除（2026-08-08）とも完了＝ state 内の平文はゼロ**。<br>**② の実測**: 1,355件 2,341.9MB → **253件 86.8MB**（**1,102件・2,255MB を削除**）。`app/` の現行2本（`dev.json`/`production.json`）は保持、`lock/`/`update/`/`secret/` は不変、delete marker 68→68。<br>🔑 **削除件数が合っても目的は果たせていない**ので、**残った38オブジェクトを全部走査して平文ゼロを確認した**。途中 `eventlog/` 3本に `SST_SECRET_` が出て一度「残存」と誤判定したが、**入っていたのは名前だけ**（`"ASIA` が 0件・`SST_SECRET_` が1本あたり1回。値が実在した版は 4〜8件 / 2〜4回）。<br>📌 **境界は日付を決め打ちせず実測した**（#146 のデプロイ完了時刻の2秒前が既にクリーンだった＝決め打ちは外れていた）。<br>⏳ **残るは C（ローテーション）のみ。方針は決定済み**＝ 外部発行3本（Slack/Google/LINE）＋ `CRON_SECRET`/`REVALIDATE_SECRET`/`ORDER_TOKEN_SECRET` を回し、`AUTH_SECRET`・`ADMIN_*` は据え置き。**外部3本は人の作業**で、**6本まとめて1回の再デプロイ**で効かせる。詳細は [`sst-state-env-leak.md`](sst-state-env-leak.md) §対処② | `aws s3api list-object-versions --bucket sst-state-ntadsuobcmvm --output json \| jq '.Versions \| length'`（現在 **253**）<br>**🔴 落としたファイルは平文なので確認後すぐ消す** |
 | C-5 | 🔴 **`brace-expansion` の high 勧告が `overrides` に塞がれて自動修正されない** | **Dependabot は止まっていたのではなく、失敗し続けていた**（`Dependabot Updates` が 08-05・08-07 と連続 failure・**PR は1本も出ない**）。勧告は `>=5.0.9` を要求するのに `package.json` の `"minimatch@^10": { "brace-expansion": ">=5.0.8 <6" }` が下限を 5.0.8 に留めていた（ログ: `The latest possible version that can be installed is 5.0.8 because of the following conflicting dependency`）。**直すのは下限を `>=5.0.9 <6` に締め直すだけ**だが、🔴 **メジャー跨ぎの override は eslint を `TypeError: expand is not a function` で壊した前科がある**ので `npm ci` ＋ `npm run lint` を通してから入れる。教訓48 | `gh api repos/i0li0/siko-coffee/dependabot/alerts --jq '.[] \| select(.state=="open")'`<br>`gh run list --workflow "Dependabot Updates" --limit 10` |
 
 ---
@@ -316,11 +367,14 @@ aws cloudfront get-distribution-config --id <production の Id> \
             └→ E-4（ブレンド PF の E2E・サブスク）… 決済再開が前提
 ```
 
-**待ち条件を持たないもの**（いつでも着手できる）: B-1・B-3・**C-5**・R-1・R-5・R-7・R-8・R-10・E-2・E-3・E-5
-✅ ~~🔴 C-4 だけは待ち条件を持つ~~ ＝ その待ち条件「`environment` の secret 化を**本番にデプロイした後**」は
-**2026-08-07T06:25:24Z に満たした**（PR #146）。**C-4 も着手可能。**
-（C-1・C-2・R-9 は 2026-08-03 に完了／R-9 のパスワードポリシー分は「やらない」に降格／
-C-4 の①は 2026-08-07 に完了・残るのは既存分の後始末）
+**待ち条件を持たないもの**（いつでも着手できる）: B-1・B-3・R-1・R-5・R-7・R-8・R-10・E-2・E-3・E-5
+（C-1・C-2・R-9 は 2026-08-03 に完了／R-9 のパスワードポリシー分は「やらない」に降格）
+
+**C-4 は ①塞ぐ（2026-08-07・#146）→ ②消す（2026-08-08）まで完了。**
+残る **C（ローテーション）は方針決定済みだが、外部3本（Slack/Google/LINE）の再発行が人の作業**なので、
+そこが**新しい待ち条件**になっている（6本まとめて1回の再デプロイで効かせるため）。
+
+**C-5** は PR #149 で対処（`brace-expansion` の override 下限 ＋ Dependabot に見えていなかった `nanoid`）。
 
 ---
 
