@@ -74,10 +74,44 @@ else
   echo "✓ 展開しました（${arn}${AWS_CREDENTIAL_EXPIRATION:+ / 期限 ${AWS_CREDENTIAL_EXPIRATION}}）"
 fi
 
-echo "── ③ sst deploy ──"
-npx sst deploy "$@"
+# 🔴🔴 デプロイに使う stage を先に確定させる（③の後始末に要る）。
+#    CI は必ず `--stage X` を渡す。手元で省略した場合は SST と同じ既定（`.sst/stage`）を使う。
+deploy_stage=""
+_prev=""
+for _a in "$@"; do
+  case "$_a" in
+    --stage=*) deploy_stage="${_a#--stage=}" ;;
+  esac
+  [ "$_prev" = "--stage" ] && deploy_stage="$_a"
+  _prev="$_a"
+done
+[ -n "$deploy_stage" ] || deploy_stage="$(cat .sst/stage 2>/dev/null || true)"
 
-echo "── ④ 画像最適化の検証 ──"
+# 🔴🔴 **`eventlog/` には本番シークレットが平文で入る**（C-4 ①）。書き込みを止める手段が
+#    `sst` 側に無いため、**成否にかかわらず**デプロイ直後に消す。
+#    trap にするのは、`sst deploy` が失敗して `set -e` で抜けたときにも消すため
+#    （失敗時こそデバッグ診断が多く、平文も残る）。
+#    ⚠️ 完全な封じ込めではない（書き込みから削除までの数秒は S3 上に存在する）。
+#    📌 後始末が失敗してもデプロイ自体の結果は変えない（`|| true`）。ただし**必ず表示する**。
+cleanup_eventlog() {
+  local rc=$?
+  if [ -n "$deploy_stage" ]; then
+    echo "── ④ eventlog の後始末（stage: ${deploy_stage}）──"
+    bash scripts/purge-sst-eventlog.sh "$deploy_stage" || \
+      echo "! eventlog の後始末に失敗しました（デプロイの結果には影響させません）" >&2
+  else
+    echo "! stage を特定できず eventlog の後始末をスキップしました" >&2
+  fi
+  return $rc
+}
+
+echo "── ③ sst deploy ──"
+trap cleanup_eventlog EXIT
+npx sst deploy "$@"
+trap - EXIT
+cleanup_eventlog
+
+echo "── ⑤ 画像最適化の検証 ──"
 npm run verify:image-optimizer
 
 echo "✓ 完了"

@@ -244,10 +244,57 @@ IaC ではなくスクリプトで冪等に当てる形にした。
 また **`Days` の最小値は 1** なので、**ライフサイクルだけで「デプロイ直後に消す」は原理的に作れない**。
 それが要るならデプロイ後の明示的な削除になる。
 
-**恒久策（①を本当に塞ぐ）は未着手。** 検討する方向:
-1. Pulumi のイベントログに `environment` を載せない方法があるか（SST/Pulumi 側の設定を要調査）
-2. デプロイの最後に `eventlog/` を消す（`scripts/deploy.sh` と GitHub Actions の**両方**に要る）
-3. そもそも `...process.env` を渡さない（upstream の `base-ssr-site.ts` 由来なので手を入れにくい）
+#### 🔴 原因を特定した（2026-08-08）— **Pulumi のデバッグ診断で、secret のマスクを通らない**
+
+`eventlog/` は **Pulumi エンジンのイベントを1行1 JSON で並べたもの**（実測 1,534行）。
+イベント種別の内訳は `diagnosticEvent` 1,046 / `resourcePreEvent` 176 / `resOutputsEvent` 176 ほか。
+
+**平文はそのうち「1行」に集中していた**＝ `diagnosticEvent.message`（23KB の文字列1本）。
+
+```
+severity = "debug"        prefix = "debug: "
+message  = 'RegisterResource RPC finished: resource:WebBuilder[command:local:Command]; err: null,
+            resp: urn:pulumi:production::siko-coffee::sst:aws:Nextjs$command:local:Command::WebBuilder,
+            …,environment,,,,,<値>,,,<値>,ACTIONS_ID_TOKEN_REQUEST_TOKEN,,,<値>,…'
+```
+
+＝ **RegisterResource RPC の応答の構造体を、そのままフラットに文字列化したもの。**
+`$util.secret()` / `additionalSecretOutputs` は **state の書き出しに効く**が、
+**この debug ログは構造体をそのまま吐くので、マスクを一切通らない**。
+🔑 **これが #146 で塞げなかった理由**＝ 塞いだのは「保存」で、漏れていたのは「ログ」だった。
+（教訓46「暗号化は値が通る経路すべてで成立する」が、まさにこの形でもう1本残っていた。）
+
+🔴 **`sst` 側に止める手段が無い。** `sst deploy --help` の全フラグを確認したが、
+`--verbose` は**増やす**方向のフラグで、**イベントログを書かない／debug を落とす指定は無い**。
+素の `npx sst deploy`（＝この repo が使っている形）でも debug 診断は `eventlog/` に入る。
+
+#### 対処（2026-08-08 実施）: **書かせないのではなく、書かれた直後に消す**
+
+`scripts/purge-sst-eventlog.sh`（stage 単位・`eventlog/` 配下のみ）を追加し、
+**唯一の入口である `scripts/deploy.sh` から呼ぶ**（CI も `npm run sst:deploy` を通るので1か所で足りる）。
+
+🔴 **`trap … EXIT` で呼ぶ**＝ `sst deploy` が失敗して `set -e` で抜けたときにも消す。
+**失敗時こそ debug 診断が多く平文も残る**ので、成功時だけの後始末では足りない。
+📌 後始末の失敗はデプロイの結果を変えない（`|| true`）が、**必ず表示する**。
+
+**実測で確認（dev で通しで実行）:**
+
+| 確認 | 結果 |
+|---|---|
+| 正常系（`--stage dev`） | exit 0・`④ eventlog の後始末 … 1 件削除 → 残り 0 件`・⑤の画像検証も通過 |
+| **異常系**（`--target NoSuchComponentXyz` で失敗させる） | **exit 1（失敗が伝播する）** かつ **④ が実行された** |
+| stage の解釈 | `--stage X` / `--stage=X` / 省略（`.sst/stage`）/ 他フラグ併用 の4通りで確認 |
+| 対象の絞り込み | `eventlog/` 配下かつ `/<stage>/` を含むキーのみ。存在しない stage を渡すと0件（負の対照） |
+| バケット名 | 決め打ちせず `/sst/bootstrap` の `state` から取得 |
+
+⚠️ **これも完全な封じ込めではない。** 書き込みから削除までの**数秒〜数十秒**は S3 上に平文が存在する。
+ライフサイクル（1日＝実効最長2日）よりは桁で短いが、ゼロではない。
+🔑 **失う物**: `eventlog/` は SST のトラブルシュート用データで、消すと過去デプロイの詳細ログは追えない。
+**4MB のデバッグログに本番シークレットが入っている**以上、トレードオフは削除側に倒す。
+必要なときは `--print-logs` をその場で使う。
+
+**残る恒久策（未着手）**: upstream 側で ①debug 診断に secret のマスクを通す
+②`...process.env` を渡さない（`base-ssr-site.ts`）のどちらかが要る。**こちらでは閉じられない。**
 
 ---
 

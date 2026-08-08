@@ -3124,6 +3124,15 @@ SS_KEY_ID,,,ASIA****        ← 実際の格納形式
 今回は `app/`（JSON）で機能した対照を `eventlog/`（CSV 風）に流用した。
 **同じバケットの中でも形式は違いうる。**
 
+📌 **後日（同日）原因が割れた。塞げなかったのは「保存」ではなく「ログ」だった。**
+`eventlog/` の平文は **Pulumi の debug 診断1行**（`diagnosticEvent.message`・23KB）で、
+`RegisterResource RPC finished: … WebBuilder[command:local:Command] …` が
+**RPC 応答の構造体をそのまま文字列化**したもの。`$util.secret()` /
+`additionalSecretOutputs` は **state の書き出しには効く**が、
+**この debug ログは構造体を直に吐くのでマスクを通らない**。
+🔴 `sst deploy` 側に止めるフラグは無い（`--verbose` は増やす方向だけ）＝
+**書かせない**のではなく**書かれた直後に消す**しかない。
+
 🔑 **もう一つの規則: 「対策を入れた範囲」と「守りたい範囲」を別々に書き出して突き合わせる。**
 #146 は `command:local:Command` の `environment` を Pulumi の secret にする修正で、
 **checkpoint（`app/`）には効くがイベントログには効かない**。
