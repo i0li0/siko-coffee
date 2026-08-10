@@ -16,7 +16,7 @@
   「今すべて OK」と読んで見逃した。
 - 🔴 **列挙は必ず全リージョンで回す**（教訓43）。**CloudFront 系のアラームは us-east-1**。
   `--region ap-northeast-1` だけで数えた「6本」は母集団が欠けていた。
-- **最終実測日: 2026-08-09**（S-1・S-2 達成日）。
+- **最終実測日: 2026-08-10**（#160・#161・#162 のマージ後）。
 
 ## 全体像
 
@@ -45,7 +45,7 @@
 | ~~5-6~~ | ~~Instagram トークンの確認~~ | — | ✅ **完了（2026-08-09T03:30:13Z）**。`cron(30 3 ? * SUN *)` の**初回発火が実測できた**（人の操作ゼロを CloudTrail で確認）＝失効は **2026-10-08**。**以後は AWS の週次（60日で8回）で自走する**ので、15 で Vercel の月次を消してよい |
 | **14** | **soak 期間**（Vercel を生かしたまま観測） | 切替後 | ⏳ **進行中。終了条件 6つのうち 5つ達成（S-1・S-2・S-4・S-5・S-6）＝ 残るは S-3 のみ**（到達 **2026-08-12T19:53Z**）。Vercel の設定には一切触らない |
 | **15** | **Vercel 解約 ＋ 決済再開** | soak の後 | ①Stripe 新キー →②`PAYMENTS_ENABLED=true` →③再デプロイ の順厳守。🔴 **IAM アクセスキー `AKIAZQY7YB2C3BYMZCYG`（`shun` / AdministratorAccess）の削除を必ず含める**＝解約しても AWS 側に残る |
-| **16** | **Vercel 依存の撤去（①〜⑧）** | 15 の後 | 🔴 `vercel.json` だけ消すと **build が全環境で落ちる**（`prebuild` → `check-cron-schedule.mjs`）。📌 計画の表は長く「①〜⑦」と書いていたが**本文には⑧まである**（本作業で訂正） |
+| **16** | **Vercel 依存の撤去（①〜⑨）** | 15 の後 | 🔴 `vercel.json` だけ消すと **build が全環境で落ちる**（`prebuild` → `check-cron-schedule.mjs`）。📌 計画の表は長く「①〜⑦」と書いていたが**本文には⑧まである**（本作業で訂正） |
 
 ### 🔴 5-2 の前提は2つとも変わっていた（2026-08-02 に実測して判明）
 
@@ -96,7 +96,7 @@ aws dynamodb get-item --table-name siko-coffee-config --region ap-northeast-1 \
   --key '{"configKey":{"S":"INSTAGRAM_ACCESS_TOKEN"}}' --query 'Item.refreshedAt.S' --output text
 ```
 
-### 16 の撤去リスト（①〜⑧）
+### 16 の撤去リスト（①〜⑨）
 
 ①`redirects()` ②`vercel.json` ③`check-cron-schedule.mjs` + `prebuild` + `check:cron`
 ④CI の該当ステップ ⑤`hostRedirects.test.ts` ⑥`src/lib/stage.ts` の `?? VERCEL_ENV`（+ `stage.test.ts` の該当ケース）
@@ -104,8 +104,12 @@ aws dynamodb get-item --table-name siko-coffee-config --region ap-northeast-1 \
 式が同じなので `grep -rn VERCEL src/` だけでは **`next.config.ts` が漏れる**（`src/` の外）
 ⑦`isVercelPlatform()` と `layout.tsx` の呼び出し＋`@vercel/analytics`/`@vercel/speed-insights` の依存
 ⑧`src/lib/cronAuth.ts` の `Authorization: Bearer` 形式の受け入れ
+🆕 ⑨`src/lib/revalidateAuth.ts` の `Authorization: Bearer` 分岐（#160 で追加・⑧ と同時に消す）
 
 📌 ⑥⑦は `stage.ts` に集めてあるが、**⑥は `next.config.ts` にも1か所ある**（上記）。
+🔑 **⑧⑨ は AWS 経路では最初から機能していない**（CloudFront の OAC が `Authorization` を
+SigV4 署名で上書きするため・#160）。撤去しても**挙動は変わらない**。
+それでも消すのは、残すと「そのヘッダでも通るはず」という誤読を再生産するから。
 
 ---
 
@@ -275,12 +279,77 @@ Pour Over の完了条件ではない。**実測で状態が分かるものは�
 | R-2 | **CloudWatch RUM** | 🔑 **切替で Speed Insights を失う**＝これがその代替。失う前の基準値は**デスクトップの RES 97 / LCP 2.66s のみ**（モバイルは元からデータ無し） |
 | ~~R-3~~ | ~~CloudFront 継続的デプロイ~~ | **❌ 不採用確定**。切り戻しは DNS を戻すだけで足りる（11 の 60s TTL で回収済み） |
 | **R-4** | **観測の土台（CloudFront standard logging v2 / 追加メトリクス / DLQ / Synthetics canary）** | ✅ **standard logging v2 は完了（2026-08-03）**＝ `sst.config.ts` の「診断（R-4）」ブロック。**dev・production の両方**で CloudFront のアクセスログを **CloudWatch Logs**（`siko-<stage>-cloudfront-access-logs`・保持30日）へ配信。**「作れた」で止めず、実際にログが届き 404 を診断フィールド付きで引けるところまで実測した**（下記）。残りは**追加メトリクス**（メトリクスごと課金なので予算と併せて判断）・DLQ・Synthetics canary。<br>🔴 昇格の理由: 2026-08-02 に 5xx が3回スパイクしたが、**ログも内訳メトリクスも無いため原因を特定できないまま終わった**（教訓44）。**検知（10）と診断は別の投資** |
-| R-5 | **SES を運用できる状態にする**（SPF・DMARC・MX・custom MAIL FROM・configuration set） | 🔴 **バウンス/苦情が誰にも届かない**状態。**実測: SPF・DMARC・MX とも未設定**（`dig` で3件とも空）／DKIM 3本のみ設定済み。10 で SES の `Reputation.*` アラーム2本は production に入ったので、**評判の悪化は鳴るが個別のバウンスは追えない** |
+| R-5 | **SES を運用できる状態にする**（SPF・DMARC・MX・custom MAIL FROM・configuration set） | 🟡 **一部完了（2026-08-10）**。✅ **configuration set + イベント宛先は #161 で本番稼働**＝**1通ごとのバウンス・苦情が Slack に届く**（dev / production の両方をメールボックスシミュレータで実測）。残りは **DMARC の `rua=` / custom MAIL FROM / MX** で、いずれも**オーナー判断待ち**。詳細は[下記](#r-5-の内訳2026-08-10-実測) |
 | R-6 | コールドスタート対策（＝ B-2 の warmer） | B-2 と同一。soak 待ち |
 | R-7 | 実行ロールと同時実行を絞る | `ses:*` と `cloudfront:CreateInvalidation` の `Resource: "*"` を限定 |
 | R-8 | 配信まわりの小改善 | **実測: IPv6 = `false` / `CustomErrorResponses` = 0件 / HTTP version = `http2`**（http3 でない）。Origin Shield も未設定 |
 | R-9 | アカウントのガバナンス | ✅ **Access Analyzer は完了（2026-08-03）**＝ `scripts/bootstrap-access-analyzer.sh` で **ap-northeast-1 と us-east-1 の2つ**（リージョン単位なので片方だと母集団が欠ける・教訓43）。冪等性も2回目の実行で実測。<br>⬇️ **IAM パスワードポリシーは「やらない」に降格した（理由を測り直した結果・下記）**。有料は GuardDuty / Config / Security Hub |
 | R-10 | 掃除 | 下記 |
+
+### R-5 の内訳（2026-08-10 実測）
+
+「SES を運用できる状態にする」は5つの別々の作業で、**進み方が違う**ので分けて書く。
+
+| # | 項目 | 実測 | 状態 |
+|---|---|---|---|
+| ① | SPF | `v=spf1 include:amazonses.com ~all` | ✅ 済 |
+| ② | DKIM | CNAME 3本・`DkimAttributes.Status = SUCCESS` | ✅ 済 |
+| ③ | **configuration set + イベント宛先** | 以前は **0件** → `siko-<stage>-emails` が両ステージに存在 | ✅ **#161 で完了** |
+| ④ | **DMARC の `rua=`** | `v=DMARC1; p=none;` **のみ**＝ 届け先が無い | ⏳ **未決**（下記） |
+| ⑤ | **custom MAIL FROM** | `MailFromAttributes` に `MailFromDomain` 無し | ⏳ 未決 |
+| ⑥ | **MX** | **無し**＝ `@sikocoffee.com` 宛は誰にも届かない | ⏳ 未決 |
+
+```bash
+dig +short TXT _dmarc.sikocoffee.com          # ④
+dig +short MX sikocoffee.com                  # ⑥（空なら無し）
+aws sesv2 get-email-identity --email-identity sikocoffee.com --region ap-northeast-1 \
+  --query 'MailFromAttributes'                # ⑤
+aws sesv2 list-configuration-sets --region ap-northeast-1   # ③
+```
+
+#### 🔴🔴 ④ で分かったこと: **Gmail を `rua` の宛先にはできない**
+
+「`rua=mailto:siko.is.coffee@gmail.com` と書けば済む」と考えたが、**成立しない。**
+
+**RFC 7489 §7.1（External Destination Verification）**: レポート先が DMARC レコードの
+ドメインと**別ドメイン**の場合、**受け側のドメイン**が
+`<送信元ドメイン>._report._dmarc.<受け側ドメイン>` に `v=DMARC1` を publish していないと、
+準拠したレポーターは**送信を拒否する**。
+
+実測（2026-08-10）:
+
+| 確認したもの | 結果 |
+|---|---|
+| `sikocoffee.com._report._dmarc.gmail.com` | **無し** |
+| `_report._dmarc.gmail.com`（ワイルドカード的なもの） | **無し** |
+| `sikocoffee.com._report._dmarc.dmarcian.com` | 無し（＝**登録後に先方が publish する**仕組み） |
+
+🔑 **設定しても1通も届かないまま「設定済み」に見える。**
+このプロジェクトが繰り返し踏んできた「**宣言したのに配線されていない**」
+（#125・#128・#160）と同じ形が、DNS の側で起きる。
+
+⚠️ **自ドメイン宛（`dmarc@sikocoffee.com`）なら外部宛先認可は不要**だが、
+**⑥ の MX が無いので受信できない**。＝ **④ と ⑥ は独立ではなく、④の選択肢が⑥を決める。**
+
+#### ④ の選択肢（2026-08-10 時点・**未決のまま保留**）
+
+| | 内容 | 代償 |
+|---|---|---|
+| **A** | DMARC レポートサービス（Postmark DMARC Digests / dmarcian / URIports。無料枠あり） | 登録すると先方が `_report._dmarc` を publish するので**外部宛先認可が成立**し、XML でなく人が読めるサマリが届く。作業は **DNS 1レコード**。トレードオフは**ドメインの認証状況を第三者に渡す**こと。🔴 **アカウント作成はオーナーが行う** |
+| **B** | SES 受信で自前（MX → SES inbound → S3） | `dmarc@sikocoffee.com` が成立し、**⑥ も同時に埋まる**。データは自分の AWS 内。🔴 **生の DMARC XML は読めない**ので、解析まで書かないと **S3 にゴミが溜まるだけ** |
+| **C** | B ＋ Lambda で XML を解析して Slack へ | #161 の中継に相乗りできる。いちばん手がかかるが「読まれないレポート」にならない |
+| **D** | やらない | 送信量が 0〜少数のうちはレポートの情報量も少ない。R-9 の IAM パスワードポリシーと同じ「理由を測ったら消えた」に倒れる可能性 |
+
+📌 **SES 受信（inbound）は ap-northeast-1 で使えることを確認済み**
+（`aws ses list-receipt-rule-sets --region ap-northeast-1` が成功・ルールセットは 0 件）
+＝ B / C はリージョンの制約では詰まらない。
+
+#### 📌 ⑤ が効くのは「SPF alignment」だけ
+
+custom MAIL FROM が無いと Return-Path は `*.amazonses.com` になるので、
+**SPF は amazonses.com に対して整合し、`sikocoffee.com` には整合しない**。
+ただし **DKIM alignment は通っている**（`d=sikocoffee.com`）ので、**DMARC 自体は DKIM で pass する**。
+＝ ⑤ は「壊れているものを直す」ではなく「**片肺を両肺にする**」作業。優先度はその分低い。
 
 ### 🔴 R-9: IAM パスワードポリシーは「やらない」（2026-08-03・前提を測り直して降格）
 
@@ -385,7 +454,7 @@ aws cloudfront get-distribution-config --id <production の Id> \
   └→ 14（soak）
        ├→ B-2 / R-6（warmer）… 本番のコールド率が測れるようになる
        └→ 15（Vercel 解約＋決済再開）
-            ├→ 16（Vercel 依存の撤去 ①〜⑧）
+            ├→ 16（Vercel 依存の撤去 ①〜⑨）
             │    └→ E-1（middleware→proxy）… 同じファイル群
             └→ E-4（ブレンド PF の E2E・サブスク）… 決済再開が前提
 ```
