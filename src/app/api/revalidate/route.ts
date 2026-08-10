@@ -1,12 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { revalidatePath } from 'next/cache';
-import { verifyBearer } from '@/lib/safeCompare';
+import { isAuthorizedRevalidate } from '@/lib/revalidateAuth';
 
 export const dynamic = 'force-dynamic';
 export const preferredRegion = ['hnd1'];
 
 export async function POST(req: NextRequest) {
-  if (!verifyBearer(req.headers.get('authorization'), process.env.REVALIDATE_SECRET)) {
+  // 🔴 CloudFront 経由では `Authorization` が OAC の SigV4 署名に上書きされるので
+  // 届かない。`x-revalidate-secret` を使うこと。理由は `src/lib/revalidateAuth.ts`。
+  if (!isAuthorizedRevalidate(req)) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
