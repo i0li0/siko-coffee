@@ -38,6 +38,12 @@ export async function sendEmail({ to, subject, text, html, replyTo }: SendEmailP
       Source: getFrom(),
       Destination: { ToAddresses: toAddresses },
       ReplyToAddresses: replyTo ? [replyTo] : undefined,
+      // 🔴 R-5。設定セットを付けた送信だけが**1通ごとのバウンス・苦情イベント**を出す。
+      // 付けないと `Reputation.*`（アカウント全体の率）しか残らず、
+      // 「率が上がった」までは分かっても**どの宛先を止めればいいか分からない**。
+      // ⚠️ **未設定なら付けない**（`undefined` は SES 側で無指定と同じ）。存在しない
+      // 名前を渡すと SES が送信ごと拒否するので、env が無い環境で送信を殺さないため。
+      ConfigurationSetName: process.env.SES_CONFIGURATION_SET || undefined,
       Message: {
         Subject: { Data: subject, Charset: 'UTF-8' },
         Body: {

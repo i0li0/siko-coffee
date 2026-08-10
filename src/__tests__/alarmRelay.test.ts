@@ -38,6 +38,17 @@ function alarmEvent(overrides: Record<string, unknown> = {}) {
   };
 }
 
+/**
+ * SES の設定セットが SNS へ流すイベントの実物に合わせた最小形（R-5）。
+ * 🔴 **同じトピックに CloudWatch アラームと SES イベントの2系統が流れる**ので、
+ * 判別を間違えると片方が生 JSON のまま Slack に落ちる（読めるが使えない）。
+ */
+function sesEvent(message: Record<string, unknown>) {
+  return {
+    Records: [{ Sns: { Subject: null, Message: JSON.stringify(message) } }],
+  };
+}
+
 function slackBody(fetchMock: ReturnType<typeof vi.spyOn>) {
   const init = (fetchMock.mock.calls[0] as unknown[])[1] as RequestInit;
   return JSON.parse(init.body as string) as { text: string };
@@ -74,6 +85,82 @@ describe('alarmRelay handler', () => {
     // 原因（しきい値と実測値）はここにしか出ないので落とさない。
     expect(text).toContain('Threshold Crossed');
     expect(text).toContain('AWS/Lambda/Errors');
+  });
+
+  it('SES のバウンスを「どの宛先が・なぜ」まで含めて転送する（R-5）', async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(new Response('ok', { status: 200 }));
+
+    await handler(
+      sesEvent({
+        eventType: 'Bounce',
+        mail: {
+          timestamp: '2026-08-10T05:00:00.000Z',
+          source: 'Sikō Coffee <noreply@sikocoffee.com>',
+          messageId: '0100019-abc',
+          destination: ['nobody@example.com'],
+        },
+        bounce: {
+          bounceType: 'Permanent',
+          bounceSubType: 'General',
+          bouncedRecipients: [
+            { emailAddress: 'nobody@example.com', diagnosticCode: 'smtp; 550 5.1.1 user unknown' },
+          ],
+        },
+      }),
+    );
+
+    const { text } = slackBody(fetchMock);
+    expect(text).toContain('📮 BOUNCE');
+    // 🔑 **率のアラームには出ない情報**。これが落ちると R-5 を入れた意味が消える。
+    expect(text).toContain('nobody@example.com');
+    // Permanent は「二度と送ってはいけない」の判断材料。
+    expect(text).toContain('Permanent/General');
+    expect(text).toContain('550 5.1.1 user unknown');
+    expect(text).toContain('[dev]');
+    // 生 JSON にフォールバックしていないこと（＝判別が効いている負の対照）。
+    expect(text).not.toContain('"eventType"');
+  });
+
+  it('SES の苦情も転送する（R-5）', async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(new Response('ok', { status: 200 }));
+
+    await handler(
+      sesEvent({
+        eventType: 'Complaint',
+        mail: { source: 'noreply@sikocoffee.com', destination: ['angry@example.com'] },
+        complaint: {
+          complaintFeedbackType: 'abuse',
+          complainedRecipients: [{ emailAddress: 'angry@example.com' }],
+        },
+      }),
+    );
+
+    const { text } = slackBody(fetchMock);
+    expect(text).toContain('🚩 COMPLAINT');
+    expect(text).toContain('angry@example.com');
+    expect(text).toContain('abuse');
+  });
+
+  it('SES と CloudWatch を取り違えない（同じトピックに両方流れる）', async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(new Response('ok', { status: 200 }));
+
+    // `eventType` を持つが `mail` が無い＝ SES ではない。素通しに落ちること。
+    await handler(sesEvent({ eventType: 'SomethingElse', detail: 'x' }));
+    expect(slackBody(fetchMock).text).toContain('📣');
+
+    vi.restoreAllMocks();
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    const fetchMock2 = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(new Response('ok', { status: 200 }));
+    await handler(alarmEvent());
+    expect(slackBody(fetchMock2).text).toContain('🔴 ALARM');
   });
 
   it('復旧（OK）も通知する', async () => {

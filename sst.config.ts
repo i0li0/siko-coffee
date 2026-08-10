@@ -602,6 +602,20 @@ export default $config({
         )
       : undefined
 
+    // ── R-5: SES の設定セット ────────────────────────────────
+    //
+    // 🔴 **ここで作る理由は順序**。イベント宛先（SNS 連携）は `alarmTopic` を使うので
+    //    監視ブロック（下の方）に置くしかないが、**設定セット本体は web より前**に
+    //    無いと `SES_CONFIGURATION_SET` を env に渡したときに依存が張れない。
+    //    名前を文字列で二重に書くと片方だけ直す事故が起きるので、**実体を先に作って
+    //    出力を渡す**（＝ Pulumi が「設定セット → Lambda」の順序を保証する）。
+    //    これが無いと、初回デプロイで**存在しない設定セット名を持った Lambda** が
+    //    先に立ち上がりうる＝その間の送信が SES に拒否される。
+    const sesConfigurationSet = new aws.sesv2.ConfigurationSet('SesConfigurationSet', {
+      configurationSetName: `siko-${$app.stage}-emails`,
+      reputationOptions: { reputationMetricsEnabled: true },
+    })
+
     const web = new sst.aws.Nextjs('Web', {
       // ⚠️ 必須のピン留め。SST の既定は OpenNext **3.9.14**（Next.js 15 想定）で、
       // 本プロジェクトの Next 16.2.11 は OpenNext **4.1.0** 以上でないとビルドできない
@@ -811,6 +825,11 @@ export default $config({
         // （ユーザー登録・パスキー登録/管理・フィードバック・配送遅延）が**黙って止まる**
         // （あの関数は未設定なら `return` するだけ）。10 の中継 Lambda と同じ値を共有する。
         SLACK_WEBHOOK_URL: slackWebhookUrl.value,
+
+        // 🔴 R-5。`src/lib/email.ts` がこれを読み、`SendEmailCommand` に付ける。
+        // **無ければ付けない**実装なので、欠けても送信は続く——ただし
+        // **バウンス・苦情が1通ごとには見えなくなる**（率のアラームだけが残る）。
+        SES_CONFIGURATION_SET: sesConfigurationSet.configurationSetName,
 
         // ステージ判定の入力（Pour Over 1 で `VERCEL_ENV` から移行済み）。
         // `src/lib/stage.ts` がこれを読み、`src/lib/db.ts` のテーブル接頭辞と
@@ -1391,9 +1410,10 @@ export default $config({
     // 📌 配信停止のしきい値は AWS 側でバウンス 10% / 苦情 0.5%。**その手前で**気づける
     //    値にしてある。設定セット無しでアカウント単位に自動発行されるメトリクスなので、
     //    アプリ側の送信コードには一切手を入れていない。
-    // ⚠️ 個々のバウンスを掴んで宛先を止める仕組み（設定セット + イベント宛先）は
-    //    **これとは別**。率が上がってからでは遅い運用になるが、送信量が桁で増えるまでは
-    //    アカウント停止を避ける方が実利がある。必要になったら別タスクで足す。
+    // ✅ **個々のバウンスを掴む仕組み（設定セット + イベント宛先）は R-5 で足した（下記）。**
+    //    かつてここには「必要になったら別タスクで足す」と書いてあった。足した理由は
+    //    **15 で決済を再開すると注文メールが飛び始める**こと＝ 送信量が増えてからでは
+    //    「率が上がってから気づく」運用になる。**送り始める前に見える状態にしておく。**
     if (isProd) {
       makeAlarm('SesBounceRateAlarm', {
         name: `siko-${$app.stage}-ses-bounce-rate`,
@@ -1423,6 +1443,81 @@ export default $config({
         okActions: mainActions,
       })
     }
+
+    // ── R-5: SES の設定セット + イベント宛先（1通ごとのバウンス・苦情を Slack へ）──
+    //
+    // 上の `Reputation.*` が**アカウント全体の率**なのに対し、こちらは**1通ごと**。
+    // 「バウンス率が 5% を超えた」では、どの宛先を止めればいいのかが分からない。
+    //
+    // 🔑 **SNS トピックは新設せず `alarmTopic` を使い回す。** 通知先を分けると
+    //    「Slack のどのチャンネルに何が来るか」を人が覚える必要が生まれる。
+    //    中継（`alarmRelay`）は `AlarmName` と `eventType` でスキーマを判別するので
+    //    1本のトピックに2系統を流して問題ない。
+    //
+    // 🔴 **全ステージで作る。** `Reputation.*` と違い、設定セットのイベントは
+    //    **その設定セットで送ったメールのものだけ**＝ dev と production が混ざらない。
+    //    むしろ dev に無いと **R-5 の検証を本番でしかできなくなる**（S-5 で踏んだ形）。
+    // 📌 設定セット本体は **web の直前**で作ってある（env に渡す依存を張るため・上記）。
+    new aws.sesv2.ConfigurationSetEventDestination('SesEventDestination', {
+      configurationSetName: sesConfigurationSet.configurationSetName,
+      eventDestinationName: 'sns-relay',
+      eventDestination: {
+        enabled: true,
+        // 🔴 **`SEND` と `DELIVERY` は入れない。** 正常系まで流すと Slack が
+        //    送信のたびに鳴り、**異常が正常に埋もれる**（通知の意味が消える）。
+        //    ここに並べたものは全部「人が何かを判断する必要があるもの」だけ。
+        matchingEventTypes: ['BOUNCE', 'COMPLAINT', 'REJECT', 'RENDERING_FAILURE', 'DELIVERY_DELAY'],
+        snsDestination: { topicArn: alarmTopic.arn },
+      },
+    })
+
+    // SNS 側に「SES から publish されてよい」と書く。**トピックのリソースポリシー**
+    // なので、これが無いとイベント宛先は作れても**配信だけが黙って失敗する**
+    // （＝ 設定は正しく見えるのに通知が来ない、いちばん気づきにくい壊れ方）。
+    //
+    // 🔴🔴 **`TopicPolicy` は既定ポリシーを「足す」のではなく「置き換える」。**
+    //    だから既定の文（`__default_statement_ID`）を**現物から採ってそのまま含める**。
+    //    live の production/dev を実測した結果、既定は `Principal: {AWS:"*"}` ＋
+    //    **`AWS:SourceOwner` 条件**の1文で、**CloudWatch アラームの publish もこれで通っている**。
+    //    🔑 初稿では「CloudWatch 用に `Service: cloudwatch.amazonaws.com` を書く」形にしていたが、
+    //    それは**既定を置き換えてアラーム通知を壊す**ものだった。**移す値は推測しない**（教訓・タスク6）。
+    const accountId = aws.getCallerIdentityOutput({}).accountId
+    new aws.sns.TopicPolicy('AlarmTopicPolicyForSes', {
+      arn: alarmTopic.arn,
+      policy: $jsonStringify({
+        Version: '2008-10-17',
+        Id: '__default_policy_ID',
+        Statement: [
+          {
+            // ── 既定の文（現物のコピー・触らない）──
+            Sid: '__default_statement_ID',
+            Effect: 'Allow',
+            Principal: { AWS: '*' },
+            Action: [
+              'SNS:GetTopicAttributes',
+              'SNS:SetTopicAttributes',
+              'SNS:AddPermission',
+              'SNS:RemovePermission',
+              'SNS:DeleteTopic',
+              'SNS:Subscribe',
+              'SNS:ListSubscriptionsByTopic',
+              'SNS:Publish',
+            ],
+            Resource: alarmTopic.arn,
+            Condition: { StringEquals: { 'AWS:SourceOwner': accountId } },
+          },
+          {
+            // ── R-5 で足す分 ──
+            Sid: 'AllowSesEvents',
+            Effect: 'Allow',
+            Principal: { Service: 'ses.amazonaws.com' },
+            Action: 'SNS:Publish',
+            Resource: alarmTopic.arn,
+            Condition: { StringEquals: { 'AWS:SourceAccount': accountId } },
+          },
+        ],
+      }),
+    })
   },
 })
 

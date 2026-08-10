@@ -45,6 +45,36 @@ interface CloudWatchAlarmMessage {
   };
 }
 
+/**
+ * SES の設定セットが SNS に流すイベント本文（R-5）。必要な分だけ。
+ *
+ * 🔑 **`Reputation.*` のアラーム（10 の⑥⑦）とは見ているものが違う。**
+ * あちらは**アカウント全体の率**で「もう手遅れに近い」ことしか教えない。
+ * こちらは**1通ごと**で、どの宛先がなぜ弾かれたかが分かる。
+ * ＝ 検知（率）と診断（個別）は別の投資（教訓44 と同じ整理）。
+ */
+interface SesEventMessage {
+  eventType?: string;
+  mail?: {
+    timestamp?: string;
+    source?: string;
+    messageId?: string;
+    destination?: string[];
+  };
+  bounce?: {
+    bounceType?: string;
+    bounceSubType?: string;
+    bouncedRecipients?: { emailAddress?: string; diagnosticCode?: string }[];
+  };
+  complaint?: {
+    complaintFeedbackType?: string;
+    complainedRecipients?: { emailAddress?: string }[];
+  };
+  reject?: { reason?: string };
+  deliveryDelay?: { delayType?: string };
+  failure?: { errorMessage?: string };
+}
+
 interface SnsEventRecord {
   Sns?: {
     Message?: string;
@@ -92,6 +122,51 @@ function formatAlarm(alarm: CloudWatchAlarmMessage, stage: string): string {
   if (meta.length > 0) lines.push(meta.join(' | '))
 
   return lines.join('\n')
+}
+
+const SES_MARK: Record<string, string> = {
+  bounce: '📮 BOUNCE',
+  complaint: '🚩 COMPLAINT',
+  reject: '⛔ REJECT',
+  deliverydelay: '🕒 DELIVERY DELAY',
+  renderingfailure: '💥 RENDERING FAILURE',
+};
+
+function formatSesEvent(ev: SesEventMessage, stage: string): string {
+  const type = ev.eventType ?? 'unknown';
+  const mark = SES_MARK[type.toLowerCase().replace(/[^a-z]/g, '')] ?? `📧 ${type.toUpperCase()}`;
+
+  const lines = [`${mark} *SES*  _[${stage}]_`];
+
+  // 🔑 **いちばん知りたいのは「どの宛先が」**。率のアラームには出ない情報。
+  const recipients =
+    ev.bounce?.bouncedRecipients?.map((r) => r.emailAddress).filter(Boolean) ??
+    ev.complaint?.complainedRecipients?.map((r) => r.emailAddress).filter(Boolean) ??
+    ev.mail?.destination ??
+    [];
+  if (recipients.length > 0) lines.push(`to: ${recipients.join(', ')}`);
+
+  const detail: string[] = [];
+  if (ev.bounce?.bounceType) {
+    // 🔴 Permanent は**その宛先に二度と送ってはいけない**（送り続けると評判が落ちる）。
+    detail.push(`${ev.bounce.bounceType}/${ev.bounce.bounceSubType ?? '-'}`);
+  }
+  if (ev.complaint?.complaintFeedbackType) detail.push(ev.complaint.complaintFeedbackType);
+  if (ev.reject?.reason) detail.push(ev.reject.reason);
+  if (ev.deliveryDelay?.delayType) detail.push(ev.deliveryDelay.delayType);
+  if (ev.failure?.errorMessage) detail.push(ev.failure.errorMessage);
+  if (detail.length > 0) lines.push(detail.join(' | '));
+
+  const diagnostic = ev.bounce?.bouncedRecipients?.find((r) => r.diagnosticCode)?.diagnosticCode;
+  if (diagnostic) lines.push('```' + diagnostic.slice(0, 500) + '```');
+
+  const meta: string[] = [];
+  if (ev.mail?.source) meta.push(`from: ${ev.mail.source}`);
+  if (ev.mail?.messageId) meta.push(`messageId: ${ev.mail.messageId}`);
+  if (ev.mail?.timestamp) meta.push(`at: ${ev.mail.timestamp}`);
+  if (meta.length > 0) lines.push(meta.join(' | '));
+
+  return lines.join('\n');
 }
 
 async function postToSlack(webhookUrl: string, text: string): Promise<void> {
@@ -160,11 +235,17 @@ export async function handler(event: AlarmRelayEvent): Promise<void> {
 
     let text: string
     try {
-      const parsed = JSON.parse(raw) as CloudWatchAlarmMessage
-      // CloudWatch 以外（手動 publish・将来の別用途）も素通しで届ける。
-      text = parsed.AlarmName
-        ? formatAlarm(parsed, stage)
-        : `📣 *${record.Sns?.Subject ?? 'notification'}*  _[${stage}]_\n\`\`\`${raw.slice(0, 1500)}\`\`\``
+      const parsed = JSON.parse(raw) as CloudWatchAlarmMessage & SesEventMessage
+      // CloudWatch アラーム／SES の設定セットイベント／それ以外（手動 publish）の3系統。
+      // 🔑 **判別は「そのスキーマにしか無いキー」で行う**（`AlarmName` / `eventType`）。
+      //    どちらでもないものは素通しで届ける＝**知らない形を黙って捨てない**。
+      if (parsed.AlarmName) {
+        text = formatAlarm(parsed, stage)
+      } else if (parsed.eventType && parsed.mail) {
+        text = formatSesEvent(parsed, stage)
+      } else {
+        text = `📣 *${record.Sns?.Subject ?? 'notification'}*  _[${stage}]_\n\`\`\`${raw.slice(0, 1500)}\`\`\``
+      }
     } catch {
       text = `📣 *${record.Sns?.Subject ?? 'notification'}*  _[${stage}]_\n${raw.slice(0, 1500)}`
     }
