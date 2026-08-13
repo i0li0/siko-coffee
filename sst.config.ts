@@ -131,7 +131,10 @@ export default $config({
       'ADMIN_PASSWORD_HASH',  // admin ログイン
       'ADMIN_SESSION_SECRET', // admin セッション署名
       // ── 意図的に入れないもの ──
-      // STRIPE_* / PAYMENTS_ENABLED … 決済停止中（Phase 0 を維持）
+      // STRIPE_* / PAYMENTS_ENABLED … ✅ **下の OPTIONAL_SECRET_NAMES に移した**（15 ①）。
+      //   ここ（必須）に置かないのは変わらない: 載せると **dev の deploy が値なしで落ちる**。
+      //   `PAYMENTS_ENABLED` はフェイルクローズ（`=== 'true'` 判定）なので空文字が安全に
+      //   「決済停止」を意味する＝既定値付きの任意側が正しい。
       // BLOB_* … ✅ 4 で S3 に置き換え済み。Vercel 側の3本も 15 で捨ててよい
       // AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY … 実行ロールに置き換えるのが移行の目的
       // SENTRY_ORG / SENTRY_PROJECT / SENTRY_AUTH_TOKEN … **ビルド時**にしか使われない
@@ -192,6 +195,19 @@ export default $config({
       'INSTAGRAM_ACCESS_TOKEN',
       'WEBAUTHN_RP_ID',
       'WEBAUTHN_ORIGIN',
+      // ── 決済（15 ①で配線。この PR の時点では**まだ止まったまま**）──────
+      // 🔴 **配線と有効化は別のデプロイでやる。** ここに足しただけでは3本とも空文字＝
+      //    `isPaymentsEnabled()` は false のままで、挙動は1つも変わらない。
+      //    実値の投入（`sst secret load`）＋再デプロイで初めて決済が開く（15 ③④）。
+      // 🔑 **なぜ先に配線だけ入れるのか。** `sst secret set` は SSM に値を置くだけで、
+      //    ここに名前が無ければ **`process.env` には決して現れない**。
+      //    「投入したのに効かない」を #125（任意11本）・#128（`SLACK_WEBHOOK_URL`）・
+      //    #160（`/api/revalidate`）で3回踏んでいるので、**4回目を手順の外に置かない**。
+      'STRIPE_SECRET_KEY', // src/lib/stripe.ts（遅延生成なので空でもビルドは通る）
+      'STRIPE_WEBHOOK_SECRET', // 🔴 src/app/api/webhooks/stripe/route.ts。**無いと決済は
+      //    成立するのに注文が確定しない**（署名検証が通らない）＝いちばん悪い壊れ方。
+      //    計画（`aws-migration-feasibility.md`）はこの3本目を書いていない。
+      'PAYMENTS_ENABLED', // src/lib/payments.ts。`=== 'true'` のフェイルクローズ
     ] as const
 
     const optionalSecretEnv = Object.fromEntries(
@@ -804,8 +820,9 @@ export default $config({
         // ⚠️ `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` は **意図的に置かない**
         // （上の permissions による実行ロールへ置き換えるのが移行の目的）。
         //
-        // ⚠️ `PAYMENTS_ENABLED` も **意図的に置かない**＝決済は停止のまま
-        // （AWS移行 Phase 0）。再開は Phase 4 で、手順は docs を参照。
+        // ⚠️ `PAYMENTS_ENABLED` は下の `...optionalSecretEnv` に**配線済み**（15 ①）。
+        // ただし値は空文字＝**決済は停止のまま**。開くのは実値の投入＋再デプロイ
+        // （手順は docs/pour-over-15-16-runbook.md §3）。
         NODE_ENV: 'production',
 
         // 🔴 **AWS では必須**。NextAuth v5 は Vercel だと `VERCEL` 環境変数から
@@ -1758,7 +1775,12 @@ export default $config({
 //     この期間、Vercel の設定には一切触らない。
 //
 // ── 第5群｜後始末 ────────────────────────────────────────────
-// 15. Vercel 解約 ＋ 決済再開（①Stripe 新キー投入 →②PAYMENTS_ENABLED=true →③再デプロイ の順厳守）。
+// 15. 決済再開 ＋ Vercel 解約。🔴 **計画の手順は投入先が腐っている**（Vercel の env と書いてあるが
+//     本番は AWS）。正本は **docs/pour-over-15-16-runbook.md**＝
+//     ①配線（この配列・完了）→②Stripe 側の準備 →③秘密**3本**を production に投入 →④再デプロイ
+//     →⑤決済の検証（Vercel が生きているうちに）→⑥解約（🔴 不可逆）。
+//     🔴 ⑥に **IAM アクセスキー `AKIAZQY7YB2C3BYMZCYG`（`shun`/AdministratorAccess）の削除**を含める
+//     ＝ Vercel を解約しても AWS 側に残り、静的キーなので失効しない。
 // 16. Vercel 依存の撤去。🔴 **vercel.json だけ消すと build が全環境で落ちる**
 //     （prebuild → scripts/check-cron-schedule.mjs が vercel.json を読めず exit 1。CI にも同ステップ）。
 //     ①〜⑦をまとめて消すこと: ①redirects() ②vercel.json ③check-cron-schedule.mjs + prebuild + check:cron

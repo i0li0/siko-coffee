@@ -20,9 +20,19 @@
 import { readFile } from 'node:fs/promises'
 import { createHash } from 'node:crypto'
 
-const file = process.argv[2]
+// 🔴 `--partial` … **既存の production に数本だけ足す**ファイル（15 ③の決済3本など）。
+//   これが無いと ⑤（必須の充足）が必ず落ちる — あの検査は 13 の一括投入
+//   （7本+任意11本を1ファイルで入れる）を前提に書かれているため。
+//   ⚠️ **緩めるのは⑤だけ。** ①重複・②空値・③禁止・④形式は部分投入でも全部走る
+//      （危険を作るのはそちらで、⑤は「足りているか」しか見ていない）。
+const argv = process.argv.slice(2)
+const partial = argv.includes('--partial')
+const file = argv.find((a) => !a.startsWith('--'))
 if (!file) {
-  console.error('usage: node scripts/check-secret-file.mjs <env-file>')
+  console.error(
+    'usage: node scripts/check-secret-file.mjs [--partial] <env-file>\n' +
+      '  --partial  既存 production への追加投入（必須の充足検査を省く）',
+  )
   process.exit(2)
 }
 
@@ -52,7 +62,21 @@ const OPTIONAL = [
   //    environment に入っていなかった。無いと `src/lib/slackNotify.ts` が黙って
   //    return し、6か所の Slack 通知が無言で止まる。
   'SLACK_WEBHOOK_URL',
+  // 🔴 2026-08-13 追加（15 ①）。**それまで FORBIDDEN に入っていた**＝この検査を通そうとすると
+  //    必ず落ちる状態だった。禁止していた理由は「決済停止中で `sst.config.ts` に配線が無い＝
+  //    投入しても効かない」であって、**配線した今は理由のほうが消えている**。
+  //    🔑 このプロジェクトで4例目の「積み残しは理由を持たないと腐る」。禁止も同じで、
+  //      **禁止の理由が消えたのに禁止だけが残ると、正しい作業を止める側に回る**。
+  'STRIPE_SECRET_KEY',
+  'STRIPE_WEBHOOK_SECRET',
+  'PAYMENTS_ENABLED',
 ]
+
+// 🔑 **秘密ではない値**＝重複検査（①）の対象外。`PAYMENTS_ENABLED=true` と
+//   `ADMIN_TOTP_REQUIRED=true` は**正しく設定するとどちらも `true`** になるので、
+//   除外しないと「プレースホルダ混入」を誤検知して**正しいファイルを止める**。
+//   ⚠️ 除外してよいのは「値の空間が小さく、重複が正常」なものだけ。
+const NON_SECRET = new Set(['PAYMENTS_ENABLED', 'ADMIN_TOTP_REQUIRED'])
 
 // 🔑 **env に入れる必要が無いもの（DynamoDB が正）。** どちらも
 //   「DynamoDB を先に読み、無ければ env」という実装なので、DynamoDB に実物がある限り
@@ -94,6 +118,23 @@ const FORMATS = {
     re: /^[a-z0-9.-]+$/,
     hint: 'ホスト名のみ（スキームやスラッシュを含めない）',
   },
+  // 🔴 決済の3本（15 ③）。**接頭辞で取り違えを止める**のが目的。
+  //   実際に起こりうる取り違えが2つある:
+  //     ① `sk_test_` を本番に入れる … 決済が通ったように見えて金銭が動かない
+  //     ② `pk_live_`（公開キー）を `STRIPE_SECRET_KEY` に入れる … 401 になる
+  //   ⚠️ ここで見られるのは**形だけ**。「そのアカウントの正しいキーか」は投入後に本人が確かめる。
+  STRIPE_SECRET_KEY: {
+    re: /^sk_live_[A-Za-z0-9]+$/,
+    hint: 'sk_live_ で始まる本番のシークレットキー（sk_test_ / pk_ ではない）',
+  },
+  STRIPE_WEBHOOK_SECRET: {
+    re: /^whsec_[A-Za-z0-9]+$/,
+    hint: 'whsec_ で始まる署名シークレット（エンドポイントを作り直すと値が変わる）',
+  },
+  PAYMENTS_ENABLED: {
+    re: /^true$/,
+    hint: "'true' のみ。それ以外は全部「停止」を意味する（src/lib/payments.ts はフェイルクローズ）",
+  },
 }
 
 // 入れてはいけないもの。とくに AWS_* は「静的キーを置かない」という移行最大の成果を打ち消す。
@@ -101,8 +142,8 @@ const FORBIDDEN = [
   /^AWS_ACCESS_KEY_ID$/,
   /^AWS_SECRET_ACCESS_KEY$/,
   /^AWS_SESSION_TOKEN$/,
-  /^STRIPE_/,
-  /^PAYMENTS_ENABLED$/,
+  // 📌 `STRIPE_*` / `PAYMENTS_ENABLED` は 2026-08-13 に**ここから OPTIONAL へ移した**（15 ①）。
+  //    配線したので投入してよい。形式は FORMATS で見る。
   /^BLOB_/,
   // ビルド時にしか使われない＝ Lambda の env に入れても効かない
   /^SENTRY_(ORG|PROJECT|AUTH_TOKEN)$/,
@@ -136,6 +177,7 @@ const warnings = []
 // 別々の秘密が同じ値になることは実運用ではまず無い。1つでも重複したら復号漏れを疑う。
 const byValue = new Map()
 for (const { key, value } of entries) {
+  if (NON_SECRET.has(key)) continue // 'true' 同士の正常な重複で誤検知しないように
   if (!byValue.has(value)) byValue.set(value, [])
   byValue.get(value).push(key)
 }
@@ -175,19 +217,25 @@ for (const { key, value } of entries) {
 
 // ── ⑤ 必須の充足 ──────────────────────────────────────────
 const present = new Set(entries.map((e) => e.key))
-for (const key of REQUIRED) {
-  if (!present.has(key)) {
-    errors.push(`必須が欠けている: ${key}（sst deploy がこれで落ちる）`)
+if (partial) {
+  console.log(
+    '# --partial: 必須の充足検査を省いた（既存 production への追加投入として扱う）',
+  )
+} else {
+  for (const key of REQUIRED) {
+    if (!present.has(key)) {
+      errors.push(`必須が欠けている: ${key}（sst deploy がこれで落ちる）`)
+    }
   }
-}
-for (const key of OPTIONAL) {
-  if (!present.has(key)) {
-    warnings.push(
-      `任意が欠けている: ${key}` +
-        (key === 'ADMIN_TOTP_REQUIRED'
-          ? '  🔴 これが欠けると admin がパスワードのみで通る'
-          : ''),
-    )
+  for (const key of OPTIONAL) {
+    if (!present.has(key)) {
+      warnings.push(
+        `任意が欠けている: ${key}` +
+          (key === 'ADMIN_TOTP_REQUIRED'
+            ? '  🔴 これが欠けると admin がパスワードのみで通る'
+            : ''),
+      )
+    }
   }
 }
 
