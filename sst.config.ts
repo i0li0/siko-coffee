@@ -1310,28 +1310,78 @@ export default $config({
       okActions: mainActions,
     })
 
-    // ⑤ CloudFront の 5xx 率。**us-east-1**。
+    // ⑤ CloudFront の 5xx。**us-east-1**。
     //    🔑 image-optimizer の Lambda は SST が nodes に公開しておらず個別に
     //       アラームを張れないが、その失敗は CloudFront では 5xx として現れる
     //       ＝ この1本が実質的にオリジン全体の受け皿になる。
     //    📌 `Region: 'Global'` のディメンションは CloudFront のメトリクスでは必須。
+    //
+    // 🔴🔴 **率（`5xxErrorRate` > 5%）で見るのをやめた（2026-08-13・教訓57）。**
+    //    このサイトの平常トラフィックは **5分あたり数本**しかない。率で見ると
+    //    **5xx が1本出ただけで 20〜33% に跳ねる**ので、閾値 5% は事実上「1本でも鳴る」。
+    //    実際に 2026-08-13T20:31Z、**リクエスト3本・うち5xx 1本（33.3%）**で発報した。
+    //    その1本は `POST /api/checkout` の **503 ＝ 決済停止中の設計どおりの応答**で、
+    //    **鳴らしたのは検証作業そのものだった**（Slack にも発報と復旧の2通が飛んだ）。
+    //
+    // 🔑 **率は「母数が十分あるとき」にしか意味を持たない。**
+    //    ＝ **件数**で見る。`5xxErrorRate` は率しか出ないので metric math で件数に戻す:
+    //      **件数 = (5xxErrorRate / 100) × Requests**
+    //    閾値は **5分で3件以上**。過去の事象で確かめた:
+    //      2026-08-05 の `LambdaLimitExceeded` … **164件** → 鳴る ✅
+    //      2026-08-02 の3回のスパイク       … 約109件  → 鳴る ✅
+    //      2026-08-13 の自作自演             … **1件**  → 鳴らない ✅
+    //
+    // ⚠️ **引き換えに落ちる感度を明記しておく。** 深夜のように 5分で数本しか来ない時間帯に
+    //    **全滅**しても、件数が3に満たなければこの1本では鳴らない。そこは
+    //    **② `web-server-errors`（Lambda の異常終了）と Sentry** が受け持つ。
+    //    ＝ **「率で拾えるが誤報だらけ」より「件数で拾えないが鳴ったら本物」**を採る。
+    //    トラフィックが戻った時点で件数は積み上がるので、検知が消えるわけではない。
     makeAlarm(
       'CloudFront5xxAlarm',
       {
         name: `siko-${$app.stage}-cloudfront-5xx`,
         alarmDescription:
-          'CloudFront の 5xx 率が高い（オリジン障害・image-optimizer の失敗・Lambda@Edge の異常）',
-        namespace: 'AWS/CloudFront',
-        metricName: '5xxErrorRate',
-        dimensions: {
-          DistributionId: web.nodes.cdn!.nodes.distribution.id,
-          Region: 'Global',
-        },
-        statistic: 'Average',
-        period: 300,
-        // 単発の 5xx で鳴らさない。率（%）なので 5 = 5%。
-        threshold: 5,
-        comparisonOperator: 'GreaterThanThreshold',
+          'CloudFront が 5分で3件以上の 5xx を返した（オリジン障害・image-optimizer の失敗・Lambda@Edge の異常）',
+        // 🔴 `metricQueries` を使うときは、アラーム側に `period` / `statistic` /
+        //    `namespace` などを**書かない**（式と生メトリクスの二重指定になる）。
+        metricQueries: [
+          {
+            id: 'errors5xx',
+            expression: '(rate5xx / 100) * requests',
+            label: '5xx の件数（5分）',
+            returnData: true,
+          },
+          {
+            id: 'rate5xx',
+            returnData: false,
+            metric: {
+              namespace: 'AWS/CloudFront',
+              metricName: '5xxErrorRate',
+              dimensions: {
+                DistributionId: web.nodes.cdn!.nodes.distribution.id,
+                Region: 'Global',
+              },
+              stat: 'Average',
+              period: 300,
+            },
+          },
+          {
+            id: 'requests',
+            returnData: false,
+            metric: {
+              namespace: 'AWS/CloudFront',
+              metricName: 'Requests',
+              dimensions: {
+                DistributionId: web.nodes.cdn!.nodes.distribution.id,
+                Region: 'Global',
+              },
+              stat: 'Sum',
+              period: 300,
+            },
+          },
+        ],
+        threshold: 3,
+        comparisonOperator: 'GreaterThanOrEqualToThreshold',
         alarmActions: [alarmTopicGlobal.arn],
         okActions: [alarmTopicGlobal.arn],
       },
