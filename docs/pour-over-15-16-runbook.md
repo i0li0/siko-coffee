@@ -7,7 +7,7 @@ Pour Over の**最後の2タスク**。13 の手順書（[`pour-over-13-runbook.
 > 13 は Route53 を戻せば Vercel に帰れた。15 で Vercel を解約すると **帰る先が消える**。
 > だから「実行可能条件」は 13 のときより厳しく、**S-3 は当日に引き直す**。
 
-**最終更新: 2026-08-13**（① 実施。S-3 を引き直して **soak 完了**）
+**最終更新: 2026-08-21**（**②③④ 実施＝決済再開・買える状態**。残るは⑤の実購入と、S-3 到達後の⑥）
 
 ---
 
@@ -54,6 +54,27 @@ done
 | 1 | パスワードマネージャに `sk_live_...Nk7B` があること | Phase 0 で Rotate した新キー。**Vercel にも AWS にも未投入** |
 | 2 | Stripe の **Webhook エンドポイント URL** が `https://www.sikocoffee.com/api/webhooks/stripe` を指していること | 🔴 **計画に無い項目**。Vercel 時代のまま古い URL を指していれば、解約後に webhook が全部死ぬ |
 | 3 | そのエンドポイントの **署名シークレット**（`whsec_...`）を手元に出せること | `STRIPE_WEBHOOK_SECRET` に要る。**エンドポイントを作り直すと値が変わる**ので 1〜3 はこの順に |
+
+#### ✅ ② 実施済み（2026-08-21）— **3つとも「変更不要」だった**
+
+| 前提 | 実測 |
+|---|---|
+| 1 `sk_live_...Nk7B` | ✅ 存在・**最終使用の記載なし**（Phase 0 以降どこにも未投入の証拠） |
+| 2 Webhook URL | ✅ 既に `https://www.sikocoffee.com/api/webhooks/stripe`・状態 `Active` |
+| 3 署名シークレット | ✅ 取得済み。**エンドポイントを作り直さなかったので値は不変**＝1〜3 の順序制約は発生しなかった |
+| 送信イベント | ✅ `checkout.session.completed` / `checkout.session.expired` / `charge.refunded` の3種ちょうど |
+| Home のバナー | ✅ 警告なし |
+
+🔑 **www を省けない理由が実測で確定した**（負の対照つき）:
+
+```
+POST https://www.sikocoffee.com/api/webhooks/stripe  → 400 Missing signature（リダイレクト 0 回）
+POST https://sikocoffee.com/api/webhooks/stripe      → 308 → www
+```
+
+Stripe は webhook 配信で **3xx を追わず配信失敗として扱う**。apex 宛のままなら
+**全配信が失敗し、アプリ側にはログすら残らない**。400 が返るのは
+[`route.ts` の最初のガード](../src/app/api/webhooks/stripe/route.ts)が実行された証拠＝経路は生きている。
 
 ---
 
@@ -167,7 +188,7 @@ npm run check:sst-config   # トップレベル import の検査
 - 重複検査から `PAYMENTS_ENABLED` / `ADMIN_TOTP_REQUIRED` を除外
   … 正しく設定すると**どちらも `true`**＝除外しないと**正しいファイルを誤検知で止める**
 
-### 3-2. ③ 秘密の投入
+### 3-2. ③ 秘密の投入 — ✅ **実施済み（2026-08-21）**
 
 ファイルは**3行だけ**（既存の production に足す形）:
 
@@ -189,7 +210,32 @@ rm -P <file>                                               # 後片付けは必�
 ✅ `FORMATS` の正規表現は ① で投入済み（`sk_live_` / `whsec_` / `true`）＝
 **`sk_test_` を本番に入れる**・**`pk_live_` を秘密キー欄に入れる**は、値を見ずに止まる。
 
-### 3-3. ④ 再デプロイ
+#### 実測（2026-08-21）
+
+```
+STRIPE_SECRET_KEY      len= 107  sha=d9539410  任意
+STRIPE_WEBHOOK_SECRET  len=  38  sha=ff277264  任意
+PAYMENTS_ENABLED       len=   4  sha=b5bea41b  任意
+✓ このファイルは `sst secret load` に渡してよい
+```
+
+🔴 **投入の前に `git fetch origin main` を打つこと。** このとき
+**ワークツリーが main より1コミット遅れていた**（HEAD が **#169**・`origin/main` が **#164**
+＝ **PR 番号はマージ順ではない**）。④は**このディレクトリの中身を本番へ送る**ので、
+気づかなければ決済再開と一緒に古いコードを流し込んでいた。`git merge --ff-only origin/main` で解消。
+
+🔑 **投入の前に「配線が本番の実体に届いているか」をキー名だけで確かめる**（値は出さない）:
+
+```bash
+aws lambda get-function-configuration --region ap-northeast-1 \
+  --function-name siko-coffee-production-WebServerApnortheast1Function-vkwardwo \
+  --query 'keys(Environment.Variables)' --output text | tr '\t' '\n' | grep -E 'STRIPE|PAYMENTS'
+```
+
+3本とも**キーは存在し値は長さ0**だった＝ ①（#165）が意図どおり効いている状態。
+これが**④のあとの対照**になる（→ 教訓62）。
+
+### 3-3. ④ 再デプロイ — ✅ **実施済み（2026-08-21・オーナーが手で実行）**
 
 ```bash
 npm run sst:deploy -- --stage production
@@ -199,7 +245,12 @@ npm run sst:deploy -- --stage production
 （静的生成でフラグがビルド時に焼き込まれる）。API 側の 503 解除は実行時なので即座に効く。
 ＝ **「買えるのに停止表示が出たまま」と「表示は消えたのに買えない」は別々に起こりうる。両方見る。**
 
-### 3-4. ⑤ 決済の検証（Vercel が生きているうちに）
+🔴 **このコマンドは Claude 側で auto mode の分類器にブロックされる。オーナーが手で打つ。**
+ワークツリー内で `AWS_PROFILE=process npm run sst:deploy -- --stage production`。
+📌 ③と④の間で止まっても**壊れない**（値は state にあるだけ・env は空・フェイルクローズ）。
+**手順の境界ごとに「途中で止まったらどちら側に倒れるか」を言えるようにしておく**（→ 教訓63）。
+
+### 3-4. ⑤ 決済の検証（Vercel が生きているうちに）— 🟡 **1〜3 済み（2026-08-21）／4〜6 が残り**
 
 | # | 見るもの | 期待 |
 |---|---|---|
@@ -213,6 +264,32 @@ npm run sst:deploy -- --stage production
 🔑 **4 を飛ばさない。** 1〜3 は「入口が開いた」までしか言わない。
 `STRIPE_WEBHOOK_SECRET` の誤りは**決済が成功したあとに**顕在化するので、
 **通しで1件買うまで「再開できた」と書かない**（教訓37 と同型＝機械で検査できない性質）。
+
+#### 実測（2026-08-21・**変更前と同じ手段で測った前後**）
+
+| 見たもの | 変更前 | 変更後 |
+|---|---|---|
+| Lambda env の長さ（値は非表示） | `0 / 0 / 0` | **`107 / 38 / 4`**（投入ファイルの `len` と一致） |
+| `/shop`・`/shop/catalog`・`/shop/product/brazil` | 停止告知あり | **告知なし**・全て 200 |
+| 構造化データ `availability` | `OutOfStock` | **`InStock`** |
+| `POST /api/checkout` | 503 | **400** |
+
+🔑 **最後の1行は「不正なボディ（JSON）」で測っている。**
+`isPaymentsEnabled()` が**最初の関門**なので、閉じていれば 503・開いていれば
+`formData()` の失敗で 400 になる ＝ **Stripe セッションを1つも作らず・注文も残さず・5xx も出さずに、
+ゲートの開閉だけを測れる**（→ 教訓61）。正しいボディで叩くと**本物のセッションが本番に残る**。
+
+**S-3 への影響なし**: 起算 `2026-08-20T07:43:45Z` 以降のアラーム遷移は2リージョンとも 0 件
+（窓を 08-01 まで広げると 20 件＝負の対照つき）。この日に本番へ出した応答は 400 と 200 だけ。
+
+#### 残っているもの（4〜6・**オーナー作業**）
+
+| # | やること | 何が閉じるか |
+|---|---|---|
+| 4 | 少額の商品を実際に1件買う | Stripe セッション → 決済 → **webhook で注文が確定**まで |
+| 5 | 注文メールの**照会リンク**を開く | `ORDER_TOKEN_SECRET` のローテーション検証（C-4 の残り2本のうち1本） |
+| 6 | 注文メールが SES で届く | 配信・バウンスのイベントにも出る |
+| 任意 | そのあと Stripe から**返金** | 3つ目のイベント `charge.refunded` の疎通（手数料は戻らない） |
 
 ---
 
