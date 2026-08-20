@@ -580,10 +580,14 @@
   - vitest 13ケース追加（境界値・エスカレーション・メール無し・対象外注文）。
 - [x] **週上限の実績ベース判定（2026-07-24）**：`weeklyPoLoadG()`（`src/lib/pos.ts`）で **`pos` を PK Query（Scan なし）→ 直近7日 rolling × 同一豆 × 枠を消費するステータス（`auto_approved`/`pending`/`accepted`）の `qtyG` 合算**を出し、`checkout/blend` の自動承認判定を「既存週内 + 今回 <= `weeklyCapKg`」へ変更（`src/lib/platformCheckout.ts`）。`declined`/`timeout` は解放済みとして除外。新テーブル不要（§11.4「逆引きは必要になってから」に沿い既存 `pos` を再利用）。vitest +2（全181 passed）／tsc・eslint・`next build` クリーン。
 - [ ] **認証済みE2E検証**：preview デプロイ後に「申請→admin承認→active→豆/ロット登録→（カタログで）ブレンド作成→注文→発注応答→差替/返金」を通しで確認。
-  - 🔴 **2026-07-26 時点、HTTP 経由の通し確認は2つの理由でブロックされている**:
-    1. **決済が停止中**（AWS 移行 Phase 0・`docs/aws-migration-feasibility.md`）。`PAYMENTS_ENABLED` は Vercel のどの環境にも存在せず、preview でも `POST /api/checkout/blend` は **503** を返す＝「注文」の一歩が踏めない。
-    2. かつ Vercel env の `STRIPE_SECRET_KEY` は**失効済みの旧キー**なので、仮に `PAYMENTS_ENABLED` を preview だけに入れても Stripe 認証で落ちる。通すには **preview 用の Stripe テストキー**を別途用意する必要がある。
-  - ※ preview は Vercel SSO 保護のため、ブラウザ操作にも Vercel ログインが要る。
+  - ✅ **2026-08-21、決済再開（Pour Over 15 の ②③④）でこのブロックは解けた。** 本番の `POST /api/checkout` は 503 を返さない。
+  - 🔴 **ただし前提が2つ変わっているので、旧記述のまま着手しない**:
+    1. **開いたのは本番だけ**＝ここで通すと**実課金と実注文が発生する**。テスト経路ではない。
+    2. **preview 前提そのものが消える**。Vercel は 15 の ⑥ で解約予定（`docs/pour-over-15-16-runbook.md` §4）＝下記の「preview だけ有効化」案は**検討対象から外れた**。着手時は経路を設計し直す。
+  - 📜 **旧ブロック理由（2026-07-26 時点・解消済み。当時の判断を読むためだけに残す）**:
+    1. ~~**決済が停止中**（AWS 移行 Phase 0）。`PAYMENTS_ENABLED` は Vercel のどの環境にも存在せず、preview でも `POST /api/checkout/blend` は **503** を返す＝「注文」の一歩が踏めない。~~
+    2. ~~かつ Vercel env の `STRIPE_SECRET_KEY` は**失効済みの旧キー**なので、仮に `PAYMENTS_ENABLED` を preview だけに入れても Stripe 認証で落ちる。通すには **preview 用の Stripe テストキー**を別途用意する必要がある。~~
+    3. ~~preview は Vercel SSO 保護のため、ブラウザ操作にも Vercel ログインが要る。~~
   - **データ層は結合テストで代替確認済み**（§14.4 の週上限判定を含む・18/18）。残るのは HTTP + 認証 + Stripe の経路だけ。
 - [ ] **`/shop` のテストデータ差し替え**：`data.ts` の豆3種・定番/みんなのブレンドは全て架空（§12）。SikŌ 自身の3種へ差し替える。※ 焙煎家の掲載豆（`beans` テーブル）＋新設 `/shop/catalog` とは別枠で、既存 ShopApp 側の話。
 
@@ -595,7 +599,9 @@
 
 ### 14.6 次の一手（推奨開始点）
 **認証済みE2Eの通し確認**（§14.4）。API・UI とも掲載→在庫→カタログ→注文→確保→発注→応答→差替/返金まで揃っている。
-ただし **HTTP 経由の通しは決済停止（Phase 0）で止まっている**（上記 §14.4 の 🔴 参照）。着手するなら先に「preview だけ決済を有効化する（Stripe テストキー＋`PAYMENTS_ENABLED`）」の判断が要る。
+✅ **決済停止（Phase 0）による足止めは 2026-08-21 に解けた**（15 の ②③④・上記 §14.4 参照）。
+🔴 着手前の判断は「preview だけ有効化するか」ではなくなった＝**本番で通すと実課金が起きる**ので、少額商品で自分で買うか、
+Stripe のテストモードで通せる経路を別に用意するかを先に決める。
 データ層は preview 実テーブルの結合テストで代替確認済み（**18/18**・週上限の実績ベース判定を含む）。
 **2026-07-26 の判断**: E2E は決済再開時にまとめて実施することとし、先に実装を進める方針を選択。旧②「T1『待つ』導線」も同日完了したため、**残る実装候補は ①サブスク(Stripe Billing) ②cron残り（`fresh-lots`／`subscription-dunning`）**。
 その後の実装候補は実利順で **①T1「待つ」導線（ETA再計算＋通知）→ ②サブスク（Stripe Billing）→ ③cron 残り（`fresh-lots`／`subscription-dunning`）**（旧①「週上限の実績ベース判定」は 2026-07-24 完了）。`GET /api/blends` の Scan→Query は `blends` GSI バックフィル待ちで別軸。
