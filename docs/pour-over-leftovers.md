@@ -25,7 +25,7 @@
 | **A. Pour Over 本編の残り** | **3**（14 は S-3 のみ残・15・16） | 21タスクのうち未完のもの。これが終われば Pour Over は完了 |
 | **B. 意図的に見送った技術判断** | 4 | やらないと決めたのではなく、**判断材料が揃うまで待っている**もの |
 | **C. Pour Over が生んだ小さな負債** | **1**（元7・C-1/C-2/C-4/C-5/**C-6**/**C-7** 完了。残るは C-3） | 移行の過程で生まれ、まだ回収していないもの |
-| **D. 推奨タスク（R-1〜R-10）** | 9 | コスト非制約の前提で挙がった改善。R-3 は不採用確定 |
+| **D. 推奨タスク（R-1〜R-11）** | 10 | コスト非制約の前提で挙がった改善。R-3 は不採用確定 |
 | **E. スコープ外と明記したもの** | 5 | **Pour Over と混ぜないと決めた**もの。完了後に着手する |
 
 ---
@@ -276,7 +276,7 @@ done
 | ~~**C-7**~~ | ~~🔴 **未知パスへのスキャンが Lambda@Edge の同時実行クォータ（10）を枯渇させ 503 になる**~~ ✅ **完了（#168）** | 実測: 08-13T17:50Z に**単一IP `35.252.127.169` が SEA900 経由で 1,208 req/5分**（`/.env` `/.ssh/id_ecdsa` `/.claude.json` 等の秘密ファイル探索）→ `LambdaLimitExceeded` 503 が12件。<br>🔴🔴 **#144 は静的アセットの経路を外しただけで、デフォルトビヘイビア（未知パス）は今も Lambda@Edge を通る**＝ 08-07 の「クォータ引き上げは不要」の前提が欠けていた（教訓59）。<br>📌 **枯渇した枠は共有**なので、同じ5分に来た本物のリクエストも 503 になる＝「スキャナが受けるだけ」は誤り。<br>✅ **入れたもの（#168）**: WAF に `SiteWideRateLimit`（priority 3 / Block / **600 req / 300秒 / IP**）。🔑 **閾値はアクセスログ7日分の実測から決めた**（1IP・5分あたり）: **1,208**=止めたいスキャナ／597・559=ボット／**290〜315**=常連の分散スクレイパ（6IP・EU エッジ・同一UA）／174以下=その他。600 は**スキャナだけを跨ぎ、常連ボットにも実ユーザーにも届かない**位置。300 まで下げれば分散ボットも止まるが誤検知が現実的（オーナー判断で不採用）。✅ **負の対照**: `/`・`/shop`・`/legal/privacy` とも 200。⚠️ **`BlockedRequests` の継続観測はこれから** | `aws service-quotas get-service-quota --region us-west-2 --service-code lambda --quota-code L-B99A9384`<br>`aws wafv2 get-web-acl --scope CLOUDFRONT --region us-east-1 --name AdminWaf-1a5556d --id <id> --query 'WebACL.Rules[].Name'` |
 ---
 
-## D. 推奨タスク R-1〜R-10（9本・R-3 は不採用確定）
+## D. 推奨タスク R-1〜R-11（10本・R-3 は不採用確定）
 
 `aws-migration-feasibility.md`「推奨タスク」が正本。**コスト非制約の前提**で挙がったもので、
 Pour Over の完了条件ではない。**実測で状態が分かるものは下に書いた。**
@@ -293,6 +293,33 @@ Pour Over の完了条件ではない。**実測で状態が分かるものは�
 | R-8 | 配信まわりの小改善 | **実測: IPv6 = `false` / `CustomErrorResponses` = 0件 / HTTP version = `http2`**（http3 でない）。Origin Shield も未設定 |
 | R-9 | アカウントのガバナンス | ✅ **Access Analyzer は完了（2026-08-03）**＝ `scripts/bootstrap-access-analyzer.sh` で **ap-northeast-1 と us-east-1 の2つ**（リージョン単位なので片方だと母集団が欠ける・教訓43）。冪等性も2回目の実行で実測。<br>⬇️ **IAM パスワードポリシーは「やらない」に降格した（理由を測り直した結果・下記）**。有料は GuardDuty / Config / Security Hub |
 | R-10 | 掃除 | 下記 |
+| **R-11** | **GitHub Code scanning（CodeQL）を有効にする** | 🔴 **未設定**（2026-08-10 実測: `gh api .../code-scanning/alerts` が `no analysis found`）。**着手は Pour Over 完了後**（オーナー判断・下記） |
+
+### R-11: Code scanning（CodeQL）は Pour Over 完了後に入れる
+
+**現況（2026-08-10 実測）**:
+
+| 検査 | 状態 |
+|---|---|
+| Secret scanning | ✅ 有効・アラート **0件** |
+| Dependabot alerts | ✅ 有効・open **0件**（全16件 `fixed`）。`npm audit` も全段階 0 |
+| **Code scanning（CodeQL）** | 🔴 **未設定**＝`no analysis found` |
+
+つまり**依存と秘密は見ているが、自分たちが書いたコードは静的解析にかけていない**。
+public リポジトリなので **CodeQL は無料**で、`default setup` なら数クリックで入る。
+
+🔑 **それでも今やらない理由**: CodeQL は PR に新しい必須チェックを増やし得る。
+14（soak）の終了条件 **S-3（アラーム遷移ゼロ7日）** を測っている最中に CI の構成を動かすと、
+**「変えたもの」と「観測しているもの」が混ざる**。R-5 の DMARC 判断と同じで、
+**測定中は測定系を触らない**。→ **16（Vercel 解約）まで終わってから着手する。**
+
+📌 着手時に決めること:
+- `default setup` か `advanced setup`（`codeql-analysis.yml` を自前で持つ）か。
+  言語は JavaScript/TypeScript のみなので **`default setup` で足りる見込み**。
+- 初回スキャンで出た指摘を**必須チェックにする前に**一巡させる
+  （[[feedback-verification-baseline]] と同型＝**入れた直後に「常に赤い」状態を作らない**）。
+- Access Analyzer（R-9）の初回スキャンが**教訓41の残骸を実際に見つけた**先例がある＝
+  **初回スキャンは「何も出ない前提」で計画しない。**
 
 ### R-5 の内訳（2026-08-10 実測）
 

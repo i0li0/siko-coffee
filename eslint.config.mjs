@@ -20,6 +20,30 @@ const eslintConfig = defineConfig([
     "sst-env.d.ts",
   ]),
   {
+    // アンダースコア始まりは「意図的に使わない」の合図として扱う。
+    //
+    // 型のためだけに要る引数がある。`src/__tests__/slackNotify.test.ts` の fetch モックは
+    // `(_url, _init) => Response` という**シグネチャ自体が検査対象**（`mock.calls[0][1]` で
+    // `init.signal` を見るため）で、引数を消すと検査が成り立たない。
+    // 既定の `no-unused-vars` は `_` 接頭辞を特別扱いしないので、これが warning として
+    // CI の annotation に出続けていた。
+    //
+    // 🔑 **常時出ている警告は、本物の警告を隠す。** 消し方は2つあって、
+    // ①「使わない」を表明する規約を設定に教える（これ）と ② 個別に `eslint-disable` を貼る。
+    // ② は同じ判断を書き足し続けることになるので、規約として1か所に置く。
+    files: ["**/*.ts", "**/*.tsx"],
+    rules: {
+      "@typescript-eslint/no-unused-vars": [
+        "warn",
+        {
+          argsIgnorePattern: "^_",
+          varsIgnorePattern: "^_",
+          caughtErrorsIgnorePattern: "^_",
+        },
+      ],
+    },
+  },
+  {
     // 🔴🔴 `notifySlack()` を投げっぱなしにさせない。
     //
     // **AWS Lambda はハンドラが返ると実行環境をフリーズする**ので、未完了の fetch は
