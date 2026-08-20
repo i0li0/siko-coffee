@@ -65,6 +65,28 @@ done
 | 送信イベント | ✅ `checkout.session.completed` / `checkout.session.expired` / `charge.refunded` の3種ちょうど |
 | Home のバナー | ✅ 警告なし |
 
+#### 📌 エンドポイントの実測値（2026-08-21 追記・`stripe webhook_endpoints list --live`）
+
+| フィールド | 値 |
+|---|---|
+| `id` | `we_1TfO3jILyDqkQ9tyvhVMAvd2` |
+| `created` | **`2026-06-06T17:30:59Z`** |
+| `api_version` | **`2026-04-22.dahlia`** |
+| 本番の登録数 | **1件のみ**（Vercel 時代の残骸なし） |
+
+🔑 **`created` が「不変」の客観的な裏付けになる。** 上の表の「作り直さなかったので `whsec_` は不変」は
+作業者の記憶に依存するが、**作成日時が 6/6 で当日でない**ことは外形的に確認できる。
+再確認したくなったら値を見ずにこれを見ればよい。
+
+🔴 **`api_version` は⑤で事故ったとき最初に疑う値。** webhook のペイロードは
+**エンドポイントに固定された API 版**（＝ SDK の版ではない）で届く。
+[`route.ts`](../src/app/api/webhooks/stripe/route.ts) が `shipping_details` を
+**`collected_information` 配下と直下の両方**で受けているのはこの版差への備えで、
+**住所・氏名がメールに入らない**類の不具合が出たらここを見る。
+
+📌 **API のフィールドは `status: "enabled"`**（ダッシュボードの表示は `Active`）。
+上の表の「状態 `Active`」を CLI や API の出力から探すと**見つからない**ので、追試する人はこちらで照合する。
+
 🔑 **www を省けない理由が実測で確定した**（負の対照つき）:
 
 ```
