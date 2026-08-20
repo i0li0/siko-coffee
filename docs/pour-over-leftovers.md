@@ -473,7 +473,7 @@ aws cloudfront get-distribution-config --id <production の Id> \
 | E-1 | **`middleware` → `proxy` のリネーム**（Next 16 の非推奨対応） | ⚠️ **ビルドのたびに警告が出ている**（`The "middleware" file convention is deprecated`）。16 の撤去と同じファイル群を触るので**順序に注意** |
 | E-2 | `/admin/monthly` のリンク切れ | 管理画面サイドバーに実体の無いリンク |
 | E-3 | **security-backlog 4件** | ①middleware の失効チェック ②パスキー ID 露出 ③Stripe webhook の文言 ④Honeytoken 導入。いずれも低リスク・対応任意 |
-| E-4 | ブレンド共創プラットフォーム（機能開発） | E2E とサブスクは**決済再開待ち**＝ 15 に依存 |
+| E-4 | ブレンド共創プラットフォーム（機能開発） | ~~E2E とサブスクは**決済再開待ち**＝ 15 に依存~~ ✅ **2026-08-21 に決済再開＝依存は解けた**（15 の ②③④）。🔴 ただし**開いたのは本番だけ**＝通すと実課金が起きる／preview 前提は Vercel 解約（15 ⑥）で消える。着手時に経路を決め直す |
 | E-5 | 商品詳細ページの二重実装 | 公開サイト IA 監査（2026-07-11）で検出・未着手 |
 
 ---
