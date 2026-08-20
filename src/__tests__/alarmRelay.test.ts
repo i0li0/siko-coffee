@@ -237,4 +237,49 @@ describe('alarmRelay handler', () => {
 
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
+
+  // ── T5: 鳴ったときの「調べ方」を通知に同梱する（教訓58）─────────────
+  //
+  // R-4 のアクセスログは17日間一度も引かれず、その間に未知の障害2件が記録された
+  // まま放置された。**入れっぱなしの診断は腐る**ので、引く手順を検知側に置く。
+
+  it('cloudfront-5xx の ALARM には Logs Insights のクエリを載せる', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('ok'));
+
+    await handler(
+      alarmEvent({ AlarmName: 'siko-dev-cloudfront-5xx', NewStateValue: 'ALARM' }),
+    );
+
+    const { text } = slackBody(fetchMock);
+    expect(text).toContain('siko-dev-cloudfront-access-logs');
+    expect(text).toContain('`sc-status` >= 500');
+    // 🔴 実際に踏んだ罠（存在しないフィールド名を使って空振りした）を文面に残す。
+    expect(text).toContain('cs(User-Agent)');
+  });
+
+  it('Lambda 系の ALARM にはロググループの探し方を載せる（名前を組み立てさせない）', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('ok'));
+
+    await handler(alarmEvent({ AlarmName: 'siko-dev-web-server-errors' }));
+
+    const { text } = slackBody(fetchMock);
+    expect(text).toContain('describe-log-groups --log-group-name-prefix');
+    expect(text).toContain('ResourceNotFoundException');
+  });
+
+  it('復旧(OK)の通知には調べ方を付けない（定型文で埋めない）', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('ok'));
+
+    await handler(
+      alarmEvent({
+        AlarmName: 'siko-dev-cloudfront-5xx',
+        NewStateValue: 'OK',
+        OldStateValue: 'ALARM',
+      }),
+    );
+
+    const { text } = slackBody(fetchMock);
+    expect(text).toContain('✅ OK');
+    expect(text).not.toContain('Logs Insights');
+  });
 });

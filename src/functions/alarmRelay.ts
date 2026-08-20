@@ -100,6 +100,47 @@ const STATE_MARK: Record<string, string> = {
   INSUFFICIENT_DATA: '⚠️ INSUFFICIENT_DATA',
 };
 
+/**
+ * 鳴ったときに「どう引くか」を通知そのものに入れる（教訓58）。
+ *
+ * 🔴 **なぜ要るのか。** R-4 の CloudFront アクセスログは 2026-08-03 から動いていたのに、
+ * **17日間一度も引かれなかった**。その間に未知の障害が2件（08-13 のスキャナ・08-17 の
+ * Instagram 署名URL失効）記録されたまま放置され、08-20 に至っては調査の初手で
+ * 「アクセスログが無い」と誤結論している。**入れっぱなしの診断は静かに腐る。**
+ *
+ * 🔑 **対処は「人が思い出す」ではなく「検知の隣に置く」。** 鳴った瞬間に届く文面に
+ * そのまま貼れるクエリが入っていれば、引くまでの距離が0になる。
+ *
+ * 📌 ここには**実際に踏んだ罠だけ**を書く。一般論を足すと文面が伸びて読まれなくなる。
+ */
+function investigationHint(alarmName: string, stage: string): string | undefined {
+  if (alarmName.endsWith('-cloudfront-5xx')) {
+    return [
+      `🔎 原因を引く（Logs Insights / *us-east-1* / \`siko-${stage}-cloudfront-access-logs\`）`,
+      '```',
+      'fields @timestamp, `sc-status`, `cs-method`, `cs-uri-stem`, `x-edge-detailed-result-type`, `c-ip`, `cs(User-Agent)`',
+      '| filter `sc-status` >= 500',
+      '| sort @timestamp asc | limit 50',
+      '```',
+      '🔴 `filter-log-events` はハイフン入りフィールドを弾く＝Insights でバッククォート。' +
+        'UA は `cs(User-Agent)`（`cs-user-agent` という名前は**無い**）。',
+    ].join('\n');
+  }
+
+  if (alarmName.endsWith('-errors') || alarmName.endsWith('-throttles')) {
+    return [
+      '🔎 該当 Lambda のログを探す',
+      '```',
+      `aws logs describe-log-groups --log-group-name-prefix /aws/lambda/siko-coffee-${stage}`,
+      '```',
+      '🔴 SST のロググループ名は関数名と**接尾辞が違う**。`/aws/lambda/<関数名>` を' +
+        '組み立てると `ResourceNotFoundException` になるので、必ず prefix で探す。',
+    ].join('\n');
+  }
+
+  return undefined;
+}
+
 function formatAlarm(alarm: CloudWatchAlarmMessage, stage: string): string {
   const state = alarm.NewStateValue ?? 'UNKNOWN';
   const mark = STATE_MARK[state] ?? `❔ ${state}`;
@@ -120,6 +161,13 @@ function formatAlarm(alarm: CloudWatchAlarmMessage, stage: string): string {
   if (alarm.Region) meta.push(`region: ${alarm.Region}`)
   if (alarm.StateChangeTime) meta.push(`at: ${alarm.StateChangeTime}`)
   if (meta.length > 0) lines.push(meta.join(' | '))
+
+  // 🔑 調べ方は **ALARM のときだけ**付ける。復旧(OK)にも付けると、
+  //    通知の半分が定型文になって**肝心のときに読み飛ばされる**。
+  if (state === 'ALARM') {
+    const hint = investigationHint(alarm.AlarmName ?? '', stage)
+    if (hint) lines.push(hint)
+  }
 
   return lines.join('\n')
 }

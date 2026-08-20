@@ -610,6 +610,47 @@ export default $config({
                   `siko-${$app.stage}-admin-ui-bot-challenge`,
                 ),
               },
+              // ④ サイト全体のレート制限（C-7・2026-08-20 追加）。
+              //
+              // 🔴 **上の3本はすべて `/admin` 限定で、サイト全体の制限は無かった。**
+              //    2026-08-13、単一IP（`35.252.127.169`）が SEA900 エッジ経由で
+              //    **1,208 req/5分**の秘密ファイル探索（`/.env` `/.ssh/id_ecdsa`
+              //    `/.claude.json` 等）を撃ち、**Lambda@Edge の同時実行クォータを
+              //    枯渇させて 503 を12件**出した（`LambdaLimitExceeded`）。
+              //    🔴 **#144 が経路から外したのは静的アセットだけで、未知パスは今も
+              //       Lambda@Edge を通る。** クォータは ap-northeast-1 のみ 1000 で、
+              //       us-east-1 / us-west-2 / ap-northeast-2 / eu-west-1 は **10**。
+              //    📌 枯渇した枠は共有なので、**同じ5分に来た本物のリクエストも 503 になる**
+              //       ＝「スキャナが受けるだけだから無害」は誤り。
+              //
+              // 🔑 **閾値 600/5分の根拠は実測（アクセスログの7日分・1IP あたり5分）**:
+              //    | 1,208 | 08-13 のスキャナ（＝止めたい相手） |
+              //    | 597 / 559 | AWS レンジのボット |
+              //    | 290〜315 | 常連の分散スクレイパ（今日の6IP はここ） |
+              //    | 174 以下 | それ以外すべて |
+              //    600 は **スキャナだけを跨ぎ、常連ボットにも実ユーザーにも届かない**位置。
+              //    🔴 **300 まで下げれば分散ボットも止まるが、実ユーザーや共有NATを
+              //       巻き込む誤検知が現実的になる**ので採らなかった（オーナー判断・08-20）。
+              //
+              // 📌 **`scopeDownStatement` を付けない**＝全パスが対象。付けると
+              //    「どのパスを舐められるか」を相手が決められる（C-7 の本質がそれ）。
+              // 📌 AWS のレートベースは約30秒ごとに直近の窓を再評価し、**レートが閾値を
+              //    下回るまでブロックが続く**（①と同じ挙動）。
+              {
+                name: 'SiteWideRateLimit',
+                priority: 3,
+                action: { block: {} },
+                statement: {
+                  rateBasedStatement: {
+                    limit: 600,
+                    evaluationWindowSec: 300,
+                    aggregateKeyType: 'IP',
+                  },
+                },
+                visibilityConfig: wafVisibility(
+                  `siko-${$app.stage}-site-wide-rate-limit`,
+                ),
+              },
             ],
           },
           {
@@ -936,6 +977,11 @@ export default $config({
         // 認可の2重化。①IAM（このロールでしか Function URL を叩けない）②CRON_SECRET。
         // ⚠️ `Authorization` は SigV4 が占有するので、中継は `x-cron-secret` で送る。
         CRON_SECRET: secretEnv.CRON_SECRET,
+        // C-6: エッジに残った古い HTML を定期的に落とすため（下の `CronRefreshHome`）。
+        // 🔴 **ここに置くしかない。** distribution の ID は `sst.aws.Nextjs` が作り終えて
+        //    初めて確定するので、**Web の Lambda 自身の環境変数には入れられない**
+        //    （自分自身を参照する＝循環参照）。この中継は web の後に作られるので渡せる。
+        CLOUDFRONT_DISTRIBUTION_ID: web.nodes.cdn!.nodes.distribution.id,
       },
       // 🔴🔴 **かつてここには「同一アカウントなのでアイデンティティ側だけで足り、
       //    Function URL のリソースポリシーに足す必要はない」と書いてあった。これは誤り。**
@@ -951,6 +997,11 @@ export default $config({
         {
           actions: ['lambda:InvokeFunctionUrl'],
           resources: [web.nodes.server!.apply((fn) => fn.arn)],
+        },
+        {
+          // C-6。**この distribution 1本に限定する**（`*` にしない）。
+          actions: ['cloudfront:CreateInvalidation'],
+          resources: [web.nodes.cdn!.nodes.distribution.arn],
         },
       ],
     })
@@ -1093,6 +1144,28 @@ export default $config({
         // 🔴 18:20 → **20:20**（Vercel の発火窓 18:20〜19:20 の外へ・5-3）
         schedule: 'cron(20 20 * * ? *)',
       },
+      {
+        // ── C-6: トップの HTML をエッジから定期的に落とす ────────────────
+        //
+        // 🔴 **これは「キャッシュを新しくする」ための cron ではなく、`/_next/image` が
+        //    500 を返すのを止めるための cron である。** OpenNext は ISR 応答に
+        //    `stale-while-revalidate=2592000`（30日）を**ハードコードで**付けるので
+        //    （`@opennextjs/aws` の `core/routing/util.js`）、アクセスの少ないエッジは
+        //    最大30日前の HTML を配る。トップが持つ Instagram の署名付き画像URLは
+        //    **寿命が約5日**しかないため、陳腐化が5日を超えたエッジでは画像最適化 Lambda が
+        //    upstream 403 を受けて **500 を返す**（2026-08-20 に本番で発報・S-3 が3回目の破綻）。
+        //
+        // 🔑 **6時間にした理由は「署名の寿命5日を確実に下回る」ことだけ。**
+        //    短くしても得は無く、無効化の無料枠（月1,000パス）を食うだけ。4回/日 = 120/月。
+        // 📌 分を **:42** にしたのは `CronReleaseReservations`（:05/:15/…/:55）と
+        //    重ねないため。ずらしの流儀は上の 5-3 と同じ。
+        // 📌 専用の Lambda を作らず中継に相乗りさせた理由（新しいアラームを作ると
+        //    `INSUFFICIENT_DATA → OK` の遷移が1回出て **S-3 の観測面が増える**）は
+        //    `src/functions/cronRelay.ts` の冒頭に書いた。
+        name: 'CronRefreshHome',
+        invalidatePaths: ['/'],
+        schedule: 'cron(42 0/6 * * ? *)',
+      },
     ] as const
 
     for (const job of CRON_JOBS) {
@@ -1100,7 +1173,12 @@ export default $config({
         // Function インスタンスを渡すと**再利用**される（新しい関数は作られない）。
         // 4本のスケジュールが1つの中継関数を共有し、パスは event で渡す。
         function: cronRelay,
-        event: { path: job.path },
+        // ジョブには「中継するもの（path）」と「無効化するもの（invalidatePaths）」の
+        // 2種類がある。両方を持つジョブも書けるよう、在るものだけを event に載せる。
+        event: {
+          ...('path' in job ? { path: job.path } : {}),
+          ...('invalidatePaths' in job ? { invalidatePaths: job.invalidatePaths } : {}),
+        },
         schedule: job.schedule,
         enabled: CRON_STAGES.includes($app.stage) && (isProd || !('prodOnly' in job)),
         // 一時的な失敗（server のコールド + 遅延で 35 秒超過など）で

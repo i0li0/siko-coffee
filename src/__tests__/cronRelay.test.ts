@@ -6,6 +6,21 @@
 // テストで固定しておく。
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+
+// CloudFront の SDK は**呼び出しの中身だけ**見たいのでモックする。
+// 実クライアントを通すと資格情報の解決で環境に依存し、テストが機械ごとに揺れる。
+const sendMock = vi.fn();
+vi.mock('@aws-sdk/client-cloudfront', () => ({
+  // 🔴 `vi.fn(() => ({...}))` は `new` で使えない（"is not a constructor"）。
+  //    SDK は `new` するので、モックもコンストラクタとして成立する形にする。
+  CloudFrontClient: class {
+    send = sendMock;
+  },
+  CreateInvalidationCommand: class {
+    constructor(public input: unknown) {}
+  },
+}));
+
 import { handler } from '@/functions/cronRelay';
 
 const ENV = {
@@ -24,6 +39,7 @@ function jsonResponse(status: number, body: unknown) {
 }
 
 beforeEach(() => {
+  sendMock.mockReset();
   Object.assign(process.env, ENV);
   vi.spyOn(console, 'log').mockImplementation(() => {});
   vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -65,8 +81,17 @@ describe('cronRelay handler', () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch');
 
     await expect(handler({ path: '/api/admin/dashboard' })).rejects.toThrow('unknown path');
-    await expect(handler({})).rejects.toThrow('unknown path');
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('空のイベントは「何もせず成功」にせず例外にする', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch');
+
+    // 🔴 path も invalidatePaths も無いイベントは**スケジュール定義のミス**。
+    //    黙って成功させると「毎回起動しているのに何もしていない」が静かに続く。
+    await expect(handler({})).rejects.toThrow('neither path nor invalidatePaths');
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(sendMock).not.toHaveBeenCalled();
   });
 
   it('2xx 以外は例外にする（Scheduler に成功と誤認させない）', async () => {
@@ -92,6 +117,56 @@ describe('cronRelay handler', () => {
 
     await expect(handler({ path: '/api/cron/instagram-refresh' })).rejects.toThrow(
       'TimeoutError',
+    );
+  });
+
+  // ── C-6: CloudFront の無効化 ───────────────────────────────────
+  //
+  // これが止まると**エッジの HTML が最大30日腐り、`/_next/image` が 500 を返す**。
+  // 症状はアラーム経由でしか見えないので、経路の性質をここで固定しておく。
+
+  it('invalidatePaths を渡すと CloudFront の無効化を作る（fetch はしない）', async () => {
+    process.env.CLOUDFRONT_DISTRIBUTION_ID = 'E3FC7N27IY6A73';
+    const fetchMock = vi.spyOn(globalThis, 'fetch');
+    sendMock.mockResolvedValue({ Invalidation: { Id: 'I2ABC', Status: 'InProgress' } });
+
+    const result = await handler({ invalidatePaths: ['/'] });
+
+    expect(result).toEqual({ invalidationId: 'I2ABC' });
+    // path が無いので中継はしない＝ server Lambda を起こさない。
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    const { input } = sendMock.mock.calls[0][0];
+    expect(input.DistributionId).toBe('E3FC7N27IY6A73');
+    expect(input.InvalidationBatch.Paths).toEqual({ Quantity: 1, Items: ['/'] });
+    expect(input.InvalidationBatch.CallerReference).toMatch(/^cron-invalidate-\d+$/);
+  });
+
+  it('許可していないパスの無効化は拒否する（`/*` で無料枠を焼かない）', async () => {
+    process.env.CLOUDFRONT_DISTRIBUTION_ID = 'E3FC7N27IY6A73';
+
+    await expect(handler({ invalidatePaths: ['/*'] })).rejects.toThrow(
+      'unknown invalidation path',
+    );
+    expect(sendMock).not.toHaveBeenCalled();
+  });
+
+  it('DISTRIBUTION_ID が無ければ名指しで落ちる', async () => {
+    delete process.env.CLOUDFRONT_DISTRIBUTION_ID;
+
+    await expect(handler({ invalidatePaths: ['/'] })).rejects.toThrow(
+      'CLOUDFRONT_DISTRIBUTION_ID',
+    );
+    expect(sendMock).not.toHaveBeenCalled();
+  });
+
+  it('無効化 ID が返らなければ成功にしない', async () => {
+    process.env.CLOUDFRONT_DISTRIBUTION_ID = 'E3FC7N27IY6A73';
+    // 🔴 「200 が返った」と「意図した状態になった」は別の命題。
+    sendMock.mockResolvedValue({});
+
+    await expect(handler({ invalidatePaths: ['/'] })).rejects.toThrow(
+      'no invalidation id',
     );
   });
 });
