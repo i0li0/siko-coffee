@@ -16,7 +16,7 @@
   「今すべて OK」と読んで見逃した。
 - 🔴 **列挙は必ず全リージョンで回す**（教訓43）。**CloudFront 系のアラームは us-east-1**。
   `--region ap-northeast-1` だけで数えた「6本」は母集団が欠けていた。
-- **最終実測日: 2026-08-20**（S-3 の再破綻とアクセスログによる原因特定）。
+- **最終実測日: 2026-08-20**（S-3 の再破綻 → 原因特定 → **C-6 / C-7 の対処を本番稼働まで**）。
 
 ## 全体像
 
@@ -24,7 +24,7 @@
 |---|---|---|
 | **A. Pour Over 本編の残り** | **3**（14 は S-3 のみ残・15・16） | 21タスクのうち未完のもの。これが終われば Pour Over は完了 |
 | **B. 意図的に見送った技術判断** | 4 | やらないと決めたのではなく、**判断材料が揃うまで待っている**もの |
-| **C. Pour Over が生んだ小さな負債** | **3**（元7・C-1/C-2/C-4/C-5 完了。残るは C-3・**C-6**・**C-7**） | 移行の過程で生まれ、まだ回収していないもの |
+| **C. Pour Over が生んだ小さな負債** | **1**（元7・C-1/C-2/C-4/C-5/**C-6**/**C-7** 完了。残るは C-3） | 移行の過程で生まれ、まだ回収していないもの |
 | **D. 推奨タスク（R-1〜R-10）** | 9 | コスト非制約の前提で挙がった改善。R-3 は不採用確定 |
 | **E. スコープ外と明記したもの** | 5 | **Pour Over と混ぜないと決めた**もの。完了後に着手する |
 
@@ -34,9 +34,11 @@
 
 進捗 **18.5/21**（15 の①だけ完了）。✅ **13 は完了＝本番トラフィックは AWS（CloudFront）で稼働中**
 （切替 `2026-08-02T19:39:15Z`）。🟡 **14（soak）は S-3 以外の5条件を達成**。
-🔴🔴 **S-3 は 3回破れている（08-05 / 08-13 / 08-20）。現在の起算は `2026-08-20T02:09:39Z`（到達 `2026-08-27T02:09Z`）**。
-🔑 **ただし「待つ」だけでは埋まらない**＝ #144 以降13日で発報相当が2回（平均6.5日に1回）＝
-**7日連続クリアの確率は約34%・期待所要は約21日**（教訓60）。**先に発生源（C-6・C-7）を潰すこと。**
+🔴 **S-3 は 3回破れた（08-05 / 08-13 / 08-20）が、3回目は同日中に発生源を潰した。**
+✅ **現在の起算 `2026-08-20T07:43:45Z`（＝ C-6/C-7 が本番で有効になった時刻）／到達 `2026-08-27T07:43Z`**。
+🔑 **前2回と条件が違う**＝ 08-05・08-13 は **λ を下げないままの引き直し**（7日クリアの確率34%・
+期待所要21日／教訓60）だったが、今回は **#168 で C-6・C-7 を両方潰してからの引き直し**で、
+**#144 以降の発報相当2件はどちらもこの2つに帰着した＝既知の発生源は残っていない**。
 **①〜⑤は待たずに進めてよく、待つのは⑥の手前だけ**。
 残るは **14 の S-3 ／ 15（決済再開＋Vercel 解約）／ 16（Vercel 依存の撤去）**。
 
@@ -48,7 +50,7 @@
 | ~~5-3~~ | ~~`CRON_STAGES` に `'production'` ＋ 発火窓ずらし~~ | — | ✅ **完了**（#135 → 403 の修正 #136 → **#137**）。🔴 計画の「切替後なら安全」は誤りだった（下記）。🔴 **有効化が日次枠を過ぎた後だったため `cleanup-pending` / `po-timeouts` の初回は 08-03T20:00Z / 20:20Z**（14 の S-1 で追跡） |
 | ~~5-4~~ | ~~`ci.yml` の `matrix.stage` に `production`~~ | — | ✅ **完了**（#134）＝ `[dev, production]`。🔴 **main への push は本番に入る** |
 | ~~5-6~~ | ~~Instagram トークンの確認~~ | — | ✅ **完了（2026-08-09T03:30:13Z）**。`cron(30 3 ? * SUN *)` の**初回発火が実測できた**（人の操作ゼロを CloudTrail で確認）＝失効は **2026-10-08**。**以後は AWS の週次（60日で8回）で自走する**ので、15 で Vercel の月次を消してよい |
-| **14** | **soak 期間**（Vercel を生かしたまま観測） | — | 🟡 **6条件のうち5つ達成**。🔴🔴 **S-3 は3回破れた**: ①`08-05T19:53Z`（Lambda@Edge throttle・#144 で是正）→②`08-13T20:31Z`（自作自演の checkout 503・#166 で是正）→③**`08-20T02:02Z`（Instagram 署名URL失効による `/_next/image` 500・未是正＝C-6）**。**現在の起算 `2026-08-20T02:09:39Z` ／ 到達 `2026-08-27T02:09Z`**。🔑 **発生率 λ ≒ 6.5日に1回＝7日クリアの確率34%**。**C-6・C-7 を潰してから引き直すこと**（教訓60） |
+| **14** | **soak 期間**（Vercel を生かしたまま観測） | — | 🟡 **6条件のうち5つ達成**。🔴 **S-3 は3回破れた**: ①`08-05T19:53Z`（Lambda@Edge throttle・#144）→②`08-13T20:31Z`（自作自演の checkout 503・#166）→③`08-20T02:02Z`（Instagram 署名URL失効・**#168 で対処**）。✅ **現在の起算 `2026-08-20T07:43:45Z`（＝ C-6/C-7 が本番で有効になった時刻・本番 Web Lambda の `LastModified`）／到達 `2026-08-27T07:43Z`**。🔑 **前2回と違い、今回は発生源を潰してからの引き直し**（#144 以降の発報相当2件はどちらも C-6/C-7 に帰着＝既知の発生源は残っていない） |
 | **15** | **決済再開 ＋ Vercel 解約** | **着手可** | 🔴 **順序は決済再開が先・解約が後**（不可逆点は解約1か所）。正本は [`pour-over-15-16-runbook.md`](pour-over-15-16-runbook.md)＝計画の手順は**投入先が腐っている**（Vercel の env と書いてあるが本番は AWS）。✅ **①配線 完了（2026-08-13）**＝ 次は**②オーナー作業**（Stripe の webhook URL 確認 → 署名シークレット取得 → `sk_live_` を用意）。🔴 **IAM アクセスキー `AKIAZQY7YB2C3BYMZCYG`（`shun` / AdministratorAccess）の削除を必ず含める**＝解約しても AWS 側に残る |
 | **16** | **Vercel 依存の撤去（①〜⑨）** | 15 の後 | 🔴 `vercel.json` だけ消すと **build が全環境で落ちる**（`prebuild` → `check-cron-schedule.mjs`）。📌 計画の表は長く「①〜⑦」と書いていたが**本文には⑧まである**（本作業で訂正） |
 
@@ -259,7 +261,7 @@ done
 
 ---
 
-## C. Pour Over が生んだ小さな負債（残り3本・元7本）
+## C. Pour Over が生んだ小さな負債（残り1本・元7本）
 
 移行の過程で生まれ、まだ回収していないもの。いずれも**実測で現存を確認済み**。
 
@@ -270,8 +272,8 @@ done
 | C-3 | **`BLOB_READ_WRITE_TOKEN` が Vercel 本番 env に残存** | **死んだ env**。4 で S3 へ移したのでコードは `@vercel/blob` を一切参照していない（grep 0件）。実害は無いが、16 の掃除対象 | `grep -rn "BLOB_READ_WRITE_TOKEN\|@vercel/blob" src/ package.json` が空 |
 | ~~C-4~~ | ~~🔴 **state に残っている平文シークレットの後始末とローテーション**~~ ✅ **完了（2026-08-08）** | 🔴🔴 **2026-08-08 に「完了」と書いたのは誤りだった（同日中に訂正）。①はまだ塞げていない。**<br>**何が本当か（99オブジェクト全走査・実測）**: `app/` 85件 **平文0**／`snapshot/` 7件 **平文0**／🔴 **`eventlog/` 7件は全件が平文**（production は**17本すべての値**・dev は9本・各ファイルに STS セッショントークン2本）。<br>🔴 **うち4件は 2026-08-08T08:04 / 08:09 のデプロイが書いた＝残骸ではなく継続中**。**#146 は `app/` にしか効いていない。**<br>✅ **②の削除自体は本物で有効**: 1,355件 2,341.9MB → 253件 86.8MB（**1,102件・2,255MB を削除**）。`app/` の現行2本は保持、`lock/`/`update/`/`secret/` は不変、delete marker 68→68。**消した対象が違ったのではなく「終わった」の判定が早すぎた。**<br>🔴 **誤判定の原因**: 「ラベルでなく中身の形を探す」として `"ASIA`（引用符付き）を対照にしたが、**`eventlog/` は JSON ではなく `NAME,,,VALUE` のカンマ区切り**で引用符が付かず、一致0を「値なし」と読んだ。**正しい検出は `SST_SECRET_[A-Z0-9_]*,,,` と STS トークンの `IQoJb3JpZ2lu`**（教訓52）。<br>✅✅ **①②③すべて完了（2026-08-08）＝ C-4 は終了。**<br>**③ローテーション実施**: `SLACK_WEBHOOK_URL` / `GOOGLE_CLIENT_SECRET` / `LINE_CLIENT_SECRET`（オーナーが各コンソールで再発行）＋ `CRON_SECRET` / `REVALIDATE_SECRET` / `ORDER_TOKEN_SECRET`（`openssl rand -hex 32`）の**6本を1回のデプロイでまとめて反映**。`AUTH_SECRET`・`ADMIN_*` は**据え置き**（全ユーザーのセッション切れ／管理者パスワードと TOTP 再登録に見合わない）。<br>📌 **`ORDER_TOKEN_SECRET` の影響範囲を先に測った＝注文0件・予約0件・サブスク0件**＝ **実害ゼロ。決済停止中の今がいちばん安い**（「危険だから避ける」の前に規模を測る）。<br>✅ **実測**: デプロイ成功 → **`eventlog/` は 0 件**（＝**新しい値が S3 に残っていない**＝①②③の順序が効いた）→ ローテーション後の初回 cron が **status=200**（＝ `CRON_SECRET` が中継と server で揃っている・かつて 403 で壊れた箇所）→ 本番 200・アラーム7本とも OK で遷移0。<br>✅ **原因を特定し、デプロイごとの自動削除まで入れた（08-08）**。<br>**原因**: `eventlog/` の平文は **Pulumi の debug 診断1行**（`diagnosticEvent.message`・23KB）で、`RegisterResource RPC finished: … WebBuilder …` が **RPC 応答の構造体をそのまま文字列化**したもの。**`$util.secret()` は保存に効くがこの debug ログはマスクを通らない**＝ #146 で塞げなかった理由。🔴 **`sst deploy` に止めるフラグは無い**（`--verbose` は増やす方向のみ）。<br>**対処**: `scripts/purge-sst-eventlog.sh` を追加し、唯一の入口 `scripts/deploy.sh` から **`trap … EXIT` で**呼ぶ（**失敗時こそ debug が多い**ため成功時だけでは足りない）。CI も `npm run sst:deploy` を通るので1か所で足りる。dev で**正常系 exit 0・異常系 exit 1 でも後始末が走る**ことを実測。<br>⚠️ **完全な封じ込めではない**（書き込み〜削除の数秒は S3 上に存在）。併せて lifecycle も `eventlog/` 30日→**1日**・`snapshot/` 7日を新設（`scripts/harden-sst-state-bucket.sh`・冪等）。🔴 **`Days:1` は「1日で消える」ではない**（非同期バッチで最大+24h／最小値1＝即時削除は作れない）。<br>🔴 **恒久策は upstream 側**（debug 診断に secret マスクを通すか、`...process.env` を渡さない）＝ **こちらでは閉じられない**。詳細は [`sst-state-env-leak.md`](sst-state-env-leak.md) §対処② | 🔴 **`grep -c SST_SECRET_` では判定できない**（名前にも一致する）<br>`aws s3api get-object --bucket sst-state-ntadsuobcmvm --key <eventlog のキー> f.json` → `grep -o 'SST_SECRET_[A-Z0-9_]*,,,' f.json \| wc -l`（0 なら値は無い）<br>**🔴 落としたファイルは平文なので確認後すぐ消す** |
 | ~~C-5~~ | ~~**`brace-expansion` の high 勧告が `overrides` に塞がれて自動修正されない**~~ ✅ **完了**（2026-08-20 実測: open alert **0本**・`Dependabot Updates` の失敗は 08-07 が最後） | **Dependabot は止まっていたのではなく、失敗し続けていた**（`Dependabot Updates` が 08-05・08-07 と連続 failure・**PR は1本も出ない**）。勧告は `>=5.0.9` を要求するのに `package.json` の `"minimatch@^10": { "brace-expansion": ">=5.0.8 <6" }` が下限を 5.0.8 に留めていた（ログ: `The latest possible version that can be installed is 5.0.8 because of the following conflicting dependency`）。**直すのは下限を `>=5.0.9 <6` に締め直すだけ**だが、🔴 **メジャー跨ぎの override は eslint を `TypeError: expand is not a function` で壊した前科がある**ので `npm ci` ＋ `npm run lint` を通してから入れる。教訓48 | `gh api repos/i0li0/siko-coffee/dependabot/alerts --jq '.[] \| select(.state=="open")'`<br>`gh run list --workflow "Dependabot Updates" --limit 10` |
-| **C-6** | 🔴🔴 **Instagram の署名付き画像URLが失効し `/_next/image` が 500 を返す** | **ユーザー可視のバグ**（トップの Instagram セクションの画像が壊れる）＋ **S-3 を破る発生源**。実測: 08-17T01:10Z に1件・**08-20T01:55Z に6件でアラーム発報**。<br>**原因**: `/` の応答が `s-maxage=2, **stale-while-revalidate=2592000**`（**30日**）で、CloudFront のキャッシュポリシー（Min0/Default0/**Max 1年**）がそれを尊重する。**Instagram の署名寿命は約5日8時間**（`oe` を復号して実測）。**HTML の陳腐化寿命 > 署名の寿命**になった瞬間に 500 が出る。<br>🔴 **低トラフィック（99〜2,498 req/日）が緩和ではなく悪化要因**＝アクセスの少ないエッジほど何日も古い HTML を配る。<br>📌 **Lambda の `Errors` は 0**（アプリが 500 を返している）＝ Lambda メトリクスだけでは見つからない。<br>**対処候補**: ①`/` の SWR を短縮（署名寿命より確実に短く）／②`next/image` で proxy せず S3 へ取り込む／③cron で `/api/revalidate` を定期実行。**①はまず「誰がこのヘッダを出しているか」（Next / OpenNext）の特定が要る** | Logs Insights（`siko-production-cloudfront-access-logs`）で `filter \`cs-uri-stem\`='/_next/image' and \`sc-status\`>=500`<br>`curl -sI https://www.sikocoffee.com/ \| grep -i cache-control` |
-| **C-7** | 🔴 **未知パスへのスキャンが Lambda@Edge の同時実行クォータ（10）を枯渇させ 503 になる** | 実測: 08-13T17:50Z に**単一IP `35.252.127.169` が SEA900 経由で 1,208 req/5分**（`/.env` `/.ssh/id_ecdsa` `/.claude.json` 等の秘密ファイル探索）→ `LambdaLimitExceeded` 503 が12件。<br>🔴🔴 **#144 は静的アセットの経路を外しただけで、デフォルトビヘイビア（未知パス）は今も Lambda@Edge を通る**＝ 08-07 の「クォータ引き上げは不要」の前提が欠けていた（教訓59）。<br>📌 **枯渇した枠は共有**なので、同じ5分に来た本物のリクエストも 503 になる＝「スキャナが受けるだけ」は誤り。<br>**対処候補**: ①**WAF にサイト全体のレートベースルール**（既存3ルールは `/admin` 限定）／②クォータ引き上げ申請（AWS 待ちで時間が読めない）／③既知の秘密ファイルパスを WAF で Block | `aws service-quotas get-service-quota --region us-west-2 --service-code lambda --quota-code L-B99A9384`<br>`aws wafv2 get-web-acl --scope CLOUDFRONT --region us-east-1 --name AdminWaf-1a5556d --id <id> --query 'WebACL.Rules[].Name'` |
+| ~~**C-6**~~ | ~~🔴🔴 **Instagram の署名付き画像URLが失効し `/_next/image` が 500 を返す**~~ ✅ **完了（#168・2026-08-20T07:43:45Z 本番稼働）** | **ユーザー可視のバグ**（トップの Instagram セクションの画像が壊れる）＋ **S-3 を破る発生源**。実測: 08-17T01:10Z に1件・**08-20T01:55Z に6件でアラーム発報**。<br>**原因**: `/` の応答が `s-maxage=2, **stale-while-revalidate=2592000**`（**30日**）で、CloudFront のキャッシュポリシー（Min0/Default0/**Max 1年**）がそれを尊重する。**Instagram の署名寿命は約5日8時間**（`oe` を復号して実測）。**HTML の陳腐化寿命 > 署名の寿命**になった瞬間に 500 が出る。<br>🔴 **低トラフィック（99〜2,498 req/日）が緩和ではなく悪化要因**＝アクセスの少ないエッジほど何日も古い HTML を配る。<br>📌 **Lambda の `Errors` は 0**（アプリが 500 を返している）＝ Lambda メトリクスだけでは見つからない。<br>✅ **入れたもの（#168）**: `/` を **6時間ごと**に CloudFront から無効化する cron（`CronRefreshHome` / `cron(42 0/6 * * ? *)`）。🔑 **SWR は変えられないと判明した**＝ `s-maxage=2, stale-while-revalidate=2592000` は **OpenNext のハードコード**（`core/routing/util.js`）で `next.config.ts` からも `revalidate` からも変えられず、ヘッダ書き換えには origin-response の Lambda@Edge が要る＝ **C-7 のリスクを自分で増やす**ため却下。無効化なら全エッジのコピーを消せる（6時間 ≪ 署名寿命5日）。📌 **専用 Lambda を作らず `CronRelay` に相乗り**＝新規 Lambda は新規アラームを要し、**新規アラームは必ず `INSUFFICIENT_DATA → OK` の遷移を1回作る**＝ S-3 の観測面が増えるため。✅ **実測**: 手動実行で `{"invalidationId":"ICN698DLYK3FSRX364JJWBLAE3"}`・CloudFront 側に `Paths:["/"]`・ログに `invalidate done 1542ms`。⚠️ **スケジュール発火はまだ未確認**（手動実行は「スケジュールが引く」証明ではない） | Logs Insights（`siko-production-cloudfront-access-logs`）で `filter \`cs-uri-stem\`='/_next/image' and \`sc-status\`>=500`<br>`curl -sI https://www.sikocoffee.com/ \| grep -i cache-control` |
+| ~~**C-7**~~ | ~~🔴 **未知パスへのスキャンが Lambda@Edge の同時実行クォータ（10）を枯渇させ 503 になる**~~ ✅ **完了（#168）** | 実測: 08-13T17:50Z に**単一IP `35.252.127.169` が SEA900 経由で 1,208 req/5分**（`/.env` `/.ssh/id_ecdsa` `/.claude.json` 等の秘密ファイル探索）→ `LambdaLimitExceeded` 503 が12件。<br>🔴🔴 **#144 は静的アセットの経路を外しただけで、デフォルトビヘイビア（未知パス）は今も Lambda@Edge を通る**＝ 08-07 の「クォータ引き上げは不要」の前提が欠けていた（教訓59）。<br>📌 **枯渇した枠は共有**なので、同じ5分に来た本物のリクエストも 503 になる＝「スキャナが受けるだけ」は誤り。<br>✅ **入れたもの（#168）**: WAF に `SiteWideRateLimit`（priority 3 / Block / **600 req / 300秒 / IP**）。🔑 **閾値はアクセスログ7日分の実測から決めた**（1IP・5分あたり）: **1,208**=止めたいスキャナ／597・559=ボット／**290〜315**=常連の分散スクレイパ（6IP・EU エッジ・同一UA）／174以下=その他。600 は**スキャナだけを跨ぎ、常連ボットにも実ユーザーにも届かない**位置。300 まで下げれば分散ボットも止まるが誤検知が現実的（オーナー判断で不採用）。✅ **負の対照**: `/`・`/shop`・`/legal/privacy` とも 200。⚠️ **`BlockedRequests` の継続観測はこれから** | `aws service-quotas get-service-quota --region us-west-2 --service-code lambda --quota-code L-B99A9384`<br>`aws wafv2 get-web-acl --scope CLOUDFRONT --region us-east-1 --name AdminWaf-1a5556d --id <id> --query 'WebACL.Rules[].Name'` |
 ---
 
 ## D. 推奨タスク R-1〜R-10（9本・R-3 は不採用確定）
